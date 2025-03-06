@@ -34,10 +34,7 @@ const FlagRegister = struct {
 
 const InstructionSet = struct {
     const InstrFn = ?*const fn (*GB, InstrArgs) void;
-    const InstrArgs = union(enum) {
-        none: void,
-        target: regID,
-    };
+    const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID } };
 
     const table = [_]struct { u8, InstrFn, InstrArgs, u16 }{
         .{ 0x00, NOP, .{ .none = {} }, 1 }, // NOP
@@ -52,10 +49,10 @@ const InstructionSet = struct {
         .{ 0x09, null, .{ .none = {} }, 8 }, // ADD HL, BC
         .{ 0x0A, null, .{ .none = {} }, 8 }, // LD A, (BC)
         .{ 0x0B, null, .{ .none = {} }, 8 }, // DEC BC
-        .{ 0x0C, null, .{ .none = {} }, 4 }, // INC C
+        .{ 0x0C, INC, .{ .target = regID.c }, 4 }, // INC C
         .{ 0x0D, null, .{ .none = {} }, 4 }, // DEC C
-        .{ 0x0E, null, .{ .none = {} }, 8 }, // LD C, d8
-        .{ 0x0F, null, .{ .none = {} }, 4 }, // RRCA
+        .{ 0x0E, LD8, .{ .target = regID.c }, 2 }, // LD C, d8
+        .{ 0x0F, RRCA, .{ .none = {} }, 1 }, // RRCA
         .{ 0x10, null, .{ .none = {} }, 4 }, // STOP 0
         .{ 0x11, null, .{ .none = {} }, 12 }, // LD DE, d16
         .{ 0x12, null, .{ .none = {} }, 8 }, // LD (DE), A
@@ -102,7 +99,7 @@ const InstructionSet = struct {
         .{ 0x3B, null, .{ .none = {} }, 8 }, // DEC SP
         .{ 0x3C, null, .{ .none = {} }, 4 }, // INC A
         .{ 0x3D, null, .{ .none = {} }, 4 }, // DEC A
-        .{ 0x3E, null, .{ .none = {} }, 8 }, // LD A, d8
+        .{ 0x3E, LD8, .{ .target = regID.a }, 8 }, // LD A, d8
         .{ 0x3F, null, .{ .none = {} }, 4 }, // CCF
         .{ 0x40, null, .{ .none = {} }, 4 }, // LD B, B
         .{ 0x41, null, .{ .none = {} }, 4 }, // LD B, C
@@ -264,9 +261,9 @@ const InstructionSet = struct {
         .{ 0xDD, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xDE, null, .{ .none = {} }, 8 }, // SBC A, d8
         .{ 0xDF, null, .{ .none = {} }, 16 }, // RST 18H
-        .{ 0xE0, null, .{ .none = {} }, 12 }, // LDH (a8), A
+        .{ 0xE0, LD16A, .{ .none = {} }, 3 }, // LDH (a8), A
         .{ 0xE1, null, .{ .none = {} }, 12 }, // POP HL
-        .{ 0xE2, null, .{ .none = {} }, 8 }, // LD (C), A
+        .{ 0xE2, LDHCA, .{ .none = {} }, 8 }, // LD (C), A
         .{ 0xE3, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xE4, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xE5, null, .{ .none = {} }, 16 }, // PUSH HL
@@ -291,7 +288,7 @@ const InstructionSet = struct {
         .{ 0xF8, null, .{ .none = {} }, 12 }, // LD HL, SP+r8
         .{ 0xF9, null, .{ .none = {} }, 8 }, // LD SP, HL
         .{ 0xFA, null, .{ .none = {} }, 16 }, // LD A, (a16)
-        .{ 0xFB, null, .{ .none = {} }, 4 }, // EI
+        .{ 0xFB, EI, .{ .none = {} }, 1 }, // EI
         .{ 0xFC, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xFD, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xFE, null, .{ .none = {} }, 8 }, // CP d8
@@ -423,7 +420,7 @@ const InstructionSet = struct {
         .{ 0x79, null, .{ .none = {} }, 8 }, // BIT 7, C
         .{ 0x7A, null, .{ .none = {} }, 8 }, // BIT 7, D
         .{ 0x7B, null, .{ .none = {} }, 8 }, // BIT 7, E
-        .{ 0x7C, BIT8, .{ .target = regID.h }, 3 }, // BIT 7, H
+        .{ 0x7C, BITTEST, .{ .bit_target = .{ .bit = 7, .target = regID.h } }, 3 }, // BIT 7, H
         .{ 0x7D, null, .{ .none = {} }, 8 }, // BIT 7, L
         .{ 0x7E, null, .{ .none = {} }, 12 }, // BIT 7, (HL)
         .{ 0x7F, null, .{ .none = {} }, 8 }, // BIT 7, A
@@ -570,34 +567,43 @@ const InstructionSet = struct {
                 args = table[byte][2];
             }
             if (ins == null) return error.NullInstruction;
-            return .{ .ins = ins.?, .args = table[byte][2] };
+            return .{ .ins = ins.?, .args = args };
         } else return error.IllegalByte;
     }
-
-    // fn from_prefixed_byte(byte: u8) !*const fn (*CPU) void {
-    //     const ins = prefix_table[byte][1];
-    //     if ((byte >= 0 and byte < table.len)) {
-    //         if (ins == null) return error.NullInstruction;
-    //         return ins.?;
-    //     } else return error.IllegalByte;
-    // }
 
     fn NOP(gb: *GB, _: InstrArgs) void {
         print("NOP\n", .{});
         gb.cpu.pc += 1;
     }
-    fn LD16(gb: *GB, args: InstrArgs) void { // LD r16, n16
-        print("LD16, target {any}\n", .{@as(regID, args.target)});
+    fn INC(gb: *GB, args: InstrArgs) void {
+        const value = gb.cpu.get_byte(args.target);
+        gb.cpu.set_byte(args.target, value + 1);
+        gb.cpu.f.h = (value & 0xF + 1) & 0x10 == 0x10;
+        gb.cpu.pc += 1;
+    }
+    fn LD8(gb: *GB, args: InstrArgs) void { // LD r16, n16 TODO TEST
+        const n: u8 = gb.memory[gb.cpu.pc + 1];
+        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("LD8, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
+        gb.cpu.set_byte(args.target, n);
+        gb.cpu.pc += 2;
+    }
+    fn LD16(gb: *GB, args: InstrArgs) void { // LD r16, n16 TODO TEST
         const n: u16 = @as(u16, gb.memory[gb.cpu.pc + 1]) << 8 | gb.memory[gb.cpu.pc + 2];
+        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        print("LD16, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
         gb.cpu.set_word(args.target, n);
-        gb.cpu.pc += 4;
+        gb.cpu.pc += 3;
     }
     fn LDSP16(gb: *GB, _: InstrArgs) void { // LD r16, n16, 0x31
         print("LD16SP\n", .{});
         const n: u16 = @as(u16, gb.memory[gb.cpu.pc + 1]) << 8 | gb.memory[gb.cpu.pc + 2];
+        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
         gb.cpu.sp = n;
         print("after op: sp: {d}\n", .{gb.cpu.sp});
-        gb.cpu.pc += 4;
+        gb.cpu.pc += 3;
     }
     fn LDHLIA(gb: *GB, _: InstrArgs) void { // LD [HLI],A
         const hl = gb.cpu.get_word(regID.h);
@@ -626,17 +632,58 @@ const InstructionSet = struct {
             gb.cpu.f.z = true;
         gb.cpu.pc += 1;
     }
-    fn ADDB(gb: *GB, _: InstrArgs) void {
+    fn ADDB(gb: *GB, _: InstrArgs) void { // TODO finish, TEST
         print("ADDB\n", .{});
         gb.cpu.pc += 1;
     }
-    fn BIT8(gb: *GB, args: InstrArgs) void {
-        print("BIT8, target: {any}", .{args.target});
-        const bit: u3 = @intCast(gb.read_byte(gb.cpu.pc + 1));
-        const hl = gb.cpu.get_word(regID.h);
+    fn BITTEST(gb: *GB, args: InstrArgs) void { // TODO TEST
+        const bit: u3 = args.bit_target.bit;
+        const target = gb.cpu.get_byte(args.bit_target.target);
+        print("BITTEST, target: {any}, bit: {any}, reg_bin: 0b{b}", .{ args.bit_target.target, args.bit_target.bit, target });
+        print("                                             ^", .{});
+        gb.cpu.f.z = @as(u1, @truncate(target >> bit)) == 0; // set zero flag if the target bit is not set
+        gb.cpu.f.h = true; // set half carry
+        gb.cpu.pc += 2;
+    }
+    fn BITTESTHL(gb: *GB, args: InstrArgs) void { // TODO TEST
+        const bit: u3 = args.bit_target.bit;
+        print("BITTESTHL, target: {any}, bit: {any}\n", .{ args.bit_target.target, args.bit_target.bit });
+        const hl = gb.cpu.get_word(args.target);
         const byte = gb.read_byte(hl);
         gb.cpu.f.z = @as(u1, @truncate(byte >> bit)) == 0;
+        gb.cpu.f.h = true;
         gb.cpu.pc += 2;
+    }
+    fn EI(gb: *GB, _: InstrArgs) void { // TODO TEST
+        print("EI\n", .{});
+        gb.cpu.pc += 1;
+    }
+    fn RRCA(gb: *GB, _: InstrArgs) void { // TODO TEST
+        const a = gb.cpu.get_byte(regID.a);
+        gb.cpu.set_byte(regID.a, a << 7 | a >> 1);
+        gb.cpu.f.c = (@as(u1, @truncate(a)) == 1);
+        gb.cpu.pc += 1;
+    }
+    fn LD16A(gb: *GB, _: InstrArgs) void { // TODO TEST
+        const n = @as(u16, gb.read_byte(gb.cpu.pc + 1)) << 8 | gb.read_byte(gb.cpu.pc + 2);
+        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        print("LDH16A, n: Ox{X}", .{n});
+        gb.cpu.pc += 3;
+    }
+    fn LDHCA(gb: *GB, _: InstrArgs) void {
+        const c = gb.cpu.get_byte(regID.c);
+        const a = gb.cpu.get_byte(regID.a);
+        print("LDHCA", .{});
+        gb.writeByte(0xFF00 + @as(u16, c), a);
+        gb.cpu.pc += 1;
+    }
+    fn LDHAC(gb: *GB, _: InstrArgs) void {
+        const a = gb.cpu.get_byte(regID.a);
+        const c = gb.cpu.get_byte(regID.c);
+        print("LDHAC", .{});
+        gb.cpu.set_byte(a, 0xFF00 + @as(u16, c));
+        gb.cpu.pc += 1;
     }
 };
 
@@ -656,6 +703,7 @@ const CPU = struct {
     f: FlagRegister = FlagRegister{},
     pc: u16 = undefined,
     sp: u16 = undefined,
+    last_ins: u16 = 0x0,
 
     fn init(self: *@This()) !void {
         @memset(&self.registers, 0);
@@ -681,19 +729,24 @@ const CPU = struct {
     }
 
     fn execute(self: *@This(), gb: *GB) !void {
-        var byte = gb.memory[self.pc];
+        var byte = gb.read_byte(self.pc);
         var prefixed = false;
         if (byte == 0xCB) {
             prefixed = true;
             self.pc += 1;
             byte = gb.memory[self.pc];
         }
-        print("[pc]0x{x} \t(0x{x})\n", .{ self.pc, byte });
+        print("[pc]{d} \t(0x{X})\n", .{ self.pc, byte });
         const ins_args = InstructionSet.from_byte(byte, prefixed) catch |err| {
             return err;
         };
         (ins_args.ins)(gb, ins_args.args);
         print("\n", .{});
+        if (self.last_ins == 0xFB) {
+            print("set IME\n", .{});
+            // set IME flag after next ins
+        }
+        self.last_ins = byte;
     }
 };
 
@@ -766,6 +819,9 @@ pub const GB = struct {
     pub fn read_byte(self: *@This(), address: usize) u8 {
         // TODO: implement memory mapping based on address
         return self.memory[address];
+    }
+    pub fn writeByte(self: *@This(), address: usize, value: u8) void {
+        self.memory[address] = value;
     }
 
     pub fn boot(self: *@This()) !void {

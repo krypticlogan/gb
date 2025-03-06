@@ -35,7 +35,7 @@ test "LDHLIA" {
     const value = gb.cpu.get_byte(regID.a);
     expect(gb.read_byte(priorHL) == value and hl == priorHL+1) catch {
         if (gb.read_byte(priorHL) != value) return error.ValueNotSet;
-        if (hl != priorHL-1) return error.noIncrement;
+        if (hl != priorHL+1) return error.noIncrement;
     };
 }
 
@@ -49,7 +49,7 @@ test "LDHLDA" {
     const value = gb.cpu.get_byte(regID.a);
     expect(gb.read_byte(priorHL) == value and hl == priorHL-1) catch {
         if (gb.read_byte(priorHL) != value) return error.ValueNotSet;
-        if (hl != priorHL+1) return error.noDecrement;
+        if (hl != priorHL-1) return error.noDecrement;
     };
 } 
 
