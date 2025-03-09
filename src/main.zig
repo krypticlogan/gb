@@ -41,7 +41,7 @@ const InstructionSet = struct {
         .{ 0x01, LD16, .{ .target = regID.b }, 3 }, // LD BC, d16
         .{ 0x02, null, .{ .none = {} }, 8 }, // LD (BC), A
         .{ 0x03, null, .{ .none = {} }, 8 }, // INC BC
-        .{ 0x04, null, .{ .none = {} }, 4 }, // INC B
+        .{ 0x04, INCr8, .{ .target = regID.b }, 4 }, // INC B
         .{ 0x05, null, .{ .none = {} }, 4 }, // DEC B
         .{ 0x06, null, .{ .none = {} }, 8 }, // LD B, d8
         .{ 0x07, null, .{ .none = {} }, 4 }, // RLCA
@@ -49,7 +49,7 @@ const InstructionSet = struct {
         .{ 0x09, null, .{ .none = {} }, 8 }, // ADD HL, BC
         .{ 0x0A, null, .{ .none = {} }, 8 }, // LD A, (BC)
         .{ 0x0B, null, .{ .none = {} }, 8 }, // DEC BC
-        .{ 0x0C, INC, .{ .target = regID.c }, 4 }, // INC C
+        .{ 0x0C, INCr8, .{ .target = regID.c }, 2 }, // INC C
         .{ 0x0D, null, .{ .none = {} }, 4 }, // DEC C
         .{ 0x0E, LD8, .{ .target = regID.c }, 2 }, // LD C, d8
         .{ 0x0F, RRCA, .{ .none = {} }, 1 }, // RRCA
@@ -99,7 +99,7 @@ const InstructionSet = struct {
         .{ 0x3B, null, .{ .none = {} }, 8 }, // DEC SP
         .{ 0x3C, null, .{ .none = {} }, 4 }, // INC A
         .{ 0x3D, null, .{ .none = {} }, 4 }, // DEC A
-        .{ 0x3E, LD8, .{ .target = regID.a }, 8 }, // LD A, d8
+        .{ 0x3E, LD8, .{ .target = regID.a }, 1 }, // LD A, d8
         .{ 0x3F, null, .{ .none = {} }, 4 }, // CCF
         .{ 0x40, null, .{ .none = {} }, 4 }, // LD B, B
         .{ 0x41, null, .{ .none = {} }, 4 }, // LD B, C
@@ -156,7 +156,7 @@ const InstructionSet = struct {
         .{ 0x74, null, .{ .none = {} }, 8 }, // LD (HL), H
         .{ 0x75, null, .{ .none = {} }, 8 }, // LD (HL), L
         .{ 0x76, null, .{ .none = {} }, 4 }, // HALT
-        .{ 0x77, null, .{ .none = {} }, 8 }, // LD (HL), A
+        .{ 0x77, LDHLR, .{ .target = regID.a }, 2 }, // LD (HL), A
         .{ 0x78, null, .{ .none = {} }, 4 }, // LD A, B
         .{ 0x79, null, .{ .none = {} }, 4 }, // LD A, C
         .{ 0x7A, null, .{ .none = {} }, 4 }, // LD A, D
@@ -165,7 +165,7 @@ const InstructionSet = struct {
         .{ 0x7D, null, .{ .none = {} }, 4 }, // LD A, L
         .{ 0x7E, null, .{ .none = {} }, 8 }, // LD A, (HL)
         .{ 0x7F, null, .{ .none = {} }, 4 }, // LD A, A
-        .{ 0x80, ADDB, .{ .target = regID.b }, 1 }, // ADD A, B
+        .{ 0x80, ADDr8A, .{ .target = regID.b }, 1 }, // ADD A, B
         .{ 0x81, null, .{ .none = {} }, 4 }, // ADD A, C
         .{ 0x82, null, .{ .none = {} }, 4 }, // ADD A, D
         .{ 0x83, null, .{ .none = {} }, 4 }, // ADD A, E
@@ -261,7 +261,7 @@ const InstructionSet = struct {
         .{ 0xDD, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xDE, null, .{ .none = {} }, 8 }, // SBC A, d8
         .{ 0xDF, null, .{ .none = {} }, 16 }, // RST 18H
-        .{ 0xE0, LD16A, .{ .none = {} }, 3 }, // LDH (a8), A
+        .{ 0xE0, LDHn16A, .{ .none = {} }, 3 }, // LDH (a8), A
         .{ 0xE1, null, .{ .none = {} }, 12 }, // POP HL
         .{ 0xE2, LDHCA, .{ .none = {} }, 8 }, // LD (C), A
         .{ 0xE3, null, .{ .none = {} }, 4 }, // NOP
@@ -571,28 +571,35 @@ const InstructionSet = struct {
         } else return error.IllegalByte;
     }
 
-    fn NOP(gb: *GB, _: InstrArgs) void {
+    fn NOP(gb: *GB, _: InstrArgs) void { // TODO test
         print("NOP\n", .{});
         gb.cpu.pc += 1;
     }
-    fn INC(gb: *GB, args: InstrArgs) void {
+    fn INCr8(gb: *GB, args: InstrArgs) void { // TODO TEST -- overflow? r16 too
         const value = gb.cpu.get_byte(args.target);
+        print("INCr8, target: {any}", .{args.target});
         gb.cpu.set_byte(args.target, value + 1);
-        gb.cpu.f.h = (value & 0xF + 1) & 0x10 == 0x10;
+        gb.cpu.f.h = (value & 0xF + 1) & 0x10 == 0x10; // half carry conditions
         gb.cpu.pc += 1;
     }
-    fn LD8(gb: *GB, args: InstrArgs) void { // LD r16, n16 TODO TEST
+    fn INCr16(gb: *GB, args: InstrArgs) void { // TODO TEST
+        const value = gb.cpu.get_byte(args.target);
+        print("INCr16, target: {any}", .{args.target});
+        gb.cpu.set_word(args.target, value + 1);
+        gb.cpu.pc += 1;
+    }
+    fn LD8(gb: *GB, args: InstrArgs) void { // LD r8, n8 TODO TEST
         const n: u8 = gb.memory[gb.cpu.pc + 1];
-        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         print("LD8, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
+        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_byte(args.target, n);
         gb.cpu.pc += 2;
     }
     fn LD16(gb: *GB, args: InstrArgs) void { // LD r16, n16 TODO TEST
         const n: u16 = @as(u16, gb.memory[gb.cpu.pc + 1]) << 8 | gb.memory[gb.cpu.pc + 2];
+        print("LD16, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
         print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        print("LD16, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
         gb.cpu.set_word(args.target, n);
         gb.cpu.pc += 3;
     }
@@ -605,6 +612,22 @@ const InstructionSet = struct {
         print("after op: sp: {d}\n", .{gb.cpu.sp});
         gb.cpu.pc += 3;
     }
+    fn LDHL8(gb: *GB, _: InstrArgs) void { // LD[HL], n8
+        const hl = gb.cpu.get_word(regID.h);
+        const value = gb.read_byte(gb.cpu.pc + 1);
+        print("LDHLDA\thl:{d}\tvalue:0x{x}\nmem@hl: 0x{x}\n", .{ hl, value, gb.read_byte(hl) });
+        gb.writeByte(hl, value);
+        print("after op: mem@hl: 0x{x}\thl:{d}", .{ gb.read_byte(hl), hl });
+        gb.cpu.pc += 2;
+    }
+    fn LDHLR(gb: *GB, args: InstrArgs) void { // LD[HL],r8
+        const hl = gb.cpu.get_word(regID.h);
+        const value = gb.cpu.get_byte(args.target);
+        print("LDHLR\thl:{d}\tvalue:0x{x}\nmem@hl: 0x{x}\n", .{ hl, value, gb.read_byte(hl) });
+        gb.writeByte(hl, value);
+        print("after op: mem@hl: 0x{x}\thl:{d}", .{ gb.read_byte(hl), hl });
+        gb.cpu.pc += 1;
+    }
     fn LDHLIA(gb: *GB, _: InstrArgs) void { // LD [HLI],A
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
@@ -614,7 +637,6 @@ const InstructionSet = struct {
         print("after op: mem@hl: 0x{x}\thl:{d}", .{ gb.read_byte(hl), hl });
         gb.cpu.pc += 1;
     }
-
     fn LDHLDA(gb: *GB, _: InstrArgs) void { // LD [HLD],A
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
@@ -624,6 +646,76 @@ const InstructionSet = struct {
         print("after op: mem@hl: 0x{x}\thl:{d}", .{ gb.read_byte(hl), hl });
         gb.cpu.pc += 1;
     }
+    fn LDHCA(gb: *GB, _: InstrArgs) void {
+        const c = gb.cpu.get_byte(regID.c);
+        const a = gb.cpu.get_byte(regID.a);
+        print("LDHCA", .{});
+        gb.writeByte(0xFF00 + @as(u16, c), a);
+        gb.cpu.pc += 1;
+    }
+    fn LDHAC(gb: *GB, _: InstrArgs) void {
+        const a = gb.cpu.get_byte(regID.a);
+        const c = gb.cpu.get_byte(regID.c);
+        print("LDHAC", .{});
+        gb.cpu.set_byte(a, 0xFF00 + @as(u16, c));
+        gb.cpu.pc += 1;
+    }
+    fn LDAn16(gb: *GB, _: InstrArgs) void { // TODO TEST Load value in register A from the byte at address n16.
+        const memory_place = (gb.cpu.pc + 1) << 8 | (gb.cpu.pc + 2);
+        const n = gb.read_byte(memory_place);
+        print("LDAn16, n: Ox{X}", .{n});
+        print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        gb.cpu.set_byte(regID.a, n);
+        gb.cpu.pc += 3;
+    }
+    fn LDHAn16(gb: *GB, _: InstrArgs) void { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
+        const memory_place = (gb.cpu.pc + 1) << 8 | (gb.cpu.pc + 2);
+        if (memory_place >= 0xFF00 and memory_place <= 0xFFFF){
+        const n = gb.read_byte(memory_place);
+        print("LDAHAn16, n: Ox{X}", .{n});
+        print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        gb.cpu.set_byte(regID.a, n);
+        }
+        gb.cpu.pc += 3;
+    }
+    fn LDn16A(gb: *GB, _: InstrArgs) void { // TODO TEST Store value in register A into the byte at address n16.
+        const memory_place = (gb.cpu.pc + 1) << 8 | (gb.cpu.pc + 2);
+        const n = gb.cpu.get_byte(regID.a);
+        gb.writeByte(memory_place, n);
+        print("LDAn16, n: Ox{X}", .{0});
+        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        gb.cpu.pc += 3;
+    }
+    fn LDHn16A(gb: *GB, _: InstrArgs) void { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
+        const memory_place = (gb.cpu.pc + 1) << 8 | (gb.cpu.pc + 2);
+        const n = gb.cpu.get_byte(regID.a);
+        gb.writeByte(memory_place, n);
+        print("LDAn16, n: Ox{X}", .{n});
+        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        gb.cpu.pc += 3;
+    }
+    fn LDAr16(gb: *GB, args: InstrArgs) void { // TODO TEST
+        const memory_place = gb.cpu.get_word(args.target);
+        const n = gb.read_byte(memory_place);
+        print("LDAr16, n: Ox{X}", .{n});
+        print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        gb.cpu.set_byte(regID.a, n);
+        gb.cpu.pc += 3;
+    }
+    fn LDr16A(gb: *GB, args: InstrArgs) void { // TODO TEST
+        const memory_place = gb.cpu.get_word(args.target);
+        const n = gb.cpu.get_byte(regID.a);
+        gb.writeByte(memory_place, n);
+        print("LDA16, n: Ox{X}", .{n});
+        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        gb.cpu.pc += 3;
+    }
 
     fn XORA(gb: *GB, args: InstrArgs) void {
         print("XORA, target {any}\n", .{args.target});
@@ -632,8 +724,14 @@ const InstructionSet = struct {
             gb.cpu.f.z = true;
         gb.cpu.pc += 1;
     }
-    fn ADDB(gb: *GB, _: InstrArgs) void { // TODO finish, TEST
-        print("ADDB\n", .{});
+    fn ADDr8A(gb: *GB, args: InstrArgs) void { // TODO finish, TEST, flags
+        const value = gb.cpu.get_byte(args.target);
+        print("ADDA target: {any}, value: {d} \n", .{ args.target, value });
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @addWithOverflow(a, value);
+        const overflow = res[1];
+        _ = overflow; // TODO FIX!!
+        gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
     }
     fn BITTEST(gb: *GB, args: InstrArgs) void { // TODO TEST
@@ -662,27 +760,6 @@ const InstructionSet = struct {
         const a = gb.cpu.get_byte(regID.a);
         gb.cpu.set_byte(regID.a, a << 7 | a >> 1);
         gb.cpu.f.c = (@as(u1, @truncate(a)) == 1);
-        gb.cpu.pc += 1;
-    }
-    fn LD16A(gb: *GB, _: InstrArgs) void { // TODO TEST
-        const n = @as(u16, gb.read_byte(gb.cpu.pc + 1)) << 8 | gb.read_byte(gb.cpu.pc + 2);
-        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
-        print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        print("LDH16A, n: Ox{X}", .{n});
-        gb.cpu.pc += 3;
-    }
-    fn LDHCA(gb: *GB, _: InstrArgs) void {
-        const c = gb.cpu.get_byte(regID.c);
-        const a = gb.cpu.get_byte(regID.a);
-        print("LDHCA", .{});
-        gb.writeByte(0xFF00 + @as(u16, c), a);
-        gb.cpu.pc += 1;
-    }
-    fn LDHAC(gb: *GB, _: InstrArgs) void {
-        const a = gb.cpu.get_byte(regID.a);
-        const c = gb.cpu.get_byte(regID.c);
-        print("LDHAC", .{});
-        gb.cpu.set_byte(a, 0xFF00 + @as(u16, c));
         gb.cpu.pc += 1;
     }
 };
