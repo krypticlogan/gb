@@ -3,7 +3,7 @@
 //! is to delete this file and start with root.zig instead.
 const std = @import("std");
 const print = std.debug.print;
-fn println (comptime fmt: []const u8, args: anytype) void {
+fn println(comptime fmt: []const u8, args: anytype) void {
     print(fmt, args);
     print("\n", .{});
 }
@@ -15,30 +15,27 @@ const FlagRegister = struct {
     s: bool = false,
     h: bool = false,
     c: bool = false,
+    const Conditions = union(enum) { z: bool, c: bool, s: bool, h: bool, none: bool };
 
-    fn check(self: *@This(), byte: u8) void {
-        self.z = (byte >> 7) & 0b1;
-        self.s = (byte >> 6) & 0b1;
-        self.h = (byte >> 5) & 0b1;
-        self.c = (byte >> 4) & 0b1;
+    fn check(self: *@This()) void {
+        self.z = (self.value >> 7) & 0b1 == 1;
+        self.s = (self.value >> 6) & 0b1 == 1;
+        self.h = (self.value >> 5) & 0b1 == 1;
+        self.c = (self.value >> 4) & 0b1 == 1;
     }
-
     fn write(self: *@This()) void {
-        self.value = 
+        self.value =
             @as(u8, @intFromBool(self.z)) << 7 |
             @as(u8, @intFromBool(self.s)) << 6 |
             @as(u8, @intFromBool(self.h)) << 5 |
             @as(u8, @intFromBool(self.c)) << 4;
+        self.check();
     }
 };
 
 const InstructionSet = struct {
     const InstrFn = ?*const fn (*GB, InstrArgs) void;
-    const InstrArgs = union(enum) { 
-        none: void, target: regID, 
-        bit_target: struct { bit: u3, target: regID },
-        condition: bool
-        };
+    const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: FlagRegister.Conditions, targets: struct { to: regID, from: regID } };
 
     const table = [_]struct { u8, InstrFn, InstrArgs, u16 }{
         .{ 0x00, NOP, .{ .none = {} }, 1 }, // NOP
@@ -46,8 +43,8 @@ const InstructionSet = struct {
         .{ 0x02, null, .{ .none = {} }, 8 }, // LD (BC), A
         .{ 0x03, null, .{ .none = {} }, 8 }, // INC BC
         .{ 0x04, INCr8, .{ .target = regID.b }, 2 }, // INC B
-        .{ 0x05, null, .{ .none = {} }, 4 }, // DEC B
-        .{ 0x06, null, .{ .none = {} }, 8 }, // LD B, d8
+        .{ 0x05, DECr8, .{ .target = regID.b }, 4 }, // DEC B
+        .{ 0x06, LD8, .{ .target = regID.b }, 2 }, // LD B, d8
         .{ 0x07, null, .{ .none = {} }, 4 }, // RLCA
         .{ 0x08, null, .{ .none = {} }, 20 }, // LD (a16), SP
         .{ 0x09, null, .{ .none = {} }, 8 }, // ADD HL, BC
@@ -73,7 +70,7 @@ const InstructionSet = struct {
         .{ 0x1D, null, .{ .none = {} }, 4 }, // DEC E
         .{ 0x1E, null, .{ .none = {} }, 8 }, // LD E, d8
         .{ 0x1F, null, .{ .none = {} }, 4 }, // RRA
-        .{ 0x20, null, .{ .none = {} }, 12 }, // JR NZ, r8
+        .{ 0x20, JR, .{ .flagConditions = .{ .z = false } }, 3 }, // JR NZ, r8
         .{ 0x21, LD16, .{ .target = regID.h }, 3 }, // LD HL, d16
         .{ 0x22, LDHLIA, .{ .none = {} }, 2 }, // LD (HL+), A
         .{ 0x23, null, .{ .none = {} }, 8 }, // INC HL
@@ -120,7 +117,7 @@ const InstructionSet = struct {
         .{ 0x4C, null, .{ .none = {} }, 4 }, // LD C, H
         .{ 0x4D, null, .{ .none = {} }, 4 }, // LD C, L
         .{ 0x4E, null, .{ .none = {} }, 8 }, // LD C, (HL)
-        .{ 0x4F, null, .{ .none = {} }, 4 }, // LD C, A
+        .{ 0x4F, LDr16, .{ .targets = .{ .to = regID.c, .from = regID.a } }, 1 }, // LD C, A
         .{ 0x50, null, .{ .none = {} }, 4 }, // LD D, B
         .{ 0x51, null, .{ .none = {} }, 4 }, // LD D, C
         .{ 0x52, null, .{ .none = {} }, 4 }, // LD D, D
@@ -234,11 +231,11 @@ const InstructionSet = struct {
         .{ 0xBE, null, .{ .none = {} }, 8 }, // CP (HL)
         .{ 0xBF, null, .{ .none = {} }, 4 }, // CP A
         .{ 0xC0, null, .{ .none = {} }, 20 }, // RET NZ
-        .{ 0xC1, null, .{ .none = {} }, 12 }, // POP BC
+        .{ 0xC1, POP, .{ .target = regID.b }, 12 }, // POP BC
         .{ 0xC2, null, .{ .none = {} }, 16 }, // JP NZ, a16
         .{ 0xC3, null, .{ .none = {} }, 16 }, // JP a16
         .{ 0xC4, null, .{ .none = {} }, 24 }, // CALL NZ, a16
-        .{ 0xC5, null, .{ .none = {} }, 16 }, // PUSH BC
+        .{ 0xC5, PUSH, .{ .target = regID.b }, 4 }, // PUSH BC
         .{ 0xC6, null, .{ .none = {} }, 8 }, // ADD A, d8
         .{ 0xC7, null, .{ .none = {} }, 16 }, // RST 00H
         .{ 0xC8, null, .{ .none = {} }, 20 }, // RET Z
@@ -317,7 +314,7 @@ const InstructionSet = struct {
         .{ 0x0E, null, .{ .none = {} }, 16 }, // RRC (HL)
         .{ 0x0F, null, .{ .none = {} }, 8 }, // RRC A
         .{ 0x10, null, .{ .none = {} }, 8 }, // RL B
-        .{ 0x11, null, .{ .none = {} }, 8 }, // RL C
+        .{ 0x11, RL, .{ .target = regID.c }, 8 }, // RL C
         .{ 0x12, null, .{ .none = {} }, 8 }, // RL D
         .{ 0x13, null, .{ .none = {} }, 8 }, // RL E
         .{ 0x14, null, .{ .none = {} }, 8 }, // RL H
@@ -584,6 +581,8 @@ const InstructionSet = struct {
         print("INCr8, target: {any}\n", .{args.target});
         gb.cpu.set_byte(args.target, value + 1);
         gb.cpu.f.h = (value & 0xF + 1) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.z = gb.cpu.get_byte(args.target) == 0;
+        gb.cpu.f.s = false;
         gb.cpu.f.write();
         gb.cpu.pc += 1;
     }
@@ -591,6 +590,22 @@ const InstructionSet = struct {
         const value = gb.cpu.get_byte(args.target);
         print("INCr16, target: {any}\n", .{args.target});
         gb.cpu.set_word(args.target, value + 1);
+        gb.cpu.pc += 1;
+    }
+    fn DECr8(gb: *GB, args: InstrArgs) void { // TODO TEST -- overflow? r16 too
+        const value = gb.cpu.get_byte(args.target);
+        print("DECr8, target: {any}\n", .{args.target});
+        gb.cpu.set_byte(args.target, value - 1);
+        gb.cpu.f.z = value == 1;
+        gb.cpu.f.s = true;
+        gb.cpu.f.h = (value & 0xF - 1) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.write();
+        gb.cpu.pc += 1;
+    }
+    fn DECr16(gb: *GB, args: InstrArgs) void { // TODO TEST
+        const value = gb.cpu.get_byte(args.target);
+        print("DECr16, target: {any}\n", .{args.target});
+        gb.cpu.set_word(args.target, value - 1);
         gb.cpu.pc += 1;
     }
     fn LD8(gb: *GB, args: InstrArgs) void { // LD r8, n8 TODO TEST
@@ -607,6 +622,12 @@ const InstructionSet = struct {
         print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_word(args.target, n);
         gb.cpu.pc += 3;
+    }
+    fn LDr16(gb: *GB, args: InstrArgs) void { // LD r16, r16 TODO TEST
+        print("LDr16, targets: from {any} --> to {any}\n", .{ args.targets.from, args.targets.to });
+        print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(args.targets.from), gb.cpu.get_byte(args.targets.to) });
+        gb.cpu.set_byte(args.targets.to, gb.cpu.get_byte(args.targets.from));
+        gb.cpu.pc += 1;
     }
     fn LDSP16(gb: *GB, _: InstrArgs) void { // LD r16, n16, 0x31
         print("LD16SP\n", .{});
@@ -628,7 +649,7 @@ const InstructionSet = struct {
     fn LDHLR(gb: *GB, args: InstrArgs) void { // LD[HL],r8
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(args.target);
-         print("LDHLR, \nmem@hl: 0x{X} --> 0x{X}\n", .{ gb.read_byte(hl), value});
+        print("LDHLR, \nmem@hl: 0x{X} --> 0x{X}\n", .{ gb.read_byte(hl), value });
         gb.writeByte(hl, value);
         print("after op: mem@hl: 0x{x}\n", .{gb.read_byte(hl)});
         gb.cpu.pc += 1;
@@ -636,25 +657,26 @@ const InstructionSet = struct {
     fn LDHLIA(gb: *GB, _: InstrArgs) void { // LD [HLI],A
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
-        print("LDHLDI, \nmem@hl: 0x{X} --> 0x{X}\n", .{ gb.read_byte(hl), value});        gb.memory[hl] = value;
+        print("LDHLDI, \nmem@hl: 0x{X} --> 0x{X}\n", .{ gb.read_byte(hl), value });
+        gb.memory[hl] = value;
         gb.cpu.set_word(regID.h, hl + 1);
-        print("after op: mem@hl: 0x{x}\n", .{ gb.read_byte(hl)});
+        print("after op: mem@hl: 0x{x}\n", .{gb.read_byte(hl)});
         gb.cpu.pc += 1;
     }
     fn LDHLDA(gb: *GB, _: InstrArgs) void { // LD [HLD],A
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
-        print("LDHLDA, \nmem@hl: 0x{X} --> 0x{X}\n", .{ gb.read_byte(hl), value});
+        print("LDHLDA, \nmem@hl: 0x{X} --> 0x{X}\n", .{ gb.read_byte(hl), value });
         gb.memory[hl] = value;
         gb.cpu.set_word(regID.h, hl - 1);
-        print("after op: mem@hl: 0x{X}\n", .{ gb.read_byte(hl)});
+        print("after op: mem@hl: 0x{X}\n", .{gb.read_byte(hl)});
         gb.cpu.pc += 1;
     }
     fn LDHCA(gb: *GB, _: InstrArgs) void {
         const c = gb.cpu.get_byte(regID.c);
         const a = gb.cpu.get_byte(regID.a);
         const mem_place = 0xFF00 + @as(u16, c);
-        print("LDHCA, memplace@Ox{X} --> 0x{X}\n", .{mem_place, a});
+        print("LDHCA, memplace@Ox{X} --> 0x{X}\n", .{ mem_place, a });
         gb.writeByte(mem_place, a);
         gb.cpu.pc += 1;
     }
@@ -678,12 +700,12 @@ const InstructionSet = struct {
     fn LDHAn16(gb: *GB, _: InstrArgs) void { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
         const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         print("LDAHAn16, ", .{});
-        if (memory_place >= 0xFF00 and memory_place <= 0xFFFF){
-        const n = gb.read_byte(memory_place);
-        print("n: Ox{X} --> memplace@0x{X}\n", .{n, memory_place});
-        print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
-        gb.cpu.set_byte(regID.a, n);
+        if (memory_place >= 0xFF00 and memory_place <= 0xFFFF) {
+            const n = gb.read_byte(memory_place);
+            print("n: Ox{X} --> memplace@0x{X}\n", .{ n, memory_place });
+            print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+            print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+            gb.cpu.set_byte(regID.a, n);
         }
         print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
         print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
@@ -693,7 +715,7 @@ const InstructionSet = struct {
         const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
-        print("LDn16A, n: Ox{X} --> memplace@{X}", .{n, memory_place});
+        print("LDn16A, n: Ox{X} --> memplace@{X}", .{ n, memory_place });
         print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
         print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.pc += 3;
@@ -702,7 +724,7 @@ const InstructionSet = struct {
         const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
-        print("LDHn16A, n: Ox{X} --> memplace@0x{X}\n", .{n, memory_place});
+        print("LDHn16A, n: Ox{X} --> memplace@0x{X}\n", .{ n, memory_place });
         print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
         print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.pc += 3;
@@ -718,7 +740,7 @@ const InstructionSet = struct {
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
-        print("LDr16A, n: Ox{X} --> memplace@0x{X}\n", .{n, memory_place});
+        print("LDr16A, n: Ox{X} --> memplace@0x{X}\n", .{ n, memory_place });
         gb.cpu.pc += 1;
     }
 
@@ -741,6 +763,147 @@ const InstructionSet = struct {
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
     }
+    fn EI(gb: *GB, _: InstrArgs) void { // TODO TEST
+        print("EI\n", .{});
+        gb.cpu.pc += 1;
+    }
+    fn RRCA(gb: *GB, _: InstrArgs) void { // TODO TEST
+        const a = gb.cpu.get_byte(regID.a);
+        print("RRCA\n", .{});
+        gb.cpu.set_byte(regID.a, a << 7 | a >> 1);
+        gb.cpu.f.c = (@as(u1, @truncate(a)) == 1);
+        gb.cpu.f.write();
+        gb.cpu.pc += 1;
+    }
+    fn PUSH(gb: *GB, args: InstrArgs) void {
+        var high: u8 = undefined;
+        var low: u8 = undefined;
+        if (args.target == regID.a) {
+            high = gb.cpu.get_byte(regID.a);
+            low = gb.cpu.f.value;
+            print("PUSH AF a: 0x{X}, f: 0x{X}\n", .{ high, low });
+        } else {
+            const value = gb.cpu.get_word(args.target);
+            high = @truncate(value >> 8);
+            low = @truncate(value);
+            print("PUSH 0x{X} from {any}\n", .{ value, args.target });
+        }
+
+        gb.cpu.sp -= 1;
+        gb.writeByte(gb.cpu.sp, high);
+        gb.cpu.sp -= 1;
+        gb.writeByte(gb.cpu.sp, low);
+        gb.cpu.pc += 1;
+    }
+    fn POP(gb: *GB, args: InstrArgs) void {
+        const high = gb.read_byte(gb.cpu.sp);
+        gb.cpu.sp += 1;
+        const low = gb.read_byte(gb.cpu.sp);
+        gb.cpu.sp += 1;
+        const value = @as(u16, high) << 8 | low;
+        print("POP 0x{X} --> {any}\n", .{ value, args.target });
+        if (args.target == regID.a) {
+            gb.cpu.set_byte(regID.a, high);
+            gb.cpu.f.value = low;
+            gb.cpu.f.write();
+        } else gb.cpu.set_word(args.target, value);
+        gb.cpu.pc += 1;
+    }
+    fn JP(gb: *GB, args: InstrArgs) void { // TODO ONLY 3 CYCLES IF NOT TAKEN OTHERWISE 4
+        print("JP", .{});
+        if (args.condition) {
+            const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
+            print("to 0x{X}\n", .{n});
+            gb.cpu.pc = n;
+        } else gb.cpu.pc += 3;
+    }
+    fn JR(gb: *GB, args: InstrArgs) void { // TODO ONLY 2 CYCLES IF NOT TAKEN OTHERWISE 3
+        print("JR, \tcondition:", .{});
+        var jump = true;
+        switch (args.flagConditions) {
+            .h => |*h| {
+                if (h.*) {
+                    println("h", .{});
+                    if (!gb.cpu.f.h) jump = false;
+                } else {
+                    println("not h", .{});
+                    if (gb.cpu.f.h) jump = false;
+                }
+            },
+            .z => |*z| {
+                if (z.*) {
+                    println("z", .{});
+                    if (!gb.cpu.f.z) jump = false;
+                } else {
+                    println("not z", .{});
+                    if (gb.cpu.f.z) jump = false;
+                }
+            },
+            .c => |*c| {
+                if (c.*) {
+                    println("c", .{});
+                    if (!gb.cpu.f.c) jump = false;
+                } else {
+                    println("not c", .{});
+                    if (gb.cpu.f.c) jump = false;
+                }
+            },
+            .s => |*s| {
+                if (s.*) {
+                    println("s", .{});
+                    if (!gb.cpu.f.s) jump = false;
+                } else {
+                    println("not s", .{});
+                    if (gb.cpu.f.s) jump = false;
+                }
+            },
+            .none => println("no condition, just jump", .{}),
+        }
+        if (jump) {
+            const dist: i8 = @bitCast(gb.read_byte(gb.cpu.pc + 1));
+            print(" by dist: [pc]{d} \t{d} bytes ", .{ gb.cpu.pc + 1, dist });
+            const new_mem: i17 = @as(i17, @intCast(gb.cpu.pc + 1)) + dist;
+            print("to pc:{d}\n", .{@as(u8, @intCast(new_mem))});
+            gb.cpu.pc = @as(u8, @intCast(new_mem));
+        } else { // next instruction condition failed
+            println("skipped jump, failed condition", .{});
+            gb.cpu.pc += 2;
+        }
+    }
+    fn JPHL(gb: *GB, _: InstrArgs) void {
+        print("JPHL\n", .{});
+        gb.cpu.pc = gb.cpu.get_word(regID.h);
+    }
+    fn CALLn16(gb: *GB, _: InstrArgs) void { //
+        const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
+        const ret = gb.cpu.pc + 3;
+        print("CALL to 0x{X}/{d}, later RET to 0x{X}/{d}", .{ n, n, ret, ret });
+        gb.cpu.sp -= 1;
+        gb.writeByte(gb.cpu.sp, @truncate(ret >> 8));
+        gb.cpu.sp -= 1;
+        gb.writeByte(gb.cpu.sp, @truncate(ret));
+        gb.cpu.pc = n;
+    }
+    fn RET(gb: *GB, args: InstrArgs) void { // TODO TEST
+        print("RET, condition: ", .{});
+        // var condition: bool = undefined;
+        _ = gb;
+        _ = args;
+        // switch (args.condition) {
+        //     .z => |*z| {
+        //         condition = gb.cpu.z == 0;
+        //     },
+        // const high = gb.read_byte(gb.cpu.sp);
+        // gb.cpu.sp+=1;
+        // const low = gb.read_byte(gb.cpu.sp);
+        // gb.cpu.sp+=1;
+        // const n = @as(u16, high) << 8 | low;
+        // print("to 0x{X}\n", .{n});
+        // gb.cpu.pc = n;
+        // }
+    }
+
+    // PREFIX INSTRUCTIONS
     fn BITTEST(gb: *GB, args: InstrArgs) void { // TODO TEST
         const bit: u3 = args.bit_target.bit;
         const target = gb.cpu.get_byte(args.bit_target.target);
@@ -761,85 +924,17 @@ const InstructionSet = struct {
         gb.cpu.f.write();
         gb.cpu.pc += 2;
     }
-    fn EI(gb: *GB, _: InstrArgs) void { // TODO TEST
-        print("EI\n", .{});
-        gb.cpu.pc += 1;
-    }
-    fn RRCA(gb: *GB, _: InstrArgs) void { // TODO TEST
-        const a = gb.cpu.get_byte(regID.a);
-        print("RRCA\n", .{});
-        gb.cpu.set_byte(regID.a, a << 7 | a >> 1);
-        gb.cpu.f.c = (@as(u1, @truncate(a)) == 1);
+    fn RL(gb: *GB, args: InstrArgs) void { // TODO TEST Rotate bits in register r8 left through carry.
+        const carried = gb.cpu.f.c;
+        const reg = gb.cpu.get_byte(args.target);
+        print("RL, target: {any}, prior: 0b{b}, carried = {d}\n", .{ args.target, reg, @intFromBool(carried) });
+        gb.cpu.f.c = @as(u1, @truncate(reg >> 7)) == 1;
+        const rotated: u8 = reg << 1 | @intFromBool(carried);
+        gb.cpu.f.z = rotated == 0;
         gb.cpu.f.write();
-        gb.cpu.pc += 1;
-    }
-    fn PUSH(gb: *GB, args: InstrArgs) void {
-        var high: u8 = undefined;
-        var low: u8 = undefined;
-        if (args.target == regID.a) {
-            high = gb.cpu.get_byte(regID.a);
-            low = gb.cpu.f.value;
-            print("PUSH AF a: 0x{X}, f: 0x{X}\n", .{high, low});
-        }
-        else {
-            const value = gb.cpu.get_word(args.target);
-            high = @truncate(value >> 8);
-            low = @truncate(value);
-            print("PUSH 0x{X}\n", .{value});
-        }
-        
-        gb.cpu.sp-=1;
-        gb.writeByte(gb.cpu.sp, high);
-        gb.cpu.sp-=1;
-        gb.writeByte(gb.cpu.sp, low);
-        gb.cpu.pc+=1;
-    }
-    fn POP(gb: *GB, args: InstrArgs) void {
-        const high = gb.read_byte(gb.cpu.sp);
-        gb.cpu.sp+=1;
-        const low = gb.read_byte(gb.cpu.sp);
-        gb.cpu.sp+=1;
-        const value = @as(u16, (high << 8)) | low;
-        print("POP 0x{X} --> {any}\n", .{args.target});
-        if (args.target == regID.a) {
-            gb.cpu.set_byte(regID.a, high);
-            gb.cpu.f.value = low;
-            gb.cpu.f.write();
-        }
-        else gb.cpu.set_word(args.target, value);
-        gb.cpu.pc+=1;
-    }
-    fn JP(gb: *GB, args: InstrArgs) void { // TODO ONLY 3 CYCLES IF NOT TAKEN OTHERWISE 4
-        print("JP", .{});
-        if (args.condition) {
-            const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
-            print("to 0x{X}\n", .{n});
-            gb.cpu.pc=n;
-        }
-        else gb.cpu.pc+=3;
-    }
-    fn JPHL(gb: *GB, _: InstrArgs) void {
-        print("JPHL\n", .{});
-        gb.cpu.pc=gb.cpu.get_word(regID.h);
-    }
-    fn CALLn16(gb: *GB, _: InstrArgs) void { // 
-            const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
-            const ret = gb.cpu.pc + 3;
-            print("CALL to 0x{X}/{d}, later RET to 0x{X}/{d}", .{n,n,ret,ret});
-            gb.cpu.sp-=1;
-            gb.writeByte(gb.cpu.sp, @truncate(ret >> 8));
-            gb.cpu.sp-=1;
-            gb.writeByte(gb.cpu.sp, @truncate(ret));
-            gb.cpu.pc=n;
-    }
-    fn RET(gb: *GB, _: InstrArgs) void {
-        const high = gb.read_byte(gb.cpu.sp);
-        gb.cpu.sp+=1;
-        const low = gb.read_byte(gb.cpu.sp);
-        gb.cpu.sp+=1;
-        const n = @as(u16, high) << 8 | low;
-        print("RET to 0x{X}", .{n});
-        gb.cpu.pc = n;
+        gb.cpu.set_byte(args.target, rotated);
+        print("after: 0b{b}\n", .{gb.cpu.get_byte(args.target)});
+        gb.cpu.pc += 2;
     }
 };
 
