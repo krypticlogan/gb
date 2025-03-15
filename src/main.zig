@@ -1210,12 +1210,11 @@ const GPU = struct {
         const b2 = self.read_vram(normalized_address + 1);
 
         const tile_index = fixed_address / 16; // 2 bpp * 8 rows of pixels per tile
-        _ = tile_index;
-        const row = (fixed_address % 16) / 2; // new row every two bytes
-        print("Row: {d}", .{row});
-        for (0..8) |i| { // loop through pixels in current row
-            const msb: u1 = @truncate(b2 >> @intCast(i)); // most significant bit
-            const lsb: u1 = @truncate(b1 >> @intCast(i));
+        const row_index = (fixed_address % 16) / 2; // new row every two bytes
+        print("Row: {d}", .{row_index});
+        for (0..8) |pixel_index| { // loop through pixels in current row
+            const msb: u1 = @truncate(b2 >> @intCast(pixel_index)); // most significant bit
+            const lsb: u1 = @truncate(b1 >> @intCast(pixel_index));
             print(" 0b{b}{b} ", .{ msb, lsb });
 
             const color = switch (@as(u2, msb) << 1 | lsb) {
@@ -1225,7 +1224,9 @@ const GPU = struct {
                 0b11 => GPU.Color.black,
             };
             print("color: {any} code: 0b{b}, ", .{ color, @intFromEnum(color) });
+            self.tile_set[tile_index][row_index][pixel_index] = color;
         }
+        
         print("\n", .{});
     }
 
@@ -1239,24 +1240,115 @@ const GPU = struct {
     }
 };
 
-const gfxWidth = 160;
-const gfxHeight = 144;
-const gfxScale = 6;
-const window_height = gfxHeight * gfxScale;
-const window_width = gfxWidth * gfxScale;
-const grid_pixel_sz = window_width / gfxWidth;
+///Contains the fields necessary to create a display, 
+///- Screen, Height, Width, Rendering
+const LCD = struct {
+    const aboveScreen = 20;
+    const sideScreen = 20;
+    const belowScreen = 2*gfxHeight;
+    const gfxWidth = 160;
+    const gfxHeight = 144;
+    const gfxScale = 3;
+    const window_height = gfxHeight * gfxScale;
+    const window_width = gfxWidth * gfxScale;
+    const grid_pixel_sz = window_width / gfxWidth;
 
+    screen: [gfxHeight][gfxWidth]GPU.Color = undefined,
+    background: [256][256]GPU.Color = undefined, // defines the background pixels of the gameboy
+    window: [256][256]GPU.Color = undefined, // defines the foreground and sprites
+    renderer: *g.SDL_Renderer = undefined,
+    win: *g.SDL_Window = undefined,
+
+    fn init(self: *@This()) !void {
+        for (&self.screen) |*row| {
+            @memset(row, GPU.Color.white);
+        }
+        try self.startAndCreateRenderer();
+    }
+
+    pub fn render(self: *@This()) void {
+        _ = g.SDL_SetRenderDrawColor(self.renderer, 70, 70, 70, 0); //
+        _ = g.SDL_RenderClear(self.renderer);
+        var rect = g.SDL_FRect{};
+        for (self.screen, 0..) |row, y| {
+            for (row, 0..) |pixel, x| {
+                rect.x = @as(f32, @floatFromInt(x)) * grid_pixel_sz + grid_pixel_sz*1/10 + sideScreen; 
+                rect.y = @as(f32, @floatFromInt(y)) * grid_pixel_sz + grid_pixel_sz*1/10 + aboveScreen; 
+                rect.h = grid_pixel_sz*9/10;
+                rect.w = grid_pixel_sz*9/10;
+                switch (pixel) {
+                    GPU.Color.white => {
+                        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 170, 0, 2);
+                    },
+                    GPU.Color.lgray => {
+                        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 130, 0, 2);
+                    },
+                    GPU.Color.dgray => {
+                        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 90, 0, 2);
+                    },
+                    GPU.Color.black => {
+                        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 50, 0, 2);
+                    },
+                }
+                if (!g.SDL_RenderFillRect(self.renderer, &rect)) {
+                    print("SDL_RenderFillRect failed: {s}\n", .{g.SDL_GetError()});
+                }
+            }
+        }
+        _ = g.SDL_RenderPresent(self.renderer);
+    }
+    fn startAndCreateRenderer(self: *@This()) !void {
+        if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
+            print("SDL_Init failed: {s}\n", .{g.SDL_GetError()});
+            return error.InitializationFailed;
+        }
+        var win: ?*g.SDL_Window = null;
+        var renderer: ?*g.SDL_Renderer = null;
+        if (!g.SDL_CreateWindowAndRenderer("gameboy!", gfxWidth * grid_pixel_sz + sideScreen*2, gfxHeight * grid_pixel_sz + belowScreen + aboveScreen, 0, &win, &renderer)) {
+            print("Failed to create window or renderer: {s}\n", .{g.SDL_GetError()});
+            return error.CreationFailure;
+        }
+        if (win == null) {
+            print("Failed to create window: {s}\n", .{g.SDL_GetError()});
+            return error.WindowNull;
+        }
+        if (renderer == null) {
+            print("Failed to create renderer: {s}\n", .{g.SDL_GetError()});
+            return error.RendererFailure;
+        }
+        self.renderer = renderer.?;
+        self.win = win.?;
+    }
+    pub fn screen_dump(self: *@This()) void {
+        print("Actual memspace dump: \n", .{});
+        for (self.screen) |row| {
+            for (row) |pixel| {
+                print("{any}", .{pixel});
+            }
+            // if (i != 0 and i % 80 == 0) print("\n", .{});
+        }
+        print("\n", .{});
+    }
+    fn endSDL(self: *@This()) void {
+        g.SDL_Quit();
+        g.SDL_DestroyWindow(self.win);
+        g.SDL_DestroyRenderer(self.renderer);
+    }
+    
+    
+};
+
+///Gameboy Machine, defer endGB
 pub const GB = struct {
     cpu: CPU = CPU{},
     gpu: GPU = GPU{},
     apu: APU = APU{},
-    screen: [gfxHeight][gfxWidth]GPU.Color = undefined,
-    background: [256][256]GPU.Color = undefined, // defines the background pixels of the gameboy
-    window: [256][256]GPU.Color = undefined, // defines the foreground and sprites
+    lcd: LCD = LCD{},
     memory: [0xFFFF]u8 = undefined,
 
-    const special_registers = enum(u8) {
-        stat = 0xFF51,
+    const special_registers = enum(u8) { 
+        lcdc = 0xFF40, // LCDC (LCD Control) Enables/disables layers, defines rendering mode
+        stat = 0xFF51, // $FF41 STAT (Status) Tracks PPU state
         // 6 LYC int select (Read/Write): If set, selects the LYC == LY condition for the STAT interrupt.
         // 5 Mode 2 int select (Read/Write): If set, selects the Mode 2 condition for the STAT interrupt.
         // 4 Mode 1 int select (Read/Write): If set, selects the Mode 1 condition for the STAT interrupt.
@@ -1264,21 +1356,27 @@ pub const GB = struct {
         // 2 LYC == LY (Read-only): Set when LY contains the same value as LYC; it is constantly updated.
         // 1-0 PPU mode (Read-only): Indicates the PPU’s current status. Reports 0 instead when the PPU is disabled.
         //
-        ly = 0xFF44,
-        lyc = 0xFF45,
+        SCY = 0xFF42, // $FF42 SCY (Scroll Y) Background vertical scroll
+        SCX = 0xFF43, // $FF43 SCX (Scroll X) Background horizontal scroll
+        ly = 0xFF44, // $FF45 LYC (Compare LY) Interrupt if LY matches LYC
+        DMAT = 0xFF46, // $FF46 DMA Transfers 160 bytes from RAM to OAM
+        BGP = 0xFF47, // $FF47 BGP (BG Palette) Defines colors for BG tiles
+        OBP0 = 0xFF48, // $FF48 OBP0 (OBJ Palette 0) Defines colors for sprite palette 0
+        OBP1 = 0xFF49, // $FF49 OBP1 (OBJ Palette 1) Defines colors for sprite palette 1
+        WY = 0xFF4A, // $FF4A WY (Window Y) Window vertical position
+        WX = 0xFF4B // $FF4B WX (Window X) Window horizontal position
     };
-
+    
+    
     const LOGO: [48]u8 = .{ 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E };
 
     pub fn init(self: *@This()) !void {
         @memset(&self.memory, 0);
-        @memcpy(self.memory[0x0104 .. 0x133 + 1], &LOGO);
+        @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
         try self.cpu.init();
         try self.gpu.init(self);
-        for (&self.screen) |*row| {
-            @memset(row, GPU.Color.white);
-        }
-        self.drawM();
+        try self.lcd.init();
+        // self.drawM();
     }
 
     pub fn read_byte(self: *@This(), address: usize) u8 {
@@ -1316,51 +1414,7 @@ pub const GB = struct {
         //     try self.cpu.execute(self);
         // }
     }
-    fn drawM(self: *@This()) void {
-        for (&self.screen, 0..) |*row, y| {
-            for (0..row.len) |x| {
-                const bg = GPU.Color.black;
-                const fg = GPU.Color.lgray;
-                if ((y > 20 and y < 120 and x > 30 and x < 50) or (y > 20 and y < 120 and x > 30 + 80 and x < 50 + 80) or (y > 20 and y < 30 and x <= 50 + 60 / 3 and x >= 50) or (y > 20 and y < 30 and x >= 50 + 2 * 60 / 3 and x <= 30 + 80) or (y > 25 and y < 35 and x >= 50 + 60 / 3 and x <= 50 + 2 * 60 / 3) or (y >= 30 and y < 40 and x >= 50 + 60 / 2 - 1 and x <= 50 + 60 / 2 + 1)) {
-                    row[x] = fg;
-                } else {
-                    row[x] = bg;
-                }
-            }
-        }
-    }
-    pub fn render(self: *@This(), renderer: *g.SDL_Renderer) void {
-        _ = g.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0); //
-        _ = g.SDL_RenderClear(renderer);
-        var rect = g.SDL_FRect{};
-        for (self.screen, 0..) |row, y| {
-            for (row, 0..) |pixel, x| {
-                rect.x = @floatFromInt(x * grid_pixel_sz);
-                rect.y = @floatFromInt(y * grid_pixel_sz);
-                rect.h = grid_pixel_sz;
-                rect.w = grid_pixel_sz;
-                switch (pixel) {
-                    GPU.Color.white => {
-                        _ = g.SDL_SetRenderDrawColor(renderer, 0, 200, 0, 2);
-                    },
-                    GPU.Color.lgray => {
-                        _ = g.SDL_SetRenderDrawColor(renderer, 0, 150, 0, 255);
-                    },
-                    GPU.Color.dgray => {
-                        _ = g.SDL_SetRenderDrawColor(renderer, 0, 100, 0, 255);
-                    },
-                    GPU.Color.black => {
-                        _ = g.SDL_SetRenderDrawColor(renderer, 0, 50, 0, 255);
-                    },
-                }
-                if (!g.SDL_RenderFillRect(renderer, &rect)) {
-                    print("SDL_RenderFillRect failed: {s}\n", .{g.SDL_GetError()});
-                }
-            }
-        }
-        _ = g.SDL_RenderPresent(renderer);
-    }
-
+    
     pub fn load_game(self: *@This(), game_path: []const u8) !void {
         const romHeaderStart = 0x0100;
         const rom = try std.fs.cwd().openFile(game_path, .{});
@@ -1376,8 +1430,10 @@ pub const GB = struct {
 
     pub fn cycle(self: *@This()) !void {
         try self.cpu.execute(self);
+        self.lcd.render();
         //TODO: Update peripherals & timing
     }
+
 
     pub fn mem_dump(self: *@This(), start: u16, end: u16) void {
         print("printing bytes:\n", .{});
@@ -1396,30 +1452,9 @@ pub const GB = struct {
         }
         print("\n", .{});
     }
-
-    pub fn screen_dump(self: *@This()) void {
-        print("Actual memspace dump: \n", .{});
-        for (self.screen) |row| {
-            for (row) |pixel| {
-                print("{any}", .{pixel});
-            }
-            // if (i != 0 and i % 80 == 0) print("\n", .{});
-        }
-        print("\n", .{});
+    fn endGB(self: *@This()) void {
+        self.lcd.endSDL();
     }
-    // specs
-    // CPU freq (TIMING) 4.194304 MHz1, Up to 8.388608 MHz
-    // Work RAM 8 KiB, 32 KiB3 (4 + 7 × 4 KiB)
-    // Video RAM 8 KiB, 16 KiB3 (2 × 8 KiB)
-
-    // OBJ ("sprites") 8 × 8 or 8 × 16 ; max 40 per screen, 10 per line
-    // Palettes BG: 1 × 4, OBJ: 2 × 3, BG: 8 × 4, OBJ: 8 × 33
-    // Colors 4 shades of green, 32768 colors (15-bit RGB)
-    // Horizontal sync 9.198 KHz, 9.198 KHz
-    // Vertical sync 59.73 Hz, 59.73 Hz
-    // Sound 4 channels with stereo output
-    // memory
-    // The Game Boy has a 16-bit address bus, which is used to address ROM, RAM, and I/O.
 };
 
 var running = true;
@@ -1429,51 +1464,22 @@ pub fn main() !void {
         print("Couldn't inititalize GameBoy, Error: {any}\n", .{err});
         return;
     };
-
     print("GB init!\n", .{});
-
     gb.boot() catch |err| { // loads the boot rom and executes it
-        // gb.mem_dump(0, 256);
         print("Couldn't boot GameBoy, err: {any}\t", .{err});
         return;
     };
-
-    const win_render = try startAndCreateRenderer();
-    const win = win_render[0];
-    const renderer = win_render[1];
-    defer endSDL(win, renderer);
+    defer gb.endGB();
     print("\n", .{});
 
     // gb.screen_dump();
     while (running) {
-        // print("runnning", .{});
+        try gb.cycle();
         try getEvents();
-        gb.drawM();
-        gb.render(renderer);
     }
 }
 
-fn startAndCreateRenderer() !struct { *g.SDL_Window, *g.SDL_Renderer } {
-    if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
-        print("SDL_Init failed: {s}\n", .{g.SDL_GetError()});
-        return error.InitializationFailed;
-    }
-    var win: ?*g.SDL_Window = null;
-    var renderer: ?*g.SDL_Renderer = null;
-    if (!g.SDL_CreateWindowAndRenderer("gameboy!", gfxWidth * grid_pixel_sz, gfxHeight * grid_pixel_sz, 0, &win, &renderer)) {
-        print("Failed to create window or renderer: {s}\n", .{g.SDL_GetError()});
-        return error.CreationFailure;
-    }
-    if (win == null) {
-        print("Failed to create window: {s}\n", .{g.SDL_GetError()});
-        return error.WindowNull;
-    }
-    if (renderer == null) {
-        print("Failed to create renderer: {s}\n", .{g.SDL_GetError()});
-        return error.RendererFailure;
-    }
-    return .{ win.?, renderer.? };
-}
+
 fn getEvents() !void {
     var event: g.SDL_Event = undefined;
     while (g.SDL_PollEvent(&event)) {
@@ -1487,8 +1493,4 @@ fn getEvents() !void {
         }
     }
 }
-fn endSDL(win: *g.SDL_Window, renderer: *g.SDL_Renderer) void {
-    g.SDL_Quit();
-    g.SDL_DestroyWindow(win);
-    g.SDL_DestroyRenderer(renderer);
-}
+
