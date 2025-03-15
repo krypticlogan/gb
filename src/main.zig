@@ -2,6 +2,13 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 const std = @import("std");
+const g = @cImport({
+    @cDefine("SDL_DISABLE_OLD_NAMES", {});
+    @cInclude("SDL3/SDL.h");
+    @cInclude("SDL3/SDL_revision.h");
+    @cDefine("SDL_MAIN_HANDLED", {});
+    @cInclude("SDL3/SDL_main.h");
+});
 const print = std.debug.print;
 fn println(comptime fmt: []const u8, args: anytype) void {
     print(fmt, args);
@@ -30,6 +37,7 @@ const FlagRegister = struct {
             @as(u8, @intFromBool(self.h)) << 5 |
             @as(u8, @intFromBool(self.c)) << 4;
         self.check();
+        println("new flags: z: {any}, c: {any}, s: {any}, h: {any}", .{ self.z, self.c, self.s, self.h });
     }
 };
 
@@ -50,41 +58,41 @@ const InstructionSet = struct {
         .{ 0x09, null, .{ .none = {} }, 8 }, // ADD HL, BC
         .{ 0x0A, null, .{ .none = {} }, 8 }, // LD A, (BC)
         .{ 0x0B, null, .{ .none = {} }, 8 }, // DEC BC
-        .{ 0x0C, INCr8, .{ .target = regID.c }, 2 }, // INC C
-        .{ 0x0D, null, .{ .none = {} }, 4 }, // DEC C
+        .{ 0x0C, INCr8, .{ .target = regID.c }, 1 }, // INC C
+        .{ 0x0D, DECr8, .{ .target = regID.c }, 1 }, // DEC C
         .{ 0x0E, LD8, .{ .target = regID.c }, 2 }, // LD C, d8
         .{ 0x0F, RRCA, .{ .none = {} }, 1 }, // RRCA
         .{ 0x10, null, .{ .none = {} }, 4 }, // STOP 0
-        .{ 0x11, null, .{ .none = {} }, 12 }, // LD DE, d16
+        .{ 0x11, LD16, .{ .target = regID.d }, 3 }, // LD DE, d16
         .{ 0x12, null, .{ .none = {} }, 8 }, // LD (DE), A
-        .{ 0x13, null, .{ .none = {} }, 8 }, // INC DE
-        .{ 0x14, null, .{ .none = {} }, 4 }, // INC D
-        .{ 0x15, null, .{ .none = {} }, 4 }, // DEC D
-        .{ 0x16, null, .{ .none = {} }, 8 }, // LD D, d8
+        .{ 0x13, INCr16, .{ .target = regID.d }, 2 }, // INC DE
+        .{ 0x14, INCr8, .{ .target = regID.d }, 1 }, // INC D
+        .{ 0x15, DECr8, .{ .target = regID.d }, 1 }, // DEC D
+        .{ 0x16, LD8, .{ .target = regID.d }, 2 }, // LD D, d8
         .{ 0x17, null, .{ .none = {} }, 4 }, // RLA
-        .{ 0x18, null, .{ .none = {} }, 12 }, // JR r8
-        .{ 0x19, null, .{ .none = {} }, 8 }, // ADD HL, DE
-        .{ 0x1A, LDr16A, .{ .target = regID.d }, 2 }, // LD A, (DE)
-        .{ 0x1B, null, .{ .none = {} }, 8 }, // DEC DE
-        .{ 0x1C, null, .{ .none = {} }, 4 }, // INC E
-        .{ 0x1D, null, .{ .none = {} }, 4 }, // DEC E
-        .{ 0x1E, null, .{ .none = {} }, 8 }, // LD E, d8
+        .{ 0x18, JR, .{ .flagConditions = .{ .none = true } }, 3 }, // JR r8
+        .{ 0x19, ADDHL, .{ .target = regID.d }, 8 }, // ADD HL, DE
+        .{ 0x1A, LDAr16, .{ .target = regID.d }, 2 }, // LD A, (DE)
+        .{ 0x1B, DECr16, .{ .target = regID.d }, 8 }, // DEC DE
+        .{ 0x1C, INCr8, .{ .target = regID.e }, 4 }, // INC E
+        .{ 0x1D, DECr8, .{ .target = regID.e }, 4 }, // DEC E
+        .{ 0x1E, LD8, .{ .target = regID.e }, 8 }, // LD E, d8
         .{ 0x1F, null, .{ .none = {} }, 4 }, // RRA
         .{ 0x20, JR, .{ .flagConditions = .{ .z = false } }, 3 }, // JR NZ, r8
         .{ 0x21, LD16, .{ .target = regID.h }, 3 }, // LD HL, d16
         .{ 0x22, LDHLIA, .{ .none = {} }, 2 }, // LD (HL+), A
-        .{ 0x23, null, .{ .none = {} }, 8 }, // INC HL
-        .{ 0x24, null, .{ .none = {} }, 4 }, // INC H
+        .{ 0x23, INCr16, .{ .target = regID.h }, 2 }, // INC HL
+        .{ 0x24, INCr8, .{ .target = regID.h }, 4 }, // INC H
         .{ 0x25, null, .{ .none = {} }, 4 }, // DEC H
         .{ 0x26, null, .{ .none = {} }, 8 }, // LD H, d8
         .{ 0x27, null, .{ .none = {} }, 4 }, // DAA
-        .{ 0x28, null, .{ .none = {} }, 12 }, // JR Z, r8
+        .{ 0x28, JR, .{ .flagConditions = .{ .z = true } }, 3 }, // JR Z, r8
         .{ 0x29, null, .{ .none = {} }, 8 }, // ADD HL, HL
         .{ 0x2A, null, .{ .none = {} }, 8 }, // LD A, (HL+)
         .{ 0x2B, null, .{ .none = {} }, 8 }, // DEC HL
         .{ 0x2C, null, .{ .none = {} }, 4 }, // INC L
         .{ 0x2D, null, .{ .none = {} }, 4 }, // DEC L
-        .{ 0x2E, null, .{ .none = {} }, 8 }, // LD L, d8
+        .{ 0x2E, LD8, .{ .target = regID.l }, 8 }, // LD L, d8
         .{ 0x2F, null, .{ .none = {} }, 4 }, // CPL
         .{ 0x30, null, .{ .none = {} }, 12 }, // JR NC, r8
         .{ 0x31, LDSP16, .{ .none = {} }, 3 }, // LD SP, d16
@@ -99,7 +107,7 @@ const InstructionSet = struct {
         .{ 0x3A, null, .{ .none = {} }, 8 }, // LD A, (HL-)
         .{ 0x3B, null, .{ .none = {} }, 8 }, // DEC SP
         .{ 0x3C, null, .{ .none = {} }, 4 }, // INC A
-        .{ 0x3D, null, .{ .none = {} }, 4 }, // DEC A
+        .{ 0x3D, DECr8, .{ .target = regID.a }, 4 }, // DEC A
         .{ 0x3E, LD8, .{ .target = regID.a }, 1 }, // LD A, d8
         .{ 0x3F, null, .{ .none = {} }, 4 }, // CCF
         .{ 0x40, null, .{ .none = {} }, 4 }, // LD B, B
@@ -117,7 +125,7 @@ const InstructionSet = struct {
         .{ 0x4C, null, .{ .none = {} }, 4 }, // LD C, H
         .{ 0x4D, null, .{ .none = {} }, 4 }, // LD C, L
         .{ 0x4E, null, .{ .none = {} }, 8 }, // LD C, (HL)
-        .{ 0x4F, LDr16, .{ .targets = .{ .to = regID.c, .from = regID.a } }, 1 }, // LD C, A
+        .{ 0x4F, LDr8, .{ .targets = .{ .to = regID.c, .from = regID.a } }, 1 }, // LD C, A
         .{ 0x50, null, .{ .none = {} }, 4 }, // LD D, B
         .{ 0x51, null, .{ .none = {} }, 4 }, // LD D, C
         .{ 0x52, null, .{ .none = {} }, 4 }, // LD D, D
@@ -125,7 +133,7 @@ const InstructionSet = struct {
         .{ 0x54, null, .{ .none = {} }, 4 }, // LD D, H
         .{ 0x55, null, .{ .none = {} }, 4 }, // LD D, L
         .{ 0x56, null, .{ .none = {} }, 8 }, // LD D, (HL)
-        .{ 0x57, null, .{ .none = {} }, 4 }, // LD D, A
+        .{ 0x57, LDr8, .{ .targets = .{ .to = regID.d, .from = regID.a } }, 4 }, // LD D, A
         .{ 0x58, null, .{ .none = {} }, 4 }, // LD E, B
         .{ 0x59, null, .{ .none = {} }, 4 }, // LD E, C
         .{ 0x5A, null, .{ .none = {} }, 4 }, // LD E, D
@@ -141,7 +149,7 @@ const InstructionSet = struct {
         .{ 0x64, null, .{ .none = {} }, 4 }, // LD H, H
         .{ 0x65, null, .{ .none = {} }, 4 }, // LD H, L
         .{ 0x66, null, .{ .none = {} }, 8 }, // LD H, (HL)
-        .{ 0x67, null, .{ .none = {} }, 4 }, // LD H, A
+        .{ 0x67, LDr8, .{ .targets = .{ .to = regID.h, .from = regID.a } }, 4 }, // LD H, A
         .{ 0x68, null, .{ .none = {} }, 4 }, // LD L, B
         .{ 0x69, null, .{ .none = {} }, 4 }, // LD L, C
         .{ 0x6A, null, .{ .none = {} }, 4 }, // LD L, D
@@ -158,21 +166,21 @@ const InstructionSet = struct {
         .{ 0x75, null, .{ .none = {} }, 8 }, // LD (HL), L
         .{ 0x76, null, .{ .none = {} }, 4 }, // HALT
         .{ 0x77, LDHLR, .{ .target = regID.a }, 2 }, // LD (HL), A
-        .{ 0x78, null, .{ .none = {} }, 4 }, // LD A, B
-        .{ 0x79, null, .{ .none = {} }, 4 }, // LD A, C
-        .{ 0x7A, null, .{ .none = {} }, 4 }, // LD A, D
-        .{ 0x7B, null, .{ .none = {} }, 4 }, // LD A, E
-        .{ 0x7C, null, .{ .none = {} }, 4 }, // LD A, H
-        .{ 0x7D, null, .{ .none = {} }, 4 }, // LD A, L
+        .{ 0x78, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.b } }, 1 }, // LD A, B
+        .{ 0x79, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.c } }, 1 }, // LD A, C
+        .{ 0x7A, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.d } }, 1 }, // LD A, D
+        .{ 0x7B, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.e } }, 1 }, // LD A, E
+        .{ 0x7C, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.h } }, 1 }, // LD A, H
+        .{ 0x7D, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.l } }, 1 }, // LD A, L
         .{ 0x7E, null, .{ .none = {} }, 8 }, // LD A, (HL)
-        .{ 0x7F, null, .{ .none = {} }, 4 }, // LD A, A
+        .{ 0x7F, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.a } }, 1 }, // LD A, A
         .{ 0x80, ADDr8A, .{ .target = regID.b }, 1 }, // ADD A, B
         .{ 0x81, null, .{ .none = {} }, 4 }, // ADD A, C
         .{ 0x82, null, .{ .none = {} }, 4 }, // ADD A, D
         .{ 0x83, null, .{ .none = {} }, 4 }, // ADD A, E
         .{ 0x84, null, .{ .none = {} }, 4 }, // ADD A, H
         .{ 0x85, null, .{ .none = {} }, 4 }, // ADD A, L
-        .{ 0x86, null, .{ .none = {} }, 8 }, // ADD A, (HL)
+        .{ 0x86, ADDHL, .{ .none = {} }, 2 }, // ADD A, (HL)
         .{ 0x87, null, .{ .none = {} }, 4 }, // ADD A, A
         .{ 0x88, null, .{ .none = {} }, 4 }, // ADC A, B
         .{ 0x89, null, .{ .none = {} }, 4 }, // ADC A, C
@@ -182,14 +190,14 @@ const InstructionSet = struct {
         .{ 0x8D, null, .{ .none = {} }, 4 }, // ADC A, L
         .{ 0x8E, null, .{ .none = {} }, 8 }, // ADC A, (HL)
         .{ 0x8F, null, .{ .none = {} }, 4 }, // ADC A, A
-        .{ 0x90, null, .{ .none = {} }, 4 }, // SUB B
-        .{ 0x91, null, .{ .none = {} }, 4 }, // SUB C
-        .{ 0x92, null, .{ .none = {} }, 4 }, // SUB D
-        .{ 0x93, null, .{ .none = {} }, 4 }, // SUB E
-        .{ 0x94, null, .{ .none = {} }, 4 }, // SUB H
-        .{ 0x95, null, .{ .none = {} }, 4 }, // SUB L
+        .{ 0x90, SUBAr8, .{ .target = regID.b }, 1 }, // SUB B
+        .{ 0x91, SUBAr8, .{ .target = regID.c }, 1 }, // SUB C
+        .{ 0x92, SUBAr8, .{ .target = regID.d }, 1 }, // SUB D
+        .{ 0x93, SUBAr8, .{ .target = regID.e }, 1 }, // SUB E
+        .{ 0x94, SUBAr8, .{ .target = regID.h }, 1 }, // SUB H
+        .{ 0x95, SUBAr8, .{ .target = regID.l }, 14 }, // SUB L
         .{ 0x96, null, .{ .none = {} }, 8 }, // SUB (HL)
-        .{ 0x97, null, .{ .none = {} }, 4 }, // SUB A
+        .{ 0x97, SUBAr8, .{ .target = regID.a }, 1 }, // SUB A
         .{ 0x98, null, .{ .none = {} }, 4 }, // SBC A, B
         .{ 0x99, null, .{ .none = {} }, 4 }, // SBC A, C
         .{ 0x9A, null, .{ .none = {} }, 4 }, // SBC A, D
@@ -228,7 +236,7 @@ const InstructionSet = struct {
         .{ 0xBB, null, .{ .none = {} }, 4 }, // CP E
         .{ 0xBC, null, .{ .none = {} }, 4 }, // CP H
         .{ 0xBD, null, .{ .none = {} }, 4 }, // CP L
-        .{ 0xBE, null, .{ .none = {} }, 8 }, // CP (HL)
+        .{ 0xBE, CPAHL, .{ .none = {} }, 8 }, // CP (HL)
         .{ 0xBF, null, .{ .none = {} }, 4 }, // CP A
         .{ 0xC0, null, .{ .none = {} }, 20 }, // RET NZ
         .{ 0xC1, POP, .{ .target = regID.b }, 12 }, // POP BC
@@ -239,11 +247,11 @@ const InstructionSet = struct {
         .{ 0xC6, null, .{ .none = {} }, 8 }, // ADD A, d8
         .{ 0xC7, null, .{ .none = {} }, 16 }, // RST 00H
         .{ 0xC8, null, .{ .none = {} }, 20 }, // RET Z
-        .{ 0xC9, null, .{ .none = {} }, 16 }, // RET
+        .{ 0xC9, RET, .{ .flagConditions = .{ .none = true } }, 4 }, // RET
         .{ 0xCA, null, .{ .none = {} }, 16 }, // JP Z, a16
         .{ 0xCB, null, .{ .none = {} }, 4 }, // PREFIX CB
         .{ 0xCC, null, .{ .none = {} }, 24 }, // CALL Z, a16
-        .{ 0xCD, CALLn16, .{ .none = {} }, 6 }, // CALL a16
+        .{ 0xCD, CALLn16, .{ .flagConditions = .{ .none = true } }, 6 }, // CALL a16
         .{ 0xCE, null, .{ .none = {} }, 8 }, // ADC A, d8
         .{ 0xCF, null, .{ .none = {} }, 16 }, // RST 08H
         .{ 0xD0, null, .{ .none = {} }, 20 }, // RET NC
@@ -272,13 +280,13 @@ const InstructionSet = struct {
         .{ 0xE7, null, .{ .none = {} }, 16 }, // RST 20H
         .{ 0xE8, null, .{ .none = {} }, 16 }, // ADD SP, r8
         .{ 0xE9, null, .{ .none = {} }, 4 }, // JP (HL)
-        .{ 0xEA, null, .{ .none = {} }, 16 }, // LD (a16), A
+        .{ 0xEA, LDn16A, .{ .none = {} }, 4 }, // LD (a16), A
         .{ 0xEB, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xEC, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xED, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xEE, null, .{ .none = {} }, 8 }, // XOR d8
         .{ 0xEF, null, .{ .none = {} }, 16 }, // RST 28H
-        .{ 0xF0, null, .{ .none = {} }, 12 }, // LDH A, (a8)
+        .{ 0xF0, LDHAn16, .{ .none = {} }, 12 }, // LDH A, (a8)
         .{ 0xF1, null, .{ .none = {} }, 12 }, // POP AF
         .{ 0xF2, null, .{ .none = {} }, 8 }, // LD A, (C)
         .{ 0xF3, null, .{ .none = {} }, 4 }, // DI
@@ -292,7 +300,7 @@ const InstructionSet = struct {
         .{ 0xFB, EI, .{ .none = {} }, 1 }, // EI
         .{ 0xFC, null, .{ .none = {} }, 4 }, // NOP
         .{ 0xFD, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xFE, null, .{ .none = {} }, 8 }, // CP d8
+        .{ 0xFE, CPAn8, .{ .none = {} }, 2 }, // CP d8
         .{ 0xFF, null, .{ .none = {} }, 16 }, // RST 38H
     };
 
@@ -579,7 +587,7 @@ const InstructionSet = struct {
     fn INCr8(gb: *GB, args: InstrArgs) void { // TODO TEST -- overflow? r16 too
         const value = gb.cpu.get_byte(args.target);
         print("INCr8, target: {any}\n", .{args.target});
-        gb.cpu.set_byte(args.target, value + 1);
+        gb.cpu.set_byte(args.target, @addWithOverflow(value, 1)[0]);
         gb.cpu.f.h = (value & 0xF + 1) & 0x10 == 0x10; // half carry conditions
         gb.cpu.f.z = gb.cpu.get_byte(args.target) == 0;
         gb.cpu.f.s = false;
@@ -587,44 +595,46 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
     }
     fn INCr16(gb: *GB, args: InstrArgs) void { // TODO TEST
-        const value = gb.cpu.get_byte(args.target);
+        const value = gb.cpu.get_word(args.target);
+        const res: u16 = @addWithOverflow(value, 1)[0];
         print("INCr16, target: {any}\n", .{args.target});
-        gb.cpu.set_word(args.target, value + 1);
+        // println("value: 0x{X} ({d}) + 1 = 0x{X} ({d})", .{value, value, res, res});
+        gb.cpu.set_word(args.target, res);
         gb.cpu.pc += 1;
     }
     fn DECr8(gb: *GB, args: InstrArgs) void { // TODO TEST -- overflow? r16 too
         const value = gb.cpu.get_byte(args.target);
         print("DECr8, target: {any}\n", .{args.target});
-        gb.cpu.set_byte(args.target, value - 1);
+        gb.cpu.set_byte(args.target, @subWithOverflow(value, 1)[0]);
         gb.cpu.f.z = value == 1;
         gb.cpu.f.s = true;
-        gb.cpu.f.h = (value & 0xF - 1) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.h = (value & 0xF) & 0x10 == 0x10; // half carry conditions
         gb.cpu.f.write();
         gb.cpu.pc += 1;
     }
     fn DECr16(gb: *GB, args: InstrArgs) void { // TODO TEST
         const value = gb.cpu.get_byte(args.target);
         print("DECr16, target: {any}\n", .{args.target});
-        gb.cpu.set_word(args.target, value - 1);
+        gb.cpu.set_word(args.target, @subWithOverflow(value, 1)[0]);
         gb.cpu.pc += 1;
     }
     fn LD8(gb: *GB, args: InstrArgs) void { // LD r8, n8 TODO TEST
         const n: u8 = gb.read_byte(gb.cpu.pc + 1);
         print("LD8, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
-        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_byte(args.target, n);
         gb.cpu.pc += 2;
     }
     fn LD16(gb: *GB, args: InstrArgs) void { // LD r16, n16 TODO TEST
         const n: u16 = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         print("LD16, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
-        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        print("n b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_word(args.target, n);
         gb.cpu.pc += 3;
     }
-    fn LDr16(gb: *GB, args: InstrArgs) void { // LD r16, r16 TODO TEST
-        print("LDr16, targets: from {any} --> to {any}\n", .{ args.targets.from, args.targets.to });
+    fn LDr8(gb: *GB, args: InstrArgs) void { // LD r8, r8 TODO TEST
+        print("LDr8, targets: from {any} --> to {any}\n", .{ args.targets.from, args.targets.to });
         print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(args.targets.from), gb.cpu.get_byte(args.targets.to) });
         gb.cpu.set_byte(args.targets.to, gb.cpu.get_byte(args.targets.from));
         gb.cpu.pc += 1;
@@ -632,8 +642,8 @@ const InstructionSet = struct {
     fn LDSP16(gb: *GB, _: InstrArgs) void { // LD r16, n16, 0x31
         print("LD16SP\n", .{});
         const n: u16 = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
-        print("n b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        print("n b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        print("n b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.sp = n;
         print("after op: sp: {d}\n", .{gb.cpu.sp});
         gb.cpu.pc += 3;
@@ -641,35 +651,35 @@ const InstructionSet = struct {
     fn LDHL8(gb: *GB, _: InstrArgs) void { // LD[HL], n8
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.read_byte(gb.cpu.pc + 1);
-        print("LDHLDA\thl:{d}\tvalue:0x{x}\nmem@hl: 0x{x}\n", .{ hl, value, gb.read_byte(hl) });
+        print("LDHLDA\thl:0x{X}\tvalue:0x{x}\nmem@hl: 0x{x}\n", .{ hl, value, gb.read_byte(hl) });
         gb.writeByte(hl, value);
-        print("after op: mem@hl: 0x{x}\thl:{d}\n", .{ gb.read_byte(hl), hl });
+        print("after op: mem@hl: 0x{X}\thl:{d}\n", .{ hl, gb.read_byte(hl), hl });
         gb.cpu.pc += 2;
     }
     fn LDHLR(gb: *GB, args: InstrArgs) void { // LD[HL],r8
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(args.target);
-        print("LDHLR, \nmem@hl: 0x{X} --> 0x{X}\n", .{ gb.read_byte(hl), value });
+        print("LDHLR, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
         gb.writeByte(hl, value);
-        print("after op: mem@hl: 0x{x}\n", .{gb.read_byte(hl)});
+        print("after op: mem@0x{X}: 0x{X}\n", .{ hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
     }
     fn LDHLIA(gb: *GB, _: InstrArgs) void { // LD [HLI],A
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
-        print("LDHLDI, \nmem@hl: 0x{X} --> 0x{X}\n", .{ gb.read_byte(hl), value });
-        gb.memory[hl] = value;
+        print("LDHLIA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
+        gb.writeByte(hl, value);
         gb.cpu.set_word(regID.h, hl + 1);
-        print("after op: mem@hl: 0x{x}\n", .{gb.read_byte(hl)});
+        print("after op: hl+1= 0x{X}\t mem@0x{X}: 0x{X}\n", .{ gb.cpu.get_word(regID.h), hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
     }
     fn LDHLDA(gb: *GB, _: InstrArgs) void { // LD [HLD],A
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
-        print("LDHLDA, \nmem@hl: 0x{X} --> 0x{X}\n", .{ gb.read_byte(hl), value });
-        gb.memory[hl] = value;
+        print("LDHLDA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
+        gb.writeByte(hl, value);
         gb.cpu.set_word(regID.h, hl - 1);
-        print("after op: mem@hl: 0x{X}\n", .{gb.read_byte(hl)});
+        print("after op: mem@0x{X}: 0x{X}\n", .{ hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
     }
     fn LDHCA(gb: *GB, _: InstrArgs) void {
@@ -692,42 +702,43 @@ const InstructionSet = struct {
         const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         const n = gb.read_byte(memory_place);
         print("LDAn16, n: Ox{X} --> A\n", .{n});
-        print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        print("memplace b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 3;
     }
     fn LDHAn16(gb: *GB, _: InstrArgs) void { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
-        const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
-        print("LDAHAn16, ", .{});
+        const memory_place = 0xFF00 + @as(u16, gb.read_byte(gb.cpu.pc + 1));
+        print("LDHAn16, \n", .{});
+        print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
+        // print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         if (memory_place >= 0xFF00 and memory_place <= 0xFFFF) {
             const n = gb.read_byte(memory_place);
-            print("n: Ox{X} --> memplace@0x{X}\n", .{ n, memory_place });
-            print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-            print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+            print("n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
             gb.cpu.set_byte(regID.a, n);
         }
-        print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
-        gb.cpu.pc += 3;
+        gb.cpu.pc += 2;
     }
     fn LDn16A(gb: *GB, _: InstrArgs) void { // TODO TEST Store value in register A into the byte at address n16.
         const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
         print("LDn16A, n: Ox{X} --> memplace@{X}", .{ n, memory_place });
-        print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
+        print("memplace b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.pc += 3;
     }
     fn LDHn16A(gb: *GB, _: InstrArgs) void { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
-        const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
-        const n = gb.cpu.get_byte(regID.a);
-        gb.writeByte(memory_place, n);
-        print("LDHn16A, n: Ox{X} --> memplace@0x{X}\n", .{ n, memory_place });
-        print("memplace b1: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
-        gb.cpu.pc += 3;
+        print("LDHn16A\n", .{});
+        const memory_place = 0xFF00 + @as(u16, gb.read_byte(gb.cpu.pc + 1));
+        print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
+        // print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        if (memory_place >= 0xFF00 and memory_place <= 0xFFFF) {
+            const n = gb.cpu.get_byte(regID.a);
+            gb.writeByte(memory_place, n);
+            print("n: Ox{X} --> memplace@0x{X}\n", .{ n, memory_place });
+        }
+        gb.cpu.pc += 2;
     }
     fn LDAr16(gb: *GB, args: InstrArgs) void { // TODO TEST Load value in register A from the byte pointed to by register r16.
         const memory_place = gb.cpu.get_word(args.target);
@@ -758,9 +769,39 @@ const InstructionSet = struct {
         print("ADDA target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
         const res: struct { u8, u1 } = @addWithOverflow(a, value);
-        const overflow = res[1];
-        _ = overflow; // TODO FIX!!
+        gb.cpu.f.s = false;
+        gb.cpu.f.c = res[1] == 1;
+        gb.cpu.f.h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.z = res[0] == 0;
+        gb.cpu.f.write();
         gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 1;
+    }
+    fn SUBAr8(gb: *GB, args: InstrArgs) void { // TODO finish, TEST, flags
+        const value = gb.cpu.get_byte(args.target);
+        print("SUBA target: {any}, value: {d} \n", .{ args.target, value });
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @subWithOverflow(a, value);
+        gb.cpu.f.c = value > a;
+        gb.cpu.f.s = true;
+        gb.cpu.f.h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.z = res[0] == 0;
+        gb.cpu.f.write();
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 1;
+    }
+    fn ADDHL(gb: *GB, _: InstrArgs) void { // TODO finish, TEST, flags
+        const hl = gb.cpu.get_word(regID.h);
+        const value = gb.cpu.get_byte(regID.a);
+        print("ADDHL regA + hl, {d} + {d} \n", .{ value, hl });
+        const res: struct { u16, u1 } = @addWithOverflow(value, hl);
+        const overflow = res[1];
+        gb.cpu.f.s = false;
+        gb.cpu.f.h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.c = (((hl + value) >> 12) & 0xF) & 0x10 == 0x10;
+        gb.cpu.f.write();
+        _ = overflow; // TODO FIX!!
+        gb.cpu.set_word(regID.h, res[0]);
         gb.cpu.pc += 1;
     }
     fn EI(gb: *GB, _: InstrArgs) void { // TODO TEST
@@ -796,16 +837,16 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
     }
     fn POP(gb: *GB, args: InstrArgs) void {
-        const high = gb.read_byte(gb.cpu.sp);
-        gb.cpu.sp += 1;
         const low = gb.read_byte(gb.cpu.sp);
+        gb.cpu.sp += 1;
+        const high = gb.read_byte(gb.cpu.sp);
         gb.cpu.sp += 1;
         const value = @as(u16, high) << 8 | low;
         print("POP 0x{X} --> {any}\n", .{ value, args.target });
         if (args.target == regID.a) {
             gb.cpu.set_byte(regID.a, high);
             gb.cpu.f.value = low;
-            gb.cpu.f.write();
+            gb.cpu.f.check();
         } else gb.cpu.set_word(args.target, value);
         gb.cpu.pc += 1;
     }
@@ -819,53 +860,55 @@ const InstructionSet = struct {
     }
     fn JR(gb: *GB, args: InstrArgs) void { // TODO ONLY 2 CYCLES IF NOT TAKEN OTHERWISE 3
         print("JR, \tcondition:", .{});
+        const dist: i8 = @bitCast(gb.read_byte(gb.cpu.pc + 1));
+        print(" by dist: [pc]0x{X} \t0x{X} ({d}) bytes ", .{ gb.cpu.pc + 1, dist, dist });
         var jump = true;
         switch (args.flagConditions) {
             .h => |*h| {
                 if (h.*) {
-                    println("h", .{});
+                    println("h, flag:{any}", .{gb.cpu.f.h});
                     if (!gb.cpu.f.h) jump = false;
                 } else {
-                    println("not h", .{});
+                    println("not h flag:{any}", .{gb.cpu.f.h});
                     if (gb.cpu.f.h) jump = false;
                 }
             },
             .z => |*z| {
                 if (z.*) {
-                    println("z", .{});
+                    println("z flag:{any}", .{gb.cpu.f.z});
                     if (!gb.cpu.f.z) jump = false;
                 } else {
-                    println("not z", .{});
+                    println("not z flag:{any}", .{gb.cpu.f.z});
                     if (gb.cpu.f.z) jump = false;
                 }
             },
             .c => |*c| {
                 if (c.*) {
-                    println("c", .{});
+                    println("c flag:{any}", .{gb.cpu.f.c});
                     if (!gb.cpu.f.c) jump = false;
                 } else {
-                    println("not c", .{});
+                    println("not c flag:{any}", .{gb.cpu.f.c});
                     if (gb.cpu.f.c) jump = false;
                 }
             },
             .s => |*s| {
                 if (s.*) {
-                    println("s", .{});
+                    println("s flag:{any}", .{gb.cpu.f.s});
                     if (!gb.cpu.f.s) jump = false;
                 } else {
-                    println("not s", .{});
+                    println("not s flag:{any}", .{gb.cpu.f.s});
                     if (gb.cpu.f.s) jump = false;
                 }
             },
             .none => println("no condition, just jump", .{}),
         }
         if (jump) {
-            const dist: i8 = @bitCast(gb.read_byte(gb.cpu.pc + 1));
-            print(" by dist: [pc]{d} \t{d} bytes ", .{ gb.cpu.pc + 1, dist });
-            const new_mem: i17 = @as(i17, @intCast(gb.cpu.pc + 1)) + dist;
-            print("to pc:{d}\n", .{@as(u8, @intCast(new_mem))});
+            const new_mem: i17 = @as(i17, @intCast(gb.cpu.pc + 2)) + dist;
             gb.cpu.pc = @as(u8, @intCast(new_mem));
-        } else { // next instruction condition failed
+            print("to pc:0x{X}\n", .{gb.cpu.pc});
+            // if (dist == -2) {
+            // }
+        } else { // next instruction, condition failed
             println("skipped jump, failed condition", .{});
             gb.cpu.pc += 2;
         }
@@ -874,33 +917,150 @@ const InstructionSet = struct {
         print("JPHL\n", .{});
         gb.cpu.pc = gb.cpu.get_word(regID.h);
     }
-    fn CALLn16(gb: *GB, _: InstrArgs) void { //
-        const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
-        const ret = gb.cpu.pc + 3;
-        print("CALL to 0x{X}/{d}, later RET to 0x{X}/{d}", .{ n, n, ret, ret });
-        gb.cpu.sp -= 1;
-        gb.writeByte(gb.cpu.sp, @truncate(ret >> 8));
-        gb.cpu.sp -= 1;
-        gb.writeByte(gb.cpu.sp, @truncate(ret));
-        gb.cpu.pc = n;
+    fn CALLn16(gb: *GB, args: InstrArgs) void { //
+        var call = true;
+        switch (args.flagConditions) {
+            .h => |*h| {
+                if (h.*) {
+                    println("h, flag:{any}", .{gb.cpu.f.h});
+                    if (!gb.cpu.f.h) call = false;
+                } else {
+                    println("not h flag:{any}", .{gb.cpu.f.h});
+                    if (gb.cpu.f.h) call = false;
+                }
+            },
+            .z => |*z| {
+                if (z.*) {
+                    println("z flag:{any}", .{gb.cpu.f.z});
+                    if (!gb.cpu.f.z) call = false;
+                } else {
+                    println("not z flag:{any}", .{gb.cpu.f.z});
+                    if (gb.cpu.f.z) call = false;
+                }
+            },
+            .c => |*c| {
+                if (c.*) {
+                    println("c flag:{any}", .{gb.cpu.f.c});
+                    if (!gb.cpu.f.c) call = false;
+                } else {
+                    println("not c flag:{any}", .{gb.cpu.f.c});
+                    if (gb.cpu.f.c) call = false;
+                }
+            },
+            .s => |*s| {
+                if (s.*) {
+                    println("s flag:{any}", .{gb.cpu.f.s});
+                    if (!gb.cpu.f.s) call = false;
+                } else {
+                    println("not s flag:{any}", .{gb.cpu.f.s});
+                    if (gb.cpu.f.s) call = false;
+                }
+            },
+            .none => println("no condition, just jump", .{}),
+        }
+        if (call) {
+            const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
+            const ret = gb.cpu.pc + 3;
+            print("CALL to 0x{X}/{d}, later RET to 0x{X}/{d}", .{ n, n, ret, ret });
+            gb.cpu.sp -= 1;
+            gb.writeByte(gb.cpu.sp, @truncate(ret >> 8));
+            gb.cpu.sp -= 1;
+            gb.writeByte(gb.cpu.sp, @truncate(ret));
+            gb.cpu.pc = n;
+        } else { // next instruction, condition failed
+            println("skipped jump, failed condition", .{});
+            gb.cpu.pc += 2;
+        }
     }
-    fn RET(gb: *GB, args: InstrArgs) void { // TODO TEST
-        print("RET, condition: ", .{});
+    fn RET(gb: *GB, args: InstrArgs) void { // TODO TEST, UPDATE cycles 5 if condition met, 2 if not met, 4 if no condition
+        print("RET, condition:{any}", .{args.flagConditions});
         // var condition: bool = undefined;
-        _ = gb;
-        _ = args;
-        // switch (args.condition) {
-        //     .z => |*z| {
-        //         condition = gb.cpu.z == 0;
-        //     },
-        // const high = gb.read_byte(gb.cpu.sp);
-        // gb.cpu.sp+=1;
-        // const low = gb.read_byte(gb.cpu.sp);
-        // gb.cpu.sp+=1;
-        // const n = @as(u16, high) << 8 | low;
-        // print("to 0x{X}\n", .{n});
-        // gb.cpu.pc = n;
-        // }
+        var ret = true;
+        switch (args.flagConditions) {
+            .h => |*h| {
+                if (h.*) {
+                    println("h, flag:{any}", .{gb.cpu.f.h});
+                    if (!gb.cpu.f.h) ret = false;
+                } else {
+                    println("not h flag:{any}", .{gb.cpu.f.h});
+                    if (gb.cpu.f.h) ret = false;
+                }
+            },
+            .z => |*z| {
+                if (z.*) {
+                    println("z flag:{any}", .{gb.cpu.f.z});
+                    if (!gb.cpu.f.z) ret = false;
+                } else {
+                    println("not z flag:{any}", .{gb.cpu.f.z});
+                    if (gb.cpu.f.z) ret = false;
+                }
+            },
+            .c => |*c| {
+                if (c.*) {
+                    println("c flag:{any}", .{gb.cpu.f.c});
+                    if (!gb.cpu.f.c) ret = false;
+                } else {
+                    println("not c flag:{any}", .{gb.cpu.f.c});
+                    if (gb.cpu.f.c) ret = false;
+                }
+            },
+            .s => |*s| {
+                if (s.*) {
+                    println("s flag:{any}", .{gb.cpu.f.s});
+                    if (!gb.cpu.f.s) ret = false;
+                } else {
+                    println("not s flag:{any}", .{gb.cpu.f.s});
+                    if (gb.cpu.f.s) ret = false;
+                }
+            },
+            .none => println("no condition, just jump", .{}),
+        }
+        if (ret) {
+            const low = gb.read_byte(gb.cpu.sp);
+            gb.cpu.sp += 1;
+            const high = gb.read_byte(gb.cpu.sp);
+            gb.cpu.sp += 1;
+            gb.cpu.pc = @as(u16, high) << 8 | low;
+        } else {
+            gb.cpu.pc += 1;
+        }
+    }
+    fn CPAn8(gb: *GB, _: InstrArgs) void { // TODO TEST;
+        print("CPAn8, \n", .{});
+        const n = gb.read_byte(gb.cpu.pc + 1);
+        const reg = gb.cpu.get_byte(regID.a);
+        const res = @subWithOverflow(gb.cpu.get_byte(regID.a), n);
+        print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, n });
+        gb.cpu.f.z = (res[0] == 0) or (res[1] == 1);
+        gb.cpu.f.s = true;
+        gb.cpu.f.h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.c = reg < n;
+        gb.cpu.f.write();
+        gb.cpu.pc += 2;
+    }
+    fn CPAr8(gb: *GB, args: InstrArgs) void { // TODO TEST;
+        const n = gb.cpu.get_byte(args.target);
+        print("CPAr8, target = {any}\n", .{args.target});
+        const reg = gb.cpu.get_byte(regID.a);
+        const res = @subWithOverflow(gb.cpu.get_byte(regID.a), n);
+        gb.cpu.f.z = res[0] == 0; // set zero flag if the target bit is not set
+        gb.cpu.f.s = true;
+        gb.cpu.f.h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.c = reg < n;
+        gb.cpu.f.write();
+        gb.cpu.pc += 1;
+    }
+    fn CPAHL(gb: *GB, _: InstrArgs) void { // TODO TEST;
+        const hl = gb.cpu.get_word(regID.h);
+        const reg = gb.cpu.get_byte(regID.a);
+        print("CPAHL, compare mem_place: 0x{X} ({d}) to A:{d}\n", .{ hl, gb.read_byte(hl), reg });
+        const res = @subWithOverflow(gb.cpu.get_byte(regID.a), gb.read_byte(hl));
+        gb.cpu.f.z = res[0] == 0;
+        gb.cpu.f.s = true;
+        gb.cpu.f.h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.c = reg < hl;
+        gb.cpu.f.write();
+        gb.cpu.pc += 1;
     }
 
     // PREFIX INSTRUCTIONS
@@ -908,7 +1068,7 @@ const InstructionSet = struct {
         const bit: u3 = args.bit_target.bit;
         const target = gb.cpu.get_byte(args.bit_target.target);
         print("BITTEST, target: {any}, bit: {any}, reg_bin: 0b{b}", .{ args.bit_target.target, args.bit_target.bit, target });
-        print("                                             ^", .{});
+        // print("                                             ^", .{});
         gb.cpu.f.z = @as(u1, @truncate(target >> bit)) == 0; // set zero flag if the target bit is not set
         gb.cpu.f.h = true; // set half carry
         gb.cpu.f.write();
@@ -980,14 +1140,17 @@ const CPU = struct {
     }
 
     fn execute(self: *@This(), gb: *GB) !void {
-        var byte = gb.read_byte(self.pc);
+        var byte = gb.memory[self.pc];
+        if (self.last_ins == byte) {
+            return error.Repeat;
+        }
         var prefixed = false;
         if (byte == 0xCB) {
             prefixed = true;
             self.pc += 1;
-            byte = gb.memory[self.pc];
+            byte = gb.read_byte(self.pc);
         }
-        print("[pc]{d} \t(0x{X})\n", .{ self.pc, byte });
+        print("[pc]0x{X} \t(0x{X})\n", .{ self.pc, byte });
         const ins_args = InstructionSet.from_byte(byte, prefixed) catch |err| {
             return err;
         };
@@ -1009,13 +1172,14 @@ const APU = struct {
         return;
     }
 };
-
+const VRAM_BEGIN = 0x8000;
+const VRAM_END = 0x97FF;
+const VRAM_SIZE = VRAM_END - VRAM_BEGIN + 1;
 const GPU = struct {
-    const VRAM_BEGIN = 0x8000;
-    const VRAM_END = 0x97FF;
-    const VRAM_SIZE = VRAM_END - VRAM_BEGIN + 1;
+    vram: *[VRAM_SIZE]u8 = undefined,
+    tile_set: [384]Tile = undefined,
 
-    const Color = enum { black, dgray, lgray, white };
+    const Color = enum(u2) { black, dgray, lgray, white };
 
     const Tile = [8][8]Color;
     fn empty_tile(self: *@This()) Tile {
@@ -1027,9 +1191,6 @@ const GPU = struct {
         return tile;
     }
 
-    vram: *[VRAM_SIZE]u8 = undefined,
-    tile_set: [384]Tile = undefined,
-
     fn init(self: *@This(), gb: *GB) !void {
         self.vram = gb.memory[VRAM_BEGIN .. VRAM_END + 1];
         @memset(&self.tile_set, empty_tile(self));
@@ -1040,9 +1201,32 @@ const GPU = struct {
     }
 
     fn write_vram(self: *@This(), address: usize, value: u8) void {
-        self.vram[address] = value;
-        if (address >= 0x1800) return;
-        // const normalized_address
+        const fixed_address = address - VRAM_BEGIN;
+        self.vram[fixed_address] = value;
+        if (address >= 0x1800) return; // not writing to tile set
+        const normalized_address = fixed_address & 0xFFFE;
+
+        const b1 = self.read_vram(normalized_address);
+        const b2 = self.read_vram(normalized_address + 1);
+
+        const tile_index = fixed_address / 16; // 2 bpp * 8 rows of pixels per tile
+        _ = tile_index;
+        const row = (fixed_address % 16) / 2; // new row every two bytes
+        print("Row: {d}", .{row});
+        for (0..8) |i| { // loop through pixels in current row
+            const msb: u1 = @truncate(b2 >> @intCast(i)); // most significant bit
+            const lsb: u1 = @truncate(b1 >> @intCast(i));
+            print(" 0b{b}{b} ", .{ msb, lsb });
+
+            const color = switch (@as(u2, msb) << 1 | lsb) {
+                0b00 => GPU.Color.white,
+                0b01 => GPU.Color.lgray,
+                0b10 => GPU.Color.dgray,
+                0b11 => GPU.Color.black,
+            };
+            print("color: {any} code: 0b{b}, ", .{ color, @intFromEnum(color) });
+        }
+        print("\n", .{});
     }
 
     fn vram_dump(self: *@This()) void {
@@ -1055,16 +1239,46 @@ const GPU = struct {
     }
 };
 
+const gfxWidth = 160;
+const gfxHeight = 144;
+const gfxScale = 6;
+const window_height = gfxHeight * gfxScale;
+const window_width = gfxWidth * gfxScale;
+const grid_pixel_sz = window_width / gfxWidth;
+
 pub const GB = struct {
     cpu: CPU = CPU{},
     gpu: GPU = GPU{},
     apu: APU = APU{},
+    screen: [gfxHeight][gfxWidth]GPU.Color = undefined,
+    background: [256][256]GPU.Color = undefined, // defines the background pixels of the gameboy
+    window: [256][256]GPU.Color = undefined, // defines the foreground and sprites
     memory: [0xFFFF]u8 = undefined,
+
+    const special_registers = enum(u8) {
+        stat = 0xFF51,
+        // 6 LYC int select (Read/Write): If set, selects the LYC == LY condition for the STAT interrupt.
+        // 5 Mode 2 int select (Read/Write): If set, selects the Mode 2 condition for the STAT interrupt.
+        // 4 Mode 1 int select (Read/Write): If set, selects the Mode 1 condition for the STAT interrupt.
+        // 3 Mode 0 int select (Read/Write): If set, selects the Mode 0 condition for the STAT interrupt.
+        // 2 LYC == LY (Read-only): Set when LY contains the same value as LYC; it is constantly updated.
+        // 1-0 PPU mode (Read-only): Indicates the PPU’s current status. Reports 0 instead when the PPU is disabled.
+        //
+        ly = 0xFF44,
+        lyc = 0xFF45,
+    };
+
+    const LOGO: [48]u8 = .{ 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E };
 
     pub fn init(self: *@This()) !void {
         @memset(&self.memory, 0);
+        @memcpy(self.memory[0x0104 .. 0x133 + 1], &LOGO);
         try self.cpu.init();
         try self.gpu.init(self);
+        for (&self.screen) |*row| {
+            @memset(row, GPU.Color.white);
+        }
+        self.drawM();
     }
 
     pub fn read_byte(self: *@This(), address: usize) u8 {
@@ -1072,7 +1286,21 @@ pub const GB = struct {
         return self.memory[address];
     }
     pub fn writeByte(self: *@This(), address: usize, value: u8) void {
-        self.memory[address] = value;
+        switch (address) {
+            VRAM_BEGIN...VRAM_END + 1 => {
+                println("mem before: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
+                self.gpu.write_vram(address, value);
+                println("mem after: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
+            },
+            0xFF50 => {},
+            else => {
+                self.memory[address] = value;
+            },
+        }
+        // if (address == 0xFF50) {
+        //     // end boot rom, map cartridge
+        // }
+
     }
 
     pub fn boot(self: *@This()) !void {
@@ -1083,9 +1311,54 @@ pub const GB = struct {
         for (0..bootFileBuf.len) |i| {
             self.memory[i] = bootFileBuf[i];
         }
-        while (self.cpu.pc < 0x100) {
-            try self.cpu.execute(self);
+        // while (self.cpu.pc < 0x100) {
+        // // while (self.cpu.pc < 0xA7) {
+        //     try self.cpu.execute(self);
+        // }
+    }
+    fn drawM(self: *@This()) void {
+        for (&self.screen, 0..) |*row, y| {
+            for (0..row.len) |x| {
+                const bg = GPU.Color.black;
+                const fg = GPU.Color.lgray;
+                if ((y > 20 and y < 120 and x > 30 and x < 50) or (y > 20 and y < 120 and x > 30 + 80 and x < 50 + 80) or (y > 20 and y < 30 and x <= 50 + 60 / 3 and x >= 50) or (y > 20 and y < 30 and x >= 50 + 2 * 60 / 3 and x <= 30 + 80) or (y > 25 and y < 35 and x >= 50 + 60 / 3 and x <= 50 + 2 * 60 / 3) or (y >= 30 and y < 40 and x >= 50 + 60 / 2 - 1 and x <= 50 + 60 / 2 + 1)) {
+                    row[x] = fg;
+                } else {
+                    row[x] = bg;
+                }
+            }
         }
+    }
+    pub fn render(self: *@This(), renderer: *g.SDL_Renderer) void {
+        _ = g.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0); //
+        _ = g.SDL_RenderClear(renderer);
+        var rect = g.SDL_FRect{};
+        for (self.screen, 0..) |row, y| {
+            for (row, 0..) |pixel, x| {
+                rect.x = @floatFromInt(x * grid_pixel_sz);
+                rect.y = @floatFromInt(y * grid_pixel_sz);
+                rect.h = grid_pixel_sz;
+                rect.w = grid_pixel_sz;
+                switch (pixel) {
+                    GPU.Color.white => {
+                        _ = g.SDL_SetRenderDrawColor(renderer, 0, 200, 0, 2);
+                    },
+                    GPU.Color.lgray => {
+                        _ = g.SDL_SetRenderDrawColor(renderer, 0, 150, 0, 255);
+                    },
+                    GPU.Color.dgray => {
+                        _ = g.SDL_SetRenderDrawColor(renderer, 0, 100, 0, 255);
+                    },
+                    GPU.Color.black => {
+                        _ = g.SDL_SetRenderDrawColor(renderer, 0, 50, 0, 255);
+                    },
+                }
+                if (!g.SDL_RenderFillRect(renderer, &rect)) {
+                    print("SDL_RenderFillRect failed: {s}\n", .{g.SDL_GetError()});
+                }
+            }
+        }
+        _ = g.SDL_RenderPresent(renderer);
     }
 
     pub fn load_game(self: *@This(), game_path: []const u8) !void {
@@ -1106,11 +1379,11 @@ pub const GB = struct {
         //TODO: Update peripherals & timing
     }
 
-    pub fn mem_dump(self: *@This()) void {
+    pub fn mem_dump(self: *@This(), start: u16, end: u16) void {
         print("printing bytes:\n", .{});
-        for (self.memory, 0..self.memory.len) |value, i| {
-            print("0x{x}", .{value});
-            if (i != 0 and i % 64 == 0) print("\n", .{}) else continue;
+        for (self.memory[start..end], start..end) |value, i| {
+            if (i != 0 and i % 16 == 0) print("\n", .{});
+            print("0x{x} ", .{value});
         }
         print("\n", .{});
     }
@@ -1124,21 +1397,32 @@ pub const GB = struct {
         print("\n", .{});
     }
 
+    pub fn screen_dump(self: *@This()) void {
+        print("Actual memspace dump: \n", .{});
+        for (self.screen) |row| {
+            for (row) |pixel| {
+                print("{any}", .{pixel});
+            }
+            // if (i != 0 and i % 80 == 0) print("\n", .{});
+        }
+        print("\n", .{});
+    }
     // specs
-    // CPU freq (TIMING)	4.194304 MHz1,	Up to 8.388608 MHz
-    // Work RAM	8 KiB,	32 KiB3 (4 + 7 × 4 KiB)
-    // Video RAM	8 KiB,	16 KiB3 (2 × 8 KiB)
+    // CPU freq (TIMING) 4.194304 MHz1, Up to 8.388608 MHz
+    // Work RAM 8 KiB, 32 KiB3 (4 + 7 × 4 KiB)
+    // Video RAM 8 KiB, 16 KiB3 (2 × 8 KiB)
 
-    // OBJ ("sprites")	8 × 8 or 8 × 16 ; max 40 per screen, 10 per line
-    // Palettes	BG: 1 × 4, OBJ: 2 × 3,	BG: 8 × 4, OBJ: 8 × 33
-    // Colors	4 shades of green,	32768 colors (15-bit RGB)
-    // Horizontal sync	9.198 KHz, 9.198 KHz
-    // Vertical sync	59.73 Hz, 59.73 Hz
-    // Sound	4 channels with stereo output
+    // OBJ ("sprites") 8 × 8 or 8 × 16 ; max 40 per screen, 10 per line
+    // Palettes BG: 1 × 4, OBJ: 2 × 3, BG: 8 × 4, OBJ: 8 × 33
+    // Colors 4 shades of green, 32768 colors (15-bit RGB)
+    // Horizontal sync 9.198 KHz, 9.198 KHz
+    // Vertical sync 59.73 Hz, 59.73 Hz
+    // Sound 4 channels with stereo output
     // memory
     // The Game Boy has a 16-bit address bus, which is used to address ROM, RAM, and I/O.
 };
 
+var running = true;
 pub fn main() !void {
     var gb = GB{};
     gb.init() catch |err| {
@@ -1149,9 +1433,62 @@ pub fn main() !void {
     print("GB init!\n", .{});
 
     gb.boot() catch |err| { // loads the boot rom and executes it
-        print("Couldn't boot GameBoy,\t", .{});
-        return err;
+        // gb.mem_dump(0, 256);
+        print("Couldn't boot GameBoy, err: {any}\t", .{err});
+        return;
     };
 
+    const win_render = try startAndCreateRenderer();
+    const win = win_render[0];
+    const renderer = win_render[1];
+    defer endSDL(win, renderer);
     print("\n", .{});
+
+    // gb.screen_dump();
+    while (running) {
+        // print("runnning", .{});
+        try getEvents();
+        gb.drawM();
+        gb.render(renderer);
+    }
+}
+
+fn startAndCreateRenderer() !struct { *g.SDL_Window, *g.SDL_Renderer } {
+    if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
+        print("SDL_Init failed: {s}\n", .{g.SDL_GetError()});
+        return error.InitializationFailed;
+    }
+    var win: ?*g.SDL_Window = null;
+    var renderer: ?*g.SDL_Renderer = null;
+    if (!g.SDL_CreateWindowAndRenderer("gameboy!", gfxWidth * grid_pixel_sz, gfxHeight * grid_pixel_sz, 0, &win, &renderer)) {
+        print("Failed to create window or renderer: {s}\n", .{g.SDL_GetError()});
+        return error.CreationFailure;
+    }
+    if (win == null) {
+        print("Failed to create window: {s}\n", .{g.SDL_GetError()});
+        return error.WindowNull;
+    }
+    if (renderer == null) {
+        print("Failed to create renderer: {s}\n", .{g.SDL_GetError()});
+        return error.RendererFailure;
+    }
+    return .{ win.?, renderer.? };
+}
+fn getEvents() !void {
+    var event: g.SDL_Event = undefined;
+    while (g.SDL_PollEvent(&event)) {
+        switch (event.type) {
+            g.SDL_EVENT_KEY_DOWN => {},
+            g.SDL_EVENT_KEY_UP => {},
+            g.SDL_EVENT_QUIT => {
+                running = false;
+            },
+            else => {},
+        }
+    }
+}
+fn endSDL(win: *g.SDL_Window, renderer: *g.SDL_Renderer) void {
+    g.SDL_Quit();
+    g.SDL_DestroyWindow(win);
+    g.SDL_DestroyRenderer(renderer);
 }

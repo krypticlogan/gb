@@ -14,6 +14,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize
     });
+
+    const sdl_dep = b.dependency("sdl", .{
+    .target = target,
+    .optimize = optimize,
+    //.preferred_link_mode = .static, // or .dynamic
+});
+    const sdl_lib = sdl_dep.artifact("SDL3");
+    exe.root_module.linkLibrary(sdl_lib);
+    // const sdl_test_lib = sdl_dep.artifact("SDL3_test");
     exe.linkLibC();
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
