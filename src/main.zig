@@ -71,7 +71,7 @@ const InstructionSet = struct {
         .{ 0x16, LD8, .{ .target = regID.d }, 2 }, // LD D, d8
         .{ 0x17, null, .{ .none = {} }, 4 }, // RLA
         .{ 0x18, JR, .{ .flagConditions = .{ .none = true } }, 3 }, // JR r8
-        .{ 0x19, ADDHL, .{ .target = regID.d }, 8 }, // ADD HL, DE
+        .{ 0x19, ADDHLr16, .{ .target = regID.d }, 8 }, // ADD HL, DE
         .{ 0x1A, LDAr16, .{ .target = regID.d }, 2 }, // LD A, (DE)
         .{ 0x1B, DECr16, .{ .target = regID.d }, 8 }, // DEC DE
         .{ 0x1C, INCr8, .{ .target = regID.e }, 4 }, // INC E
@@ -172,15 +172,15 @@ const InstructionSet = struct {
         .{ 0x7B, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.e } }, 1 }, // LD A, E
         .{ 0x7C, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.h } }, 1 }, // LD A, H
         .{ 0x7D, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.l } }, 1 }, // LD A, L
-        .{ 0x7E, null, .{ .none = {} }, 8 }, // LD A, (HL)
+        .{ 0x7E, LDAHL, .{ .none = {} }, 8 }, // LD A, (HL)
         .{ 0x7F, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.a } }, 1 }, // LD A, A
-        .{ 0x80, ADDr8A, .{ .target = regID.b }, 1 }, // ADD A, B
-        .{ 0x81, null, .{ .none = {} }, 4 }, // ADD A, C
-        .{ 0x82, null, .{ .none = {} }, 4 }, // ADD A, D
-        .{ 0x83, null, .{ .none = {} }, 4 }, // ADD A, E
-        .{ 0x84, null, .{ .none = {} }, 4 }, // ADD A, H
-        .{ 0x85, null, .{ .none = {} }, 4 }, // ADD A, L
-        .{ 0x86, ADDHL, .{ .none = {} }, 2 }, // ADD A, (HL)
+        .{ 0x80, ADDAr8, .{ .target = regID.b }, 1 }, // ADD A, B
+        .{ 0x81, ADDAr8, .{ .target = regID.c }, 1 }, // ADD A, C
+        .{ 0x82, ADDAr8, .{ .target = regID.d }, 1 }, // ADD A, D
+        .{ 0x83, ADDAr8, .{ .target = regID.e }, 1 }, // ADD A, E
+        .{ 0x84, ADDAr8, .{ .target = regID.h }, 1 }, // ADD A, H
+        .{ 0x85, ADDAr8, .{ .target = regID.l }, 1 }, // ADD A, L
+        .{ 0x86, ADDAHL, .{ .none = {} }, 2 }, // ADD A, (HL)
         .{ 0x87, null, .{ .none = {} }, 4 }, // ADD A, A
         .{ 0x88, null, .{ .none = {} }, 4 }, // ADC A, B
         .{ 0x89, null, .{ .none = {} }, 4 }, // ADC A, C
@@ -639,6 +639,14 @@ const InstructionSet = struct {
         gb.cpu.set_byte(args.targets.to, gb.cpu.get_byte(args.targets.from));
         gb.cpu.pc += 1;
     }
+    fn LDAHL(gb: *GB, _: InstrArgs) void { // LD r8, r8 TODO TEST
+        const mem_place = gb.cpu.get_word(regID.h);
+        const value = gb.cpu.get_byte(regID.a);
+        print("LDHL, mem@hl:0x{X} --> to A\n", .{mem_place});
+        print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(regID.a), gb.read_byte(mem_place) });
+        gb.cpu.set_byte(regID.a, value);
+        gb.cpu.pc += 1;
+    }
     fn LDSP16(gb: *GB, _: InstrArgs) void { // LD r16, n16, 0x31
         print("LD16SP\n", .{});
         const n: u16 = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
@@ -764,9 +772,9 @@ const InstructionSet = struct {
         }
         gb.cpu.pc += 1;
     }
-    fn ADDr8A(gb: *GB, args: InstrArgs) void { // TODO finish, TEST, flags
+    fn ADDAr8(gb: *GB, args: InstrArgs) void { // TODO finish, TEST, flags
         const value = gb.cpu.get_byte(args.target);
-        print("ADDA target: {any}, value: {d} \n", .{ args.target, value });
+        print("ADDAr8 target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
         const res: struct { u8, u1 } = @addWithOverflow(a, value);
         gb.cpu.f.s = false;
@@ -790,18 +798,30 @@ const InstructionSet = struct {
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
     }
-    fn ADDHL(gb: *GB, _: InstrArgs) void { // TODO finish, TEST, flags
+    fn ADDAHL(gb: *GB, _: InstrArgs) void { // TODO Add the byte pointed to by HL to A.
+        const mem_place = gb.cpu.get_word(regID.h);
+        const value = gb.read_byte(gb.cpu.get_word(regID.h));
+        print("ADDAHL:A + mem@0x{X}: value: {d} \n", .{ mem_place, value });
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @addWithOverflow(a, value);
+        gb.cpu.f.s = false;
+        gb.cpu.f.c = res[1] == 1;
+        gb.cpu.f.h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        gb.cpu.f.z = res[0] == 0;
+        gb.cpu.f.write();
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 1;
+    }
+    fn ADDHLr16(gb: *GB, args: InstrArgs) void { // TODO finish, TEST, flags
         const hl = gb.cpu.get_word(regID.h);
-        const value = gb.cpu.get_byte(regID.a);
-        print("ADDHL regA + hl, {d} + {d} \n", .{ value, hl });
-        const res: struct { u16, u1 } = @addWithOverflow(value, hl);
-        const overflow = res[1];
+        const value = gb.cpu.get_word(args.target);
+        print("ADDHL {any} + hl, {d} + {d} \n", .{args.target, value, hl });
+        const res: u16 = @addWithOverflow(hl, value)[0];
         gb.cpu.f.s = false;
         gb.cpu.f.h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
         gb.cpu.f.c = (((hl + value) >> 12) & 0xF) & 0x10 == 0x10;
         gb.cpu.f.write();
-        _ = overflow; // TODO FIX!!
-        gb.cpu.set_word(regID.h, res[0]);
+        gb.cpu.set_word(regID.h, res);
         gb.cpu.pc += 1;
     }
     fn EI(gb: *GB, _: InstrArgs) void { // TODO TEST
@@ -1140,12 +1160,12 @@ const CPU = struct {
     }
 
     fn execute(self: *@This(), gb: *GB) !void {
-        var byte = gb.memory[self.pc];
-        if (self.last_ins == byte) {
+        var byte = gb.read_byte(self.pc);
+        if (self.last_ins == byte) { // err on same instruction twice in a row
             return error.Repeat;
         }
         var prefixed = false;
-        if (byte == 0xCB) {
+        if (byte == 0xCB) { // prefix byte
             prefixed = true;
             self.pc += 1;
             byte = gb.read_byte(self.pc);
@@ -1156,9 +1176,9 @@ const CPU = struct {
         };
         (ins_args.ins)(gb, ins_args.args);
         print("\n", .{});
-        if (self.last_ins == 0xFB) {
+        if (self.last_ins == 0xFB) { // set IME flag after previous instruction
             print("set IME\n", .{});
-            // set IME flag after next ins
+           
         }
         self.last_ins = byte;
     }
@@ -1172,12 +1192,42 @@ const APU = struct {
         return;
     }
 };
-const VRAM_BEGIN = 0x8000;
-const VRAM_END = 0x97FF;
-const VRAM_SIZE = VRAM_END - VRAM_BEGIN + 1;
+
+
+/// Defines a gameboy GPU(PPU) 
+/// - Handles writiing to vram and processing pixels from memory to the screen
 const GPU = struct {
+    const VRAM_BEGIN = 0x8000;
+    const VRAM_END = 0x97FF;
+    const VRAM_SIZE = VRAM_END - VRAM_BEGIN + 1;
+
+    const OAM_BEGIN = 0xFE00;
+    const OAM_END = 0xFE9F;
+    const OAM_SIZE = OAM_END - OAM_BEGIN + 1;
+
     vram: *[VRAM_SIZE]u8 = undefined,
+    oam: *[OAM_SIZE]u8 = undefined,
+    special_registers: *[12]u8 = undefined,
     tile_set: [384]Tile = undefined,
+    stat_reg: u8 = undefined,
+    mode: Mode = undefined,
+    lcd: LCD = undefined,
+
+    const Mode = enum { // modes specifying number of cycles
+        HBLANK,
+        VBLANK,// -- 289
+        SCAN,
+        RENDER,
+
+        fn cycles(mode: Mode) u16 {
+            return switch (mode) {
+                .HBLANK => 204,
+                .VBLANK => 4560,
+                .SCAN => 80,
+                .RENDER => 172 // -- 289
+            };
+        }
+    };
 
     const Color = enum(u2) { black, dgray, lgray, white };
 
@@ -1186,48 +1236,140 @@ const GPU = struct {
         _ = self;
         var tile: Tile = undefined;
         for (&tile) |*row| {
-            @memset(row, Color.black);
+            @memset(row, .white);
         }
         return tile;
     }
 
+    fn setMode(self: *@This(), mode: Mode) void {
+        self.mode = mode;
+        println("stat: {d}", .{self.stat_reg});
+        self.stat_reg = (self.stat_reg & 0b1111_1100) | @intFromEnum(mode);
+    }
+
     fn init(self: *@This(), gb: *GB) !void {
         self.vram = gb.memory[VRAM_BEGIN .. VRAM_END + 1];
+        self.oam = gb.memory[OAM_BEGIN .. OAM_END + 1];
+        self.special_registers = gb.memory[LCD.special_registers.start..LCD.special_registers.end + 1];
+        try self.lcd.init();
+        self.setMode(.HBLANK);
         @memset(&self.tile_set, empty_tile(self));
     }
 
-    fn read_vram(self: *@This(), address: usize) u8 {
+    fn tick(self: *@This()) void { // TODO WRONG
+        self.lcd.render();
+    }
+    /// DMA Transfer from RAM to OAM mem
+    /// - addresses (0xXX00 - 0xXX9F) are written to OAM
+    fn writeOAM(self: *@This(), address: usize) void {
+        if (self.mode == .HBLANK or self.mode == .VBLANK) {
+            print("cannot access oam now\n", .{});
+            return;
+        }
+        const prefix = address / 0x100;
+        const ram_address: u16 = @as(u16, prefix) << 8;
+        @memcpy( self.memory[GPU.OAM_BEGIN .. GPU.OAM_END], self.memory[ram_address..ram_address + GPU.OAM_END]);
+    }
+
+    fn readVram(self: *@This(), address: usize) u8 {
         return self.vram[address];
     }
 
-    fn write_vram(self: *@This(), address: usize, value: u8) void {
-        const fixed_address = address - VRAM_BEGIN;
-        self.vram[fixed_address] = value;
-        if (address >= 0x1800) return; // not writing to tile set
-        const normalized_address = fixed_address & 0xFFFE;
-
-        const b1 = self.read_vram(normalized_address);
-        const b2 = self.read_vram(normalized_address + 1);
-
-        const tile_index = fixed_address / 16; // 2 bpp * 8 rows of pixels per tile
-        const row_index = (fixed_address % 16) / 2; // new row every two bytes
-        print("Row: {d}", .{row_index});
-        for (0..8) |pixel_index| { // loop through pixels in current row
-            const msb: u1 = @truncate(b2 >> @intCast(pixel_index)); // most significant bit
-            const lsb: u1 = @truncate(b1 >> @intCast(pixel_index));
-            print(" 0b{b}{b} ", .{ msb, lsb });
-
-            const color = switch (@as(u2, msb) << 1 | lsb) {
-                0b00 => GPU.Color.white,
-                0b01 => GPU.Color.lgray,
-                0b10 => GPU.Color.dgray,
-                0b11 => GPU.Color.black,
-            };
-            print("color: {any} code: 0b{b}, ", .{ color, @intFromEnum(color) });
-            self.tile_set[tile_index][row_index][pixel_index] = color;
+    fn writeVram(self: *@This(), address: usize, value: u8) u8 {
+        switch (self.mode) {
+            .SCAN => {
+                println("SCAN\n VRAM BLOCKED", .{});
+                return self.stat_reg;
+            },
+            .RENDER => {
+                println("RENDER\n VRAM BLOCKED", .{});
+                return self.stat_reg;
+            },
+            else => {
+                return self.stat_reg;
+            }
         }
+
+        // OAM (Object Attribute Memory) at $FE00–$FE9F
+
+        // Stores sprite attributes (position, tile index, attributes).
+        // Cannot be accessed during scanline rendering.
+        // LCD Control Registers (I/O Registers at $FF40–$FF4B)
+        // Control rendering behavior.
+        // Define which layers are enabled.
+
         
-        print("\n", .{});
+        // if (address >= 0x1800) return; // not writing to tile set
+        switch (address) { // switch on banks 1 & 2
+            // Bank 1: $8000–$8FFF
+            //  Uses unsigned addressing (tile indices: 0–255).
+            0x8000...0x8FFF => {
+                const fixed_address: u12 = address - VRAM_BEGIN;
+                self.vram[fixed_address] = value;
+                println("Bank 2: ", .{});
+                const normalized_address = fixed_address & 0xFFFE;
+
+                const b1 = self.read_vram(normalized_address);
+                const b2 = self.read_vram(normalized_address + 1);
+
+                const tile_index: u8 = fixed_address / 16; // 2 bpp * 8 rows of pixels per tile
+                const row_index = (fixed_address % 16) / 2; // new row every two bytes
+                // print("Row: {d}", .{row_index});
+                for (0..8) |pixel_index| { // loop through pixels in current row
+                    const msb: u1 = @truncate(b2 >> @intCast(pixel_index)); // most significant bit
+                    const lsb: u1 = @truncate(b1 >> @intCast(pixel_index));
+                    print(" 0b{b}{b} ", .{ msb, lsb });
+
+                    const color = switch (@as(u2, msb) << 1 | lsb) {
+                        0b00 => GPU.Color.white,
+                        0b01 => GPU.Color.lgray,
+                        0b10 => GPU.Color.dgray,
+                        0b11 => GPU.Color.black,
+                    };
+                    // print("color: {any} code: 0b{b}, ", .{ color, @intFromEnum(color) });
+                    self.tile_set[tile_index][row_index][pixel_index] = color;
+                }
+                
+                print("\n", .{});
+                return self.stat_reg;
+            },
+            // Bank 2: $8800–$97FF
+            //  Uses signed addressing (tile indices: -128 to 127).
+            0x8800...0x97FF => {
+                const fixed_address: u12 = address - VRAM_BEGIN;
+                self.vram[fixed_address] = value;
+                println("Bank 2: ", .{});
+                const normalized_address = fixed_address & 0xFFFE;
+
+                const b1 = self.read_vram(normalized_address);
+                const b2 = self.read_vram(normalized_address + 1);
+
+                const tile_index: i8 = @bitCast(fixed_address / 16); // 2 bpp * 8 rows of pixels per tile
+                const row_index = (fixed_address % 16) / 2; // new row every two bytes
+                // print("Row: {d}", .{row_index});
+                for (0..8) |pixel_index| { // loop through pixels in current row
+                    const msb: u1 = @truncate(b2 >> @intCast(pixel_index)); // most significant bit
+                    const lsb: u1 = @truncate(b1 >> @intCast(pixel_index));
+                    print(" 0b{b}{b} ", .{ msb, lsb });
+
+                    const color = switch (@as(u2, msb) << 1 | lsb) {
+                        0b00 => GPU.Color.white,
+                        0b01 => GPU.Color.lgray,
+                        0b10 => GPU.Color.dgray,
+                        0b11 => GPU.Color.black,
+                    };
+                    // print("color: {any} code: 0b{b}, ", .{ color, @intFromEnum(color) });
+                    self.tile_set[tile_index][row_index][pixel_index] = color;
+                }
+                
+                print("\n", .{});
+                return self.stat_reg;
+            },
+            else => {
+                println("not writing to bank", .{});
+                return self.stat_reg;
+            }
+        }
     }
 
     fn vram_dump(self: *@This()) void {
@@ -1254,24 +1396,103 @@ const LCD = struct {
     const grid_pixel_sz = window_width / gfxWidth;
 
     screen: [gfxHeight][gfxWidth]GPU.Color = undefined,
-    background: [256][256]GPU.Color = undefined, // defines the background pixels of the gameboy
-    window: [256][256]GPU.Color = undefined, // defines the foreground and sprites
+    background: [32][32]GPU.Tile = undefined, // defines the background pixels of the gameboy
+    window: [32][32]GPU.Tile = undefined, // defines the foreground and sprites
     renderer: *g.SDL_Renderer = undefined,
     win: *g.SDL_Window = undefined,
+
+    const special_registers = enum(u8) { 
+        lcdc,
+        stat,
+        scy,
+        scx,
+        ly,
+        lyc,
+        dma,
+        bgp,
+        obp1,
+        obp0,
+        wy,
+        wx,
+
+        const end = 0xFF4B;
+        const start = 0xFF40;
+        const size = 0xFF4B - 0xFF40 + 1;
+
+        fn memPlace(register: special_registers) u16 {
+            return switch (register) {
+                .lcdc => 0xFF40, // LCDC (LCD Control) Enables/disables layers, defines rendering mode
+                // Bit 7 | Bit 6 | Bit 5 | Bit 4 | Bit 3 | Bit 2 | Bit 1 | Bit 0  
+                // --------------------------------------------------------------  
+                // LCD  | Window | Window | BG Tile | BG & WIN | OBJ Size | OBJ Enable | BG Enable  
+                // Enable| Enable | Tile Map | Data Select | Tile Map Select | (8x8/8x16) | (Sprites) |  
+                .stat => 0xFF41, // $FF41 STAT (Status) Tracks PPU state
+                // 6 LYC int select (Read/Write): If set, selects the LYC == LY condition for the STAT interrupt.
+                // 5 Mode 2 int select (Read/Write): If set, selects the Mode 2 condition for the STAT interrupt.
+                // 4 Mode 1 int select (Read/Write): If set, selects the Mode 1 condition for the STAT interrupt.
+                // 3 Mode 0 int select (Read/Write): If set, selects the Mode 0 condition for the STAT interrupt.
+                // 2 LYC == LY (Read-only): Set when LY contains the same value as LYC; it is constantly updated.
+                // 1-0 PPU mode (Read-only): Indicates the PPU’s current status. Reports 0 instead when the PPU is disabled.
+                .scy => 0xFF42, // $FF42 SCY (Scroll Y) Background vertical scroll
+                .scx => 0xFF43, // $FF43 SCX (Scroll X) Background horizontal scroll
+                .ly => 0xFF44, 
+                .lyc => 0xFF45, // $FF45 LYC (Compare LY) Interrupt if LY matches LYC
+                .dma => 0xFF46, // $FF46 DMA Transfers 160 bytes from RAM to OAM
+                .bgp => 0xFF47, // $FF47 BGP (BG Palette) Defines colors for BG tiles
+                .obp0 => 0xFF48, // $FF48 OBP0 (OBJ Palette 0) Defines colors for sprite palette 0
+                .obp1 => 0xFF49, // $FF49 OBP1 (OBJ Palette 1) Defines colors for sprite palette 1
+                .wy => 0xFF4A, // $FF4A WY (Window Y) Window vertical position
+                .wx => 0xFF4B // $FF4B WX (Window X) Window horizontal position
+            };
+        }
+    };
 
     fn init(self: *@This()) !void {
         for (&self.screen) |*row| {
             @memset(row, GPU.Color.white);
         }
-        try self.startAndCreateRenderer();
+        try self.startAndCreateRenderer(); // set window and renderer
     }
 
     pub fn render(self: *@This()) void {
-        _ = g.SDL_SetRenderDrawColor(self.renderer, 70, 70, 70, 0); //
+        _ = g.SDL_SetRenderDrawColor(self.renderer, 20, 0, 180, 100); // purple machine
         _ = g.SDL_RenderClear(self.renderer);
         var rect = g.SDL_FRect{};
+        
+         _ = g.SDL_SetRenderDrawColor(self.renderer, 110, 110, 110, 255); // dark gray border
+        rect.x = sideScreen - 5;
+        rect.y = aboveScreen - 5;
+        rect.h = grid_pixel_sz * gfxHeight + 10;
+        rect.w = grid_pixel_sz * gfxWidth + 10;
+        _ = g.SDL_RenderFillRect(self.renderer, &rect);
+
+        _ = g.SDL_SetRenderDrawColor(self.renderer, 70, 70, 70, 255); // light gray screen
+        rect.x = sideScreen - 3;
+        rect.y = aboveScreen - 3;
+        rect.h = grid_pixel_sz * gfxHeight + 6;
+        rect.w = grid_pixel_sz * gfxWidth + 6;
+        _ = g.SDL_RenderFillRect(self.renderer, &rect);
+
+        _ = g.SDL_SetRenderDrawColor(self.renderer, 30, 30, 30, 255); // darker gray screen under shadow
+        rect.x = sideScreen - 3;
+        rect.y = aboveScreen + gfxHeight * grid_pixel_sz + 5;
+        rect.h = 5;
+        rect.w = grid_pixel_sz * gfxWidth + 11;
+        _ = g.SDL_RenderFillRect(self.renderer, &rect);
+
+        _ = g.SDL_SetRenderDrawColor(self.renderer, 30, 30, 30, 255); // dark gray screen side shadow
+        rect.x = sideScreen + gfxWidth * grid_pixel_sz + 5;
+        rect.y = aboveScreen - 3;
+        rect.h = gfxHeight * grid_pixel_sz + 12;
+        rect.w = 4;
+        _ = g.SDL_RenderFillRect(self.renderer, &rect);
+
+        // RENDER GAMEBOY END
+
+        // RENDER SCREEN
         for (self.screen, 0..) |row, y| {
             for (row, 0..) |pixel, x| {
+                
                 rect.x = @as(f32, @floatFromInt(x)) * grid_pixel_sz + grid_pixel_sz*1/10 + sideScreen; 
                 rect.y = @as(f32, @floatFromInt(y)) * grid_pixel_sz + grid_pixel_sz*1/10 + aboveScreen; 
                 rect.h = grid_pixel_sz*9/10;
@@ -1343,31 +1564,9 @@ pub const GB = struct {
     cpu: CPU = CPU{},
     gpu: GPU = GPU{},
     apu: APU = APU{},
-    lcd: LCD = LCD{},
-    memory: [0xFFFF]u8 = undefined,
-
-    const special_registers = enum(u8) { 
-        lcdc = 0xFF40, // LCDC (LCD Control) Enables/disables layers, defines rendering mode
-        stat = 0xFF51, // $FF41 STAT (Status) Tracks PPU state
-        // 6 LYC int select (Read/Write): If set, selects the LYC == LY condition for the STAT interrupt.
-        // 5 Mode 2 int select (Read/Write): If set, selects the Mode 2 condition for the STAT interrupt.
-        // 4 Mode 1 int select (Read/Write): If set, selects the Mode 1 condition for the STAT interrupt.
-        // 3 Mode 0 int select (Read/Write): If set, selects the Mode 0 condition for the STAT interrupt.
-        // 2 LYC == LY (Read-only): Set when LY contains the same value as LYC; it is constantly updated.
-        // 1-0 PPU mode (Read-only): Indicates the PPU’s current status. Reports 0 instead when the PPU is disabled.
-        //
-        SCY = 0xFF42, // $FF42 SCY (Scroll Y) Background vertical scroll
-        SCX = 0xFF43, // $FF43 SCX (Scroll X) Background horizontal scroll
-        ly = 0xFF44, // $FF45 LYC (Compare LY) Interrupt if LY matches LYC
-        DMAT = 0xFF46, // $FF46 DMA Transfers 160 bytes from RAM to OAM
-        BGP = 0xFF47, // $FF47 BGP (BG Palette) Defines colors for BG tiles
-        OBP0 = 0xFF48, // $FF48 OBP0 (OBJ Palette 0) Defines colors for sprite palette 0
-        OBP1 = 0xFF49, // $FF49 OBP1 (OBJ Palette 1) Defines colors for sprite palette 1
-        WY = 0xFF4A, // $FF4A WY (Window Y) Window vertical position
-        WX = 0xFF4B // $FF4B WX (Window X) Window horizontal position
-    };
+    memory: [0xFFFF]u8 = undefined, 
     
-    
+    /// nintendo logo
     const LOGO: [48]u8 = .{ 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E };
 
     pub fn init(self: *@This()) !void {
@@ -1375,22 +1574,28 @@ pub const GB = struct {
         @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
         try self.cpu.init();
         try self.gpu.init(self);
-        try self.lcd.init();
-        // self.drawM();
     }
 
     pub fn read_byte(self: *@This(), address: usize) u8 {
         // TODO: implement memory mapping based on address
-        return self.memory[address];
-    }
+            return self.memory[address];
+        }
+
+    
     pub fn writeByte(self: *@This(), address: usize, value: u8) void {
         switch (address) {
-            VRAM_BEGIN...VRAM_END + 1 => {
+            GPU.VRAM_BEGIN...GPU.VRAM_END + 1 => {
                 println("mem before: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
-                self.gpu.write_vram(address, value);
+                const stat = self.gpu.writeVram(address, value);
+                self.writeByte(LCD.special_registers.memPlace(.stat), stat);
                 println("mem after: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
             },
-            0xFF50 => {},
+            @intFromEnum(LCD.special_registers.dma) => {
+               
+            },
+            0xFF50 => { // Disable bootrom register
+                // Unmap and replace the bootrom with cartridge data
+            },
             else => {
                 self.memory[address] = value;
             },
@@ -1428,10 +1633,13 @@ pub const GB = struct {
         }
     }
 
-    pub fn cycle(self: *@This()) !void {
+    pub fn go(self: *@This()) !void {
+        while (running) {
         try self.cpu.execute(self);
-        self.lcd.render();
+        self.gpu.tick();
+        try getEvents();
         //TODO: Update peripherals & timing
+        }
     }
 
 
@@ -1453,7 +1661,7 @@ pub const GB = struct {
         print("\n", .{});
     }
     fn endGB(self: *@This()) void {
-        self.lcd.endSDL();
+        self.gpu.lcd.endSDL();
     }
 };
 
@@ -1471,12 +1679,7 @@ pub fn main() !void {
     };
     defer gb.endGB();
     print("\n", .{});
-
-    // gb.screen_dump();
-    while (running) {
-        try gb.cycle();
-        try getEvents();
-    }
+    try gb.go();
 }
 
 
