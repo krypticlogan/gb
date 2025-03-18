@@ -694,7 +694,7 @@ const InstructionSet = struct {
         const c = gb.cpu.get_byte(regID.c);
         const a = gb.cpu.get_byte(regID.a);
         const mem_place = 0xFF00 + @as(u16, c);
-        print("LDHCA, memplace@Ox{X} --> 0x{X}\n", .{ mem_place, a });
+        print("LDHCA, memplace@0x{X} --> 0x{X}\n", .{ mem_place, a });
         gb.writeByte(mem_place, a);
         gb.cpu.pc += 1;
     }
@@ -744,14 +744,14 @@ const InstructionSet = struct {
         if (memory_place >= 0xFF00 and memory_place <= 0xFFFF) {
             const n = gb.cpu.get_byte(regID.a);
             gb.writeByte(memory_place, n);
-            print("n: Ox{X} --> memplace@0x{X}\n", .{ n, memory_place });
+            print("n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
         }
         gb.cpu.pc += 2;
     }
     fn LDAr16(gb: *GB, args: InstrArgs) void { // TODO TEST Load value in register A from the byte pointed to by register r16.
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.read_byte(memory_place);
-        print("LDAr16, n: Ox{X} --> A\n", .{n});
+        print("LDAr16, n: 0x{X} --> A\n", .{n});
         gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 1;
     }
@@ -759,7 +759,7 @@ const InstructionSet = struct {
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
-        print("LDr16A, n: Ox{X} --> memplace@0x{X}\n", .{ n, memory_place });
+        print("LDr16A, n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
         gb.cpu.pc += 1;
     }
 
@@ -883,7 +883,7 @@ const InstructionSet = struct {
         const dist: i8 = @bitCast(gb.read_byte(gb.cpu.pc + 1));
         print(" by dist: [pc]0x{X} \t0x{X} ({d}) bytes ", .{ gb.cpu.pc + 1, dist, dist });
         var jump = true;
-        switch (args.flagConditions) {
+        switch (args.flagConditions) { // switches on the carry flags, determining if we should jump
             .h => |*h| {
                 if (h.*) {
                     println("h, flag:{any}", .{gb.cpu.f.h});
@@ -1382,12 +1382,12 @@ const GPU = struct {
     }
 };
 
-///Contains the fields necessary to create a display, 
+///Contains the fields necessary to create a display,
 ///- Screen, Height, Width, Rendering
 const LCD = struct {
     const aboveScreen = 20;
     const sideScreen = 20;
-    const belowScreen = 2*gfxHeight;
+    const belowScreen = 2 * gfxHeight;
     const gfxWidth = 160;
     const gfxHeight = 144;
     const gfxScale = 3;
@@ -1492,11 +1492,10 @@ const LCD = struct {
         // RENDER SCREEN
         for (self.screen, 0..) |row, y| {
             for (row, 0..) |pixel, x| {
-                
-                rect.x = @as(f32, @floatFromInt(x)) * grid_pixel_sz + grid_pixel_sz*1/10 + sideScreen; 
-                rect.y = @as(f32, @floatFromInt(y)) * grid_pixel_sz + grid_pixel_sz*1/10 + aboveScreen; 
-                rect.h = grid_pixel_sz*9/10;
-                rect.w = grid_pixel_sz*9/10;
+                rect.x = @as(f32, @floatFromInt(x)) * grid_pixel_sz + grid_pixel_sz * 1 / 10 + sideScreen;
+                rect.y = @as(f32, @floatFromInt(y)) * grid_pixel_sz + grid_pixel_sz * 1 / 10 + aboveScreen;
+                rect.h = grid_pixel_sz * 9 / 10;
+                rect.w = grid_pixel_sz * 9 / 10;
                 switch (pixel) {
                     GPU.Color.white => {
                         _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 170, 0, 2);
@@ -1525,7 +1524,7 @@ const LCD = struct {
         }
         var win: ?*g.SDL_Window = null;
         var renderer: ?*g.SDL_Renderer = null;
-        if (!g.SDL_CreateWindowAndRenderer("gameboy!", gfxWidth * grid_pixel_sz + sideScreen*2, gfxHeight * grid_pixel_sz + belowScreen + aboveScreen, 0, &win, &renderer)) {
+        if (!g.SDL_CreateWindowAndRenderer("gameboy!", gfxWidth * grid_pixel_sz + sideScreen * 2, gfxHeight * grid_pixel_sz + belowScreen + aboveScreen, 0, &win, &renderer)) {
             print("Failed to create window or renderer: {s}\n", .{g.SDL_GetError()});
             return error.CreationFailure;
         }
@@ -1555,8 +1554,6 @@ const LCD = struct {
         g.SDL_DestroyWindow(self.win);
         g.SDL_DestroyRenderer(self.renderer);
     }
-    
-    
 };
 
 ///Gameboy Machine, defer endGB
@@ -1619,7 +1616,7 @@ pub const GB = struct {
         //     try self.cpu.execute(self);
         // }
     }
-    
+
     pub fn load_game(self: *@This(), game_path: []const u8) !void {
         const romHeaderStart = 0x0100;
         const rom = try std.fs.cwd().openFile(game_path, .{});
@@ -1641,7 +1638,6 @@ pub const GB = struct {
         //TODO: Update peripherals & timing
         }
     }
-
 
     pub fn mem_dump(self: *@This(), start: u16, end: u16) void {
         print("printing bytes:\n", .{});
@@ -1679,7 +1675,11 @@ pub fn main() !void {
     };
     defer gb.endGB();
     print("\n", .{});
-    try gb.go();
+
+    // gb.screen_dump();
+    while (running) {
+       try gb.go();
+    }
 }
 
 
@@ -1696,4 +1696,3 @@ fn getEvents() !void {
         }
     }
 }
-
