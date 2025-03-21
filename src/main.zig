@@ -1487,10 +1487,10 @@ const LCD = struct {
         // const pixel_sz = @as(f32, @floatFromInt(self.grid_pixel_sz)) * (1 - spacing_ratio);
         // const spacing = self.grid_pixel_sz - @as(u16, @intFromFloat(pixel_sz));
 
-        const spacing_ratio = 0.1;
+        // const spacing_ratio = 0.1;
         pxSize = @as(f32, @floatFromInt(screenH)) / screenHeightPx;
-        const inside = pxSize * (1 - spacing_ratio);
-        const spacing = pxSize - inside;
+        // const inside = pxSize * (1 - spacing_ratio);
+        // const spacing = pxSize - inside;
 
         println("screen: {d}x{d}\npxSize: {any}\nrendered screen width: {d}\nrendered screen height: {d}", .{screenW, screenH, pxSize, pxSize * screenWidthPx, pxSize * screenHeightPx});
 
@@ -1519,9 +1519,9 @@ const LCD = struct {
                     .dgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 120, 0, 255),
                     .black => g.SDL_SetRenderDrawColor(self.renderer, 0, 80, 0, 255)
                 };
-                const xPos = @as(f32, @floatFromInt(sidebar)) + @as(f32, @floatFromInt(x)) * pxSize + spacing / 2;
-                const yPos = @as(f32, @floatFromInt(aboveScreen)) + @as(f32, @floatFromInt(y)) * pxSize + spacing / 2;
-                self.setRect(&rect, xPos, yPos, inside, inside);
+                const xPos = @as(f32, @floatFromInt(sidebar)) + @as(f32, @floatFromInt(x)) * pxSize;
+                const yPos = @as(f32, @floatFromInt(aboveScreen)) + @as(f32, @floatFromInt(y)) * pxSize;
+                self.setRect(&rect, xPos, yPos, pxSize, pxSize);
                 _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
             }
