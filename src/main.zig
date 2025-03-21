@@ -1382,17 +1382,22 @@ const GPU = struct {
 ///Contains the fields necessary to create a display,
 ///- Screen, Height, Width, Rendering
 const LCD = struct {
-    const MINWINW = screenWidthPx + 2 * initSideScreen;
-    const MINWINH = screenHeightPx + aboveScreen + initBelowScreen;
+    const initWinW: u16 = screenWidthPx + 2 * initSideScreen;
+    const initWinH: u16 = screenHeightPx + aboveScreen + initBelowScreen;
     const aboveScreen = 20;
     const initSideScreen: u16 = 40;
     const initBelowScreen: u16 = 2 * screenHeightPx;
-    // const scale = 1/2;
-    const pxScale: u8 = 1;
+    // const pxScale: u8 = 1;
     const screenWidthPx = 160;
     const screenHeightPx = 144;
-    var window_height: c_int = undefined;
-    var window_width: c_int = undefined;
+    var window_height: c_int = @intCast(initWinH);
+    var window_width: c_int = @intCast(initWinW);
+    var center: u16 = initWinW / 2;
+    var belowScreen = initBelowScreen;
+    var screenW = initWinW - 2 * initSideScreen;
+    var screenH = initWinH - aboveScreen - initBelowScreen;
+    var sidebar = initSideScreen;
+    var pxSize: f32 = initWinW / screenWidthPx;
     // var window_width: ?u16 = null;
 
 
@@ -1461,85 +1466,69 @@ const LCD = struct {
         try self.startAndCreateRenderer(); // set window and renderer
     }
 
-
+    fn setRect(self: *@This(), rect: *g.SDL_FRect, x: anytype, y: anytype, w: anytype, h: anytype) void {
+        _ = self;
+        rect.x = if (@TypeOf(x) == f32)  x else @as(f32, @floatFromInt(x));
+        rect.y = if (@TypeOf(y) == f32) y else @as(f32, @floatFromInt(y));
+        rect.w = if (@TypeOf(w) == f32) w else @as(f32, @floatFromInt(w));
+        rect.h = if (@TypeOf(h) == f32) h else @as(f32, @floatFromInt(h));
+    }
     pub fn render(self: *@This()) void {
-        _ = g.SDL_SetRenderDrawColor(self.renderer, 20, 0, 180, 100); // purple machine
+        _ = g.SDL_SetRenderDrawColor(self.renderer, 255, 192, 220, 255);
         _ = g.SDL_RenderClear(self.renderer);
-        _ = g.SDL_GetWindowSizeInPixels(self.win, &window_width, &window_height);
+
+        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 255, 0, 255);
+        center = @as(u16, @intCast(window_width)) / 2;
+        screenH = @intFromFloat(@as(f32, @floatFromInt(window_height - aboveScreen)) * 0.4);
+        screenW = screenH * screenWidthPx / screenHeightPx;
+        sidebar = center - screenW / 2;
+
+        const spacing_ratio = 0.1;
+        pxSize = @as(f32, @floatFromInt(screenH)) / screenHeightPx;
+        const inside = pxSize * (1 - spacing_ratio);
+        const spacing = pxSize - inside;
+
+        println("screen: {d}x{d}\npxSize: {any}\nrendered screen width: {d}\nrendered screen height: {d}", .{screenW, screenH, pxSize, pxSize * screenWidthPx, pxSize * screenHeightPx});
+
         var rect = g.SDL_FRect{};
-        // println("rendering {d}x{d}", .{window_width, window_height});
-        const center: f32 = @as(f32, @floatFromInt((@as(c_uint, @intCast(window_width)) / 2)));
-        // self.grid_pixel_sz = @as(u16, @intFromFloat(0.3 * @as(f32, @floatFromInt((@as(c_uint, @intCast(window_height)) / screenHeight))))); // screen is 30% of window_height
-        const screen_height: f16 = @floor(@as(f16, @floatFromInt(window_height)) * 0.3);
-        self.grid_pixel_sz = @as(u16, @intCast(@as(c_uint, @intFromFloat(screen_height)) / screenHeightPx)); // screen is 30% of window_height
-
-        const spacing_ratio = 0.2;
-        const pixel_sz = @as(f32, @floatFromInt(self.grid_pixel_sz)) * (1 - spacing_ratio);
-        const spacing = self.grid_pixel_sz - @as(u16, @intFromFloat(pixel_sz));
-
-
-        const screenXStart = std.math.lossyCast(u16, center - (@as(f32, @floatFromInt(screenWidthPx)) / 2) * @as(f32, @floatFromInt(self.grid_pixel_sz)))  ; // start screen in center
-        print("start screen@{d}\n", .{screenXStart});
-         if (self.grid_pixel_sz * screenWidthPx != window_width - 2 * screenXStart ) {
-            print("CRITICAL ERROR HERE diff: {any}\n\n\n\n\n\n\n", .{self.grid_pixel_sz * screenWidthPx - window_width - 2 * screenXStart});
-        }
-        _ = g.SDL_SetRenderDrawColor(self.renderer, 110, 110, 110, 255); // dark gray border
-        rect.x = @as(f32, @floatFromInt(screenXStart)) - 5;
-        rect.y = aboveScreen - 5;
-        rect.h = @as(f32, @floatFromInt(self.grid_pixel_sz * screenHeightPx + 10));
-        rect.w = @as(f32, @floatFromInt(self.grid_pixel_sz * screenWidthPx + 10));
+        // render the screen in the right place
+        self.setRect(&rect, center, 0, 2, window_height); // center of window
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
-        _ = g.SDL_SetRenderDrawColor(self.renderer, 70, 70, 70, 255); // light gray screen
-        rect.x = @as(f32, @floatFromInt(screenXStart)) - 3;
-        rect.y = aboveScreen - 3;
-        rect.h = @as(f32, @floatFromInt(self.grid_pixel_sz * screenHeightPx + 6));
-        rect.w = @as(f32, @floatFromInt(self.grid_pixel_sz * screenWidthPx + 6));
+        self.setRect(&rect, 0, aboveScreen, window_width, 2); // top of screen
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
-        _ = g.SDL_SetRenderDrawColor(self.renderer, 30, 30, 30, 255); // darker gray screen under shadow
-        rect.x = @as(f32, @floatFromInt(screenXStart)) - 3;
-        rect.y = @as(f32, @floatFromInt(aboveScreen + screenHeightPx * self.grid_pixel_sz + 5));
-        rect.h = 5;
-        rect.w = @as(f32, @floatFromInt(self.grid_pixel_sz * screenWidthPx + 11));
+        self.setRect(&rect, 0, screenH + aboveScreen, window_width, 2); // bottom of screen
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
-        _ = g.SDL_SetRenderDrawColor(self.renderer, 30, 30, 30, 255); // dark gray screen side shadow
-        rect.x = @as(f32, @floatFromInt(screenXStart)) + @as(f32, @floatFromInt(screenWidthPx * self.grid_pixel_sz + 5));
-        rect.y = aboveScreen - 3;
-        rect.h = @as(f32, @floatFromInt(screenHeightPx * self.grid_pixel_sz + 12));
-        rect.w = 4;
+        self.setRect(&rect, sidebar, 0, 2, window_height); // right side of screen
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
-        // RENDER GAMEBOY END
+        self.setRect(&rect, sidebar + screenW, 0, 2, window_height); // left side of screen
+        _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
-        // RENDER SCREEN
         for (self.screen, 0..) |row, y| {
-            for (row, 0..) |pixel, x| {
-                rect.x = @as(f32, @floatFromInt(screenXStart)) + @as(f32, @floatFromInt(spacing / 2)) + @as(f32, @floatFromInt(x * self.grid_pixel_sz));
-                rect.y = aboveScreen  + @as(f32, @floatFromInt(spacing / 2)) + @as(f32, @floatFromInt(y * self.grid_pixel_sz));
-                rect.h = pixel_sz;
-                rect.w = pixel_sz;
-                switch (pixel) {
-                    GPU.Color.white => {
-                        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 170, 0, 2);
-                    },
-                    GPU.Color.lgray => {
-                        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 130, 0, 2);
-                    },
-                    GPU.Color.dgray => {
-                        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 90, 0, 2);
-                    },
-                    GPU.Color.black => {
-                        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 50, 0, 2);
-                    },
-                }
-                if (!g.SDL_RenderFillRect(self.renderer, &rect)) {
-                    print("SDL_RenderFillRect failed: {s}\n", .{g.SDL_GetError()});
-                }
+            for (row, 0..) |px, x| {
+                _ = switch (px) {
+                    .white => g.SDL_SetRenderDrawColor(self.renderer, 0, 200, 0, 255),
+                    .lgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 160, 0, 255),
+                    .dgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 120, 0, 255),
+                    .black => g.SDL_SetRenderDrawColor(self.renderer, 0, 80, 0, 255)
+                };
+                const xPos = @floor(@as(f32, @floatFromInt(sidebar)) + @as(f32, @floatFromInt(x)) * pxSize + spacing / 2);
+                const yPos = @floor(@as(f32, @floatFromInt(aboveScreen)) + @as(f32, @floatFromInt(y)) * pxSize + spacing / 2);
+                self.setRect(&rect, xPos, yPos, inside, inside);
+                _ = g.SDL_RenderFillRect(self.renderer, &rect);
+
             }
         }
+
+        println("rendering {d}x{d}", .{window_width, window_height});
         _ = g.SDL_RenderPresent(self.renderer);
+
+
+
+
     }
     fn startAndCreateRenderer(self: *@This()) !void {
         if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
@@ -1548,7 +1537,7 @@ const LCD = struct {
         }
         var win: ?*g.SDL_Window = null;
         var renderer: ?*g.SDL_Renderer = null;
-        if (!g.SDL_CreateWindowAndRenderer("gameboy!", MINWINW, MINWINH, 0, &win, &renderer)) {
+        if (!g.SDL_CreateWindowAndRenderer("gameboy!", initWinW, initWinH, 0, &win, &renderer)) {
             print("Failed to create window or renderer: {s}\n", .{g.SDL_GetError()});
             return error.CreationFailure;
         }
@@ -1671,9 +1660,9 @@ pub const GB = struct {
 
     pub fn go(self: *@This()) !void {
         while (self.running) {
-        try self.cpu.execute(self);
-        self.gpu.tick();
-        try self.getEvents();
+            try self.getEvents();
+            // try self.cpu.execute(self);
+            self.gpu.tick();
         //TODO: Update peripherals & timing
         }
     }
@@ -1685,6 +1674,9 @@ pub const GB = struct {
                 g.SDL_EVENT_KEY_UP => {},
                 g.SDL_EVENT_QUIT => {
                     self.running = false;
+                },
+                g.SDL_EVENT_WINDOW_RESIZED => {
+                    _ = g.SDL_GetWindowSizeInPixels(self.gpu.lcd.win, &LCD.window_width, &LCD.window_height);
                 },
                 else => {},
             }
