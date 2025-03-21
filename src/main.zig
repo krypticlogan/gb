@@ -1397,7 +1397,7 @@ const LCD = struct {
     var screenW = initWinW - 2 * initSideScreen;
     var screenH = initWinH - aboveScreen - initBelowScreen;
     var sidebar = initSideScreen;
-    var pxSize: f32 = initWinW / screenWidthPx;
+    var pxSize: f32 = @as(f32, @floatFromInt(initWinW)) / screenWidthPx;
     // var window_width: ?u16 = null;
 
 
@@ -1483,6 +1483,10 @@ const LCD = struct {
         screenW = screenH * screenWidthPx / screenHeightPx;
         sidebar = center - screenW / 2;
 
+        // const spacing_ratio = 0.2;
+        // const pixel_sz = @as(f32, @floatFromInt(self.grid_pixel_sz)) * (1 - spacing_ratio);
+        // const spacing = self.grid_pixel_sz - @as(u16, @intFromFloat(pixel_sz));
+
         const spacing_ratio = 0.1;
         pxSize = @as(f32, @floatFromInt(screenH)) / screenHeightPx;
         const inside = pxSize * (1 - spacing_ratio);
@@ -1515,8 +1519,8 @@ const LCD = struct {
                     .dgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 120, 0, 255),
                     .black => g.SDL_SetRenderDrawColor(self.renderer, 0, 80, 0, 255)
                 };
-                const xPos = @floor(@as(f32, @floatFromInt(sidebar)) + @as(f32, @floatFromInt(x)) * pxSize + spacing / 2);
-                const yPos = @floor(@as(f32, @floatFromInt(aboveScreen)) + @as(f32, @floatFromInt(y)) * pxSize + spacing / 2);
+                const xPos = @as(f32, @floatFromInt(sidebar)) + @as(f32, @floatFromInt(x)) * pxSize + spacing / 2;
+                const yPos = @as(f32, @floatFromInt(aboveScreen)) + @as(f32, @floatFromInt(y)) * pxSize + spacing / 2;
                 self.setRect(&rect, xPos, yPos, inside, inside);
                 _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
