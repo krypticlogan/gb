@@ -1,6 +1,3 @@
-//! By convention, main.zig is where your main function lives in the case that
-//! you are building an executable. If you are making a library, the convention
-//! is to delete this file and start with root.zig instead.
 const std = @import("std");
 const g = @cImport({
     @cDefine("SDL_DISABLE_OLD_NAMES", {});
@@ -1207,7 +1204,12 @@ const GPU = struct {
 
     vram: *[VRAM_SIZE]u8 = undefined,
     oam: *[OAM_SIZE]u8 = undefined,
+    // Stores sprite attributes (position, tile index, attributes).
+        // Cannot be accessed during scanline rendering. -- writeOAM & read
+        // Control rendering behavior.
+        // Define which layers are enabled.
     special_registers: *[12]u8 = undefined,
+     // LCD Control Registers (I/O Registers at $FF40–$FF4B)
     tile_set: [384]Tile = undefined,
     stat_reg: u8 = undefined,
     mode: Mode = undefined,
@@ -1261,14 +1263,13 @@ const GPU = struct {
     }
     /// DMA Transfer from RAM to OAM mem
     /// - addresses (0xXX00 - 0xXX9F) are written to OAM
-    fn writeOAM(self: *@This(), address: usize) void {
-        if (self.mode == .HBLANK or self.mode == .VBLANK) {
+    fn writeOAM(self: *@This(), address: usize, value: u8) !void {
+        if (self.mode == .RENDER or self.mode == .SCAN) {
             print("cannot access oam now\n", .{});
             return;
         }
-        const prefix = address / 0x100;
-        const ram_address: u16 = @as(u16, prefix) << 8;
-        @memcpy( self.memory[GPU.OAM_BEGIN .. GPU.OAM_END], self.memory[ram_address..ram_address + GPU.OAM_END]);
+        if (address <= 0xFE00 or address >= 0xFE9F) return error.OutOfOAMBounds;
+        self.oam[address] = value;
     }
 
     fn readVram(self: *@This(), address: usize) u8 {
@@ -1292,11 +1293,7 @@ const GPU = struct {
 
         // OAM (Object Attribute Memory) at $FE00–$FE9F
 
-        // Stores sprite attributes (position, tile index, attributes).
-        // Cannot be accessed during scanline rendering.
-        // LCD Control Registers (I/O Registers at $FF40–$FF4B)
-        // Control rendering behavior.
-        // Define which layers are enabled.
+        
 
         
         // if (address >= 0x1800) return; // not writing to tile set
@@ -1385,21 +1382,31 @@ const GPU = struct {
 ///Contains the fields necessary to create a display,
 ///- Screen, Height, Width, Rendering
 const LCD = struct {
+    const MINWINW = screenWidthPx + 2 * initSideScreen;
+    const MINWINH = screenHeightPx + aboveScreen + initBelowScreen;
     const aboveScreen = 20;
-    const sideScreen = 20;
-    const belowScreen = 2 * gfxHeight;
-    const gfxWidth = 160;
-    const gfxHeight = 144;
-    const gfxScale = 3;
-    const window_height = gfxHeight * gfxScale;
-    const window_width = gfxWidth * gfxScale;
-    const grid_pixel_sz = window_width / gfxWidth;
+    const initSideScreen: u16 = 40;
+    const initBelowScreen: u16 = 2 * screenHeightPx;
+    // const scale = 1/2;
+    const pxScale: u8 = 1;
+    const screenWidthPx = 160;
+    const screenHeightPx = 144;
+    var window_height: c_int = undefined;
+    var window_width: c_int = undefined;
+    // var window_width: ?u16 = null;
 
-    screen: [gfxHeight][gfxWidth]GPU.Color = undefined,
+
+
+    screen: [screenHeightPx][screenWidthPx]GPU.Color = undefined,
     background: [32][32]GPU.Tile = undefined, // defines the background pixels of the gameboy
     window: [32][32]GPU.Tile = undefined, // defines the foreground and sprites
     renderer: *g.SDL_Renderer = undefined,
     win: *g.SDL_Window = undefined,
+
+    // gfxScale: u16 = 3,
+    grid_pixel_sz: u16 = undefined,
+    // grid_pixel_w: f32 = undefined,
+
 
     const special_registers = enum(u8) { 
         lcdc,
@@ -1454,36 +1461,53 @@ const LCD = struct {
         try self.startAndCreateRenderer(); // set window and renderer
     }
 
+
     pub fn render(self: *@This()) void {
         _ = g.SDL_SetRenderDrawColor(self.renderer, 20, 0, 180, 100); // purple machine
         _ = g.SDL_RenderClear(self.renderer);
+        _ = g.SDL_GetWindowSizeInPixels(self.win, &window_width, &window_height);
         var rect = g.SDL_FRect{};
-        
-         _ = g.SDL_SetRenderDrawColor(self.renderer, 110, 110, 110, 255); // dark gray border
-        rect.x = sideScreen - 5;
+        // println("rendering {d}x{d}", .{window_width, window_height});
+        const center: f32 = @as(f32, @floatFromInt((@as(c_uint, @intCast(window_width)) / 2)));
+        // self.grid_pixel_sz = @as(u16, @intFromFloat(0.3 * @as(f32, @floatFromInt((@as(c_uint, @intCast(window_height)) / screenHeight))))); // screen is 30% of window_height
+        const screen_height: f16 = @floor(@as(f16, @floatFromInt(window_height)) * 0.3);
+        self.grid_pixel_sz = @as(u16, @intCast(@as(c_uint, @intFromFloat(screen_height)) / screenHeightPx)); // screen is 30% of window_height
+
+        const spacing_ratio = 0.2;
+        const pixel_sz = @as(f32, @floatFromInt(self.grid_pixel_sz)) * (1 - spacing_ratio);
+        const spacing = self.grid_pixel_sz - @as(u16, @intFromFloat(pixel_sz));
+
+
+        const screenXStart = std.math.lossyCast(u16, center - (@as(f32, @floatFromInt(screenWidthPx)) / 2) * @as(f32, @floatFromInt(self.grid_pixel_sz)))  ; // start screen in center
+        print("start screen@{d}\n", .{screenXStart});
+         if (self.grid_pixel_sz * screenWidthPx != window_width - 2 * screenXStart ) {
+            print("CRITICAL ERROR HERE diff: {any}\n\n\n\n\n\n\n", .{self.grid_pixel_sz * screenWidthPx - window_width - 2 * screenXStart});
+        }
+        _ = g.SDL_SetRenderDrawColor(self.renderer, 110, 110, 110, 255); // dark gray border
+        rect.x = @as(f32, @floatFromInt(screenXStart)) - 5;
         rect.y = aboveScreen - 5;
-        rect.h = grid_pixel_sz * gfxHeight + 10;
-        rect.w = grid_pixel_sz * gfxWidth + 10;
+        rect.h = @as(f32, @floatFromInt(self.grid_pixel_sz * screenHeightPx + 10));
+        rect.w = @as(f32, @floatFromInt(self.grid_pixel_sz * screenWidthPx + 10));
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
         _ = g.SDL_SetRenderDrawColor(self.renderer, 70, 70, 70, 255); // light gray screen
-        rect.x = sideScreen - 3;
+        rect.x = @as(f32, @floatFromInt(screenXStart)) - 3;
         rect.y = aboveScreen - 3;
-        rect.h = grid_pixel_sz * gfxHeight + 6;
-        rect.w = grid_pixel_sz * gfxWidth + 6;
+        rect.h = @as(f32, @floatFromInt(self.grid_pixel_sz * screenHeightPx + 6));
+        rect.w = @as(f32, @floatFromInt(self.grid_pixel_sz * screenWidthPx + 6));
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
         _ = g.SDL_SetRenderDrawColor(self.renderer, 30, 30, 30, 255); // darker gray screen under shadow
-        rect.x = sideScreen - 3;
-        rect.y = aboveScreen + gfxHeight * grid_pixel_sz + 5;
+        rect.x = @as(f32, @floatFromInt(screenXStart)) - 3;
+        rect.y = @as(f32, @floatFromInt(aboveScreen + screenHeightPx * self.grid_pixel_sz + 5));
         rect.h = 5;
-        rect.w = grid_pixel_sz * gfxWidth + 11;
+        rect.w = @as(f32, @floatFromInt(self.grid_pixel_sz * screenWidthPx + 11));
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
         _ = g.SDL_SetRenderDrawColor(self.renderer, 30, 30, 30, 255); // dark gray screen side shadow
-        rect.x = sideScreen + gfxWidth * grid_pixel_sz + 5;
+        rect.x = @as(f32, @floatFromInt(screenXStart)) + @as(f32, @floatFromInt(screenWidthPx * self.grid_pixel_sz + 5));
         rect.y = aboveScreen - 3;
-        rect.h = gfxHeight * grid_pixel_sz + 12;
+        rect.h = @as(f32, @floatFromInt(screenHeightPx * self.grid_pixel_sz + 12));
         rect.w = 4;
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
 
@@ -1492,10 +1516,10 @@ const LCD = struct {
         // RENDER SCREEN
         for (self.screen, 0..) |row, y| {
             for (row, 0..) |pixel, x| {
-                rect.x = @as(f32, @floatFromInt(x)) * grid_pixel_sz + grid_pixel_sz * 1 / 10 + sideScreen;
-                rect.y = @as(f32, @floatFromInt(y)) * grid_pixel_sz + grid_pixel_sz * 1 / 10 + aboveScreen;
-                rect.h = grid_pixel_sz * 9 / 10;
-                rect.w = grid_pixel_sz * 9 / 10;
+                rect.x = @as(f32, @floatFromInt(screenXStart)) + @as(f32, @floatFromInt(spacing / 2)) + @as(f32, @floatFromInt(x * self.grid_pixel_sz));
+                rect.y = aboveScreen  + @as(f32, @floatFromInt(spacing / 2)) + @as(f32, @floatFromInt(y * self.grid_pixel_sz));
+                rect.h = pixel_sz;
+                rect.w = pixel_sz;
                 switch (pixel) {
                     GPU.Color.white => {
                         _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 170, 0, 2);
@@ -1524,7 +1548,7 @@ const LCD = struct {
         }
         var win: ?*g.SDL_Window = null;
         var renderer: ?*g.SDL_Renderer = null;
-        if (!g.SDL_CreateWindowAndRenderer("gameboy!", gfxWidth * grid_pixel_sz + sideScreen * 2, gfxHeight * grid_pixel_sz + belowScreen + aboveScreen, 0, &win, &renderer)) {
+        if (!g.SDL_CreateWindowAndRenderer("gameboy!", MINWINW, MINWINH, 0, &win, &renderer)) {
             print("Failed to create window or renderer: {s}\n", .{g.SDL_GetError()});
             return error.CreationFailure;
         }
@@ -1532,12 +1556,23 @@ const LCD = struct {
             print("Failed to create window: {s}\n", .{g.SDL_GetError()});
             return error.WindowNull;
         }
+        _ = g.SDL_SetWindowResizable(win.?, true);
+
         if (renderer == null) {
             print("Failed to create renderer: {s}\n", .{g.SDL_GetError()});
             return error.RendererFailure;
         }
         self.renderer = renderer.?;
         self.win = win.?;
+        if (!g.SDL_GetWindowSizeInPixels(self.win, &window_width, &window_height)) {
+            println("err while getting window size: {s}", .{g.SDL_GetError()});
+            return error.NoWinSize;
+        } else {
+            println("window size: {d}x{d}", .{window_width, window_height});
+            if (window_height == 0 or window_width == 0) {
+                return error.DetectedZeroWidthWin;
+            }
+        }
     }
     pub fn screen_dump(self: *@This()) void {
         print("Actual memspace dump: \n", .{});
@@ -1556,12 +1591,13 @@ const LCD = struct {
     }
 };
 
-///Gameboy Machine, defer endGB
+/// Gameboy Machine, defer endGB
 pub const GB = struct {
     cpu: CPU = CPU{},
     gpu: GPU = GPU{},
     apu: APU = APU{},
-    memory: [0xFFFF]u8 = undefined, 
+    memory: [0xFFFF]u8 = undefined,
+    running: bool = undefined,
     
     /// nintendo logo
     const LOGO: [48]u8 = .{ 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E };
@@ -1571,6 +1607,7 @@ pub const GB = struct {
         @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
         try self.cpu.init();
         try self.gpu.init(self);
+        self.running = true;
     }
 
     pub fn read_byte(self: *@This(), address: usize) u8 {
@@ -1588,7 +1625,9 @@ pub const GB = struct {
                 println("mem after: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
             },
             @intFromEnum(LCD.special_registers.dma) => {
-               
+                const prefix = address / 0x100;
+                const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
+                @memcpy( self.memory[GPU.OAM_BEGIN .. GPU.OAM_END], self.memory[ram_address..ram_address + GPU.OAM_END]);
             },
             0xFF50 => { // Disable bootrom register
                 // Unmap and replace the bootrom with cartridge data
@@ -1631,14 +1670,26 @@ pub const GB = struct {
     }
 
     pub fn go(self: *@This()) !void {
-        while (running) {
+        while (self.running) {
         try self.cpu.execute(self);
         self.gpu.tick();
-        try getEvents();
+        try self.getEvents();
         //TODO: Update peripherals & timing
         }
     }
-
+    fn getEvents(self: *@This()) !void {
+        var event: g.SDL_Event = undefined;
+        while (g.SDL_PollEvent(&event)) {
+            switch (event.type) {
+                g.SDL_EVENT_KEY_DOWN => {},
+                g.SDL_EVENT_KEY_UP => {},
+                g.SDL_EVENT_QUIT => {
+                    self.running = false;
+                },
+                else => {},
+            }
+        }
+    }
     pub fn mem_dump(self: *@This(), start: u16, end: u16) void {
         print("printing bytes:\n", .{});
         for (self.memory[start..end], start..end) |value, i| {
@@ -1661,7 +1712,8 @@ pub const GB = struct {
     }
 };
 
-var running = true;
+
+
 pub fn main() !void {
     var gb = GB{};
     gb.init() catch |err| {
@@ -1674,25 +1726,8 @@ pub fn main() !void {
         return;
     };
     defer gb.endGB();
-    print("\n", .{});
-
-    // gb.screen_dump();
-    while (running) {
-       try gb.go();
-    }
+    try gb.go();
 }
 
 
-fn getEvents() !void {
-    var event: g.SDL_Event = undefined;
-    while (g.SDL_PollEvent(&event)) {
-        switch (event.type) {
-            g.SDL_EVENT_KEY_DOWN => {},
-            g.SDL_EVENT_KEY_UP => {},
-            g.SDL_EVENT_QUIT => {
-                running = false;
-            },
-            else => {},
-        }
-    }
-}
+
