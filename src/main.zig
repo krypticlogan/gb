@@ -1460,8 +1460,20 @@ const LCD = struct {
     };
 
     fn init(self: *@This()) !void {
+        var color: GPU.Color = undefined;
         for (&self.screen) |*row| {
-            @memset(row, GPU.Color.white);
+            for (row) |*pixel| {
+
+                var seed: u64 = undefined;
+                try std.posix.getrandom(std.mem.asBytes(&seed));
+                var prng = std.Random.DefaultPrng.init(seed);
+                const rand = prng.random();
+                color = rand.enumValue(GPU.Color);
+                // i = rand.;
+                pixel.* = color;
+            }
+
+            // @memset(//row, color);
         }
         try self.startAndCreateRenderer(); // set window and renderer
     }
@@ -1473,24 +1485,24 @@ const LCD = struct {
         rect.w = if (@TypeOf(w) == f32) w else @as(f32, @floatFromInt(w));
         rect.h = if (@TypeOf(h) == f32) h else @as(f32, @floatFromInt(h));
     }
+
+    fn updateDimensions() void {
+        center = @as(u16, @intCast(window_width)) / 2;
+        screenH = @intFromFloat(@as(f32, @floatFromInt(window_height - aboveScreen)) * 0.4);
+        screenW = screenH * screenWidthPx / screenHeightPx;
+        if (screenW > window_width - 20) {
+            screenW = @intCast(window_width - 20);
+            screenH = screenW * screenHeightPx / screenWidthPx;
+        }
+        sidebar = center - screenW / 2;
+        pxSize = @as(f32, @floatFromInt(screenH)) / screenHeightPx;
+
+    }
     pub fn render(self: *@This()) void {
         _ = g.SDL_SetRenderDrawColor(self.renderer, 255, 192, 220, 255);
         _ = g.SDL_RenderClear(self.renderer);
 
         _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 255, 0, 255);
-        center = @as(u16, @intCast(window_width)) / 2;
-        screenH = @intFromFloat(@as(f32, @floatFromInt(window_height - aboveScreen)) * 0.4);
-        screenW = screenH * screenWidthPx / screenHeightPx;
-        sidebar = center - screenW / 2;
-
-        // const spacing_ratio = 0.2;
-        // const pixel_sz = @as(f32, @floatFromInt(self.grid_pixel_sz)) * (1 - spacing_ratio);
-        // const spacing = self.grid_pixel_sz - @as(u16, @intFromFloat(pixel_sz));
-
-        // const spacing_ratio = 0.1;
-        pxSize = @as(f32, @floatFromInt(screenH)) / screenHeightPx;
-        // const inside = pxSize * (1 - spacing_ratio);
-        // const spacing = pxSize - inside;
 
         println("screen: {d}x{d}\npxSize: {any}\nrendered screen width: {d}\nrendered screen height: {d}", .{screenW, screenH, pxSize, pxSize * screenWidthPx, pxSize * screenHeightPx});
 
@@ -1535,6 +1547,7 @@ const LCD = struct {
 
     }
     fn startAndCreateRenderer(self: *@This()) !void {
+        defer updateDimensions();
         if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
             print("SDL_Init failed: {s}\n", .{g.SDL_GetError()});
             return error.InitializationFailed;
@@ -1550,6 +1563,7 @@ const LCD = struct {
             return error.WindowNull;
         }
         _ = g.SDL_SetWindowResizable(win.?, true);
+        _ =  g.SDL_SetWindowMinimumSize(win.?, initWinW, initWinH);
 
         if (renderer == null) {
             print("Failed to create renderer: {s}\n", .{g.SDL_GetError()});
@@ -1681,6 +1695,11 @@ pub const GB = struct {
                 },
                 g.SDL_EVENT_WINDOW_RESIZED => {
                     _ = g.SDL_GetWindowSizeInPixels(self.gpu.lcd.win, &LCD.window_width, &LCD.window_height);
+                    LCD.updateDimensions();
+                },
+                g.SDL_EVENT_WINDOW_MAXIMIZED => {
+                    _ = g.SDL_GetWindowSizeInPixels(self.gpu.lcd.win, &LCD.window_width, &LCD.window_height);
+                    LCD.updateDimensions();
                 },
                 else => {},
             }
