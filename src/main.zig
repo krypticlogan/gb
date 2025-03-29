@@ -721,7 +721,7 @@ const InstructionSet = struct {
         // print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         if (memory_place >= 0xFF00 and memory_place <= 0xFFFF) {
             const n = gb.read_byte(memory_place);
-            print("n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
+            print("n: 0x{X} --> A\n", .{ n });
             gb.cpu.set_byte(regID.a, n);
         }
         gb.cpu.pc += 2;
@@ -1218,26 +1218,16 @@ const GPU = struct {
     mode: Mode = undefined,
     lcd: LCD = undefined,
     
-    scanline_cycles: u16 = 0,
-    frame_cycles_spend: u8 = 0,
-
-
-
+    scanline: [LCD.screenWidthPx]Color = undefined,
+    scanline_cycles_left: u16 = 456,
+    frame_cycles_spent: u8 = 0,
 
     const Mode = enum { // modes specifying number of cycles
         HBLANK,
         VBLANK,
         SCAN,
         RENDER,
-
-        fn cycles(mode: Mode) u16 {
-            return switch (mode) {
-                .HBLANK => 204,
-                .VBLANK => 4560,
-                .SCAN => 80,
-                .RENDER => 172 // -- 289
-            };
-        }
+        const cycles: [4]u16 = .{204, 456, 80, 172};
     };
 
     const Color = enum(u2) { black, dgray, lgray, white };
@@ -1258,23 +1248,36 @@ const GPU = struct {
         return self.special_registers[@intFromEnum(register)];
     }
 
-    fn setMode(self: *@This()) void {
+    fn switchMode(self: *@This()) void {
         if (self.getSpecialRegister(.ly) >= 144) {
             self.mode = .VBLANK;
             // TODO INTERRUPT
             return;
         }
-        self.mode = switch (self.scanline_cycles) {
-            0...79 => .SCAN,
-            80...251 => .RENDER,
-            else => .HBLANK
-        };
+        switch (self.mode) {
+            .SCAN => {
+                self.mode = .RENDER;
+                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.RENDER)];
+            },
+            .RENDER => {
+                self.mode = .HBLANK;
+                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.HBLANK)];
+            },
+            .HBLANK => {
+                self.mode = .SCAN;
+                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
+                // self.setSpecialRegister(.ly, 144);
+            },
+            .VBLANK => {
+                self.mode = .SCAN;
+                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];                
+            },
+        }
         // update STAT register 
         var stat_reg = self.getSpecialRegister(.stat);
-        println("stat: {d}", .{stat_reg});
+        // println("stat: {d}", .{stat_reg});
         stat_reg = (stat_reg & 0b1111_1100) | @intFromEnum(self.mode);
         self.setSpecialRegister(.stat, stat_reg);
-        println("stat after: {d}", .{stat_reg});
     }
 
     fn init(self: *@This(), gb: *GB) !void {
@@ -1286,7 +1289,7 @@ const GPU = struct {
     }
 
     fn do(self: *@This()) void {
-        // Operate GPU here
+        // Operate GPU here 
         switch (self.mode) {
             .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
                 for (self.oam) |byte| {
@@ -1294,46 +1297,55 @@ const GPU = struct {
                 }
             },
             .RENDER => { // 3 transfers pixels to the LCD, one scanline at a time, duration variable
-                var scanline: [LCD.screenWidthPx]Color = undefined;
-                @memset(&scanline, Color.white);
-                // process tile data
-                self.lcd.render_scanline(scanline);
-                self.scanline_cycles = 456;
+                // var scanline: [LCD.screenWidthPx]Color = undefined;
+                // TODO: Generate the actual pixels for this scanline based on:
+                // - Background tiles at the current scroll position
+                // - Window tiles if enabled and visible on this line
+                // - Sprites that were found during OAM scan
+
+                // if (self.scanline_cycles_left < cycles) {
+                    
+                // }
             },
             else => {} // no action for hblank or vblank
         }     
     }
 
-    fn tick(self: *@This(), cycles: u16) void { 
+    fn tick(self: *@This(), cycles: u16) void {
         // TODO the gpu should tick/cycle just as many 
             // times as the cpu did, while being able to 
-            // process interrupts and continue on
+            // process interrupts and continue on as well as changing modes midscanline when needed
 
         // time GPU here
         var cycles_left = cycles; // amt of cycles spent by cpu
-        println("scanline cycles: {d}", .{self.scanline_cycles});
+        
         while (cycles_left > 0) {
-            const cycles_to_next_mode: u16 = Mode.cycles(self.mode) - self.scanline_cycles;
-            const cycles_to_process: u16 = @min(cycles_left, cycles_to_next_mode);
-
+            const cycles_to_process: u16 = @min(cycles_left, self.scanline_cycles_left);
             self.do();
 
-            self.scanline_cycles += cycles_to_process;
+            self.scanline_cycles_left -= cycles_to_process;
             cycles_left -= cycles_to_process;
+            
 
-            if (self.scanline_cycles == 456) {
-                self.scanline_cycles = 0;
+            if (self.scanline_cycles_left == 0) {
                 const ly = self.getSpecialRegister(.ly);
-                if (self.getSpecialRegister(.ly) == 153) {
+                if (self.mode == Mode.RENDER) {
+                    println("Mode: {any}, stat update: {d}", .{self.mode, self.getSpecialRegister(.stat)});
+                    println("scanline cycles left: {d}, cycles left: {d}", .{self.scanline_cycles_left, cycles_left});
+                    println("ly: {d}, next: {d}\n", .{self.getSpecialRegister(.ly), self.getSpecialRegister(.ly) + 1});
+                    @memset(&self.scanline, Color.white);
+                    self.lcd.render_scanline(self.scanline, ly);
+                }
+                 if (ly >= 153) {
                     self.setSpecialRegister(.ly, 0);
-                }
-                else {
+                 }
+                 else if (self.mode == .HBLANK or self.mode == .VBLANK) {
+                    println("ly: {d}, next: {d}\n", .{self.getSpecialRegister(.ly), self.getSpecialRegister(.ly) + 1});
                     self.setSpecialRegister(.ly, ly + 1);
-                }
+                 }
+                self.switchMode();
                 // TODO LYC CHECK 
             }
-
-            self.setMode();
         }   
         // const normalized_address = fixed_address & 0xFFFE;
         //
@@ -1518,7 +1530,7 @@ const LCD = struct {
         println("pxSize: {any}", .{pxSize});
 
     }
-    pub fn render_scanline(self: *@This(), scanline: [screenWidthPx]GPU.Color ) void {
+    pub fn render_scanline(self: *@This(), scanline: [screenWidthPx]GPU.Color, y: u8 ) void {
         var rect = g.SDL_FRect{};
         // SCANLINE 
         for (scanline, 0..) |px, x| {
@@ -1529,7 +1541,7 @@ const LCD = struct {
                 .black => g.SDL_SetRenderDrawColor(self.renderer, 0, 80, 0, 255)
             };
             const xPos = @as(f32, @floatFromInt(sidebar)) + @as(f32, @floatFromInt(x)) * pxSize;
-            const yPos = @as(f32, @floatFromInt(aboveScreen)) + @as(f32, @intFromEnum(special_registers.ly)) * pxSize;
+            const yPos = @as(f32, @floatFromInt(aboveScreen)) + @as(f32, @floatFromInt(y)) * pxSize;
             self.setRect(&rect, xPos, yPos, pxSize, pxSize);
             _ = g.SDL_RenderFillRect(self.renderer, &rect);
         }
@@ -1706,11 +1718,11 @@ pub const GB = struct {
         //TODO: Update peripherals & timing
         }
     }
-
     fn do(self: *@This()) !void {
         const cycles = try self.cpu.execute(self);
         self.cycles_spent += cycles;
         self.gpu.tick(cycles);
+        self.reg_dump();
     }
     fn getEvents(self: *@This()) !void {
         var event: g.SDL_Event = undefined;
@@ -1753,6 +1765,15 @@ pub const GB = struct {
         }
         print("\n", .{});
     }
+
+    pub fn reg_dump(self: *@This()) void {
+        print("Actual memspace dump: \n", .{});
+        for (self.memory[LCD.special_registers.start .. LCD.special_registers.end + 1], LCD.special_registers.start..LCD.special_registers.end + 1) |value, i| {
+            println("register@0x{x}: 0x{x} ", .{i, value});
+        }
+        print("\n", .{});
+    }
+
     fn endGB(self: *@This()) void {
         self.gpu.lcd.endSDL();
     }
