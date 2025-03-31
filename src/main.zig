@@ -21,7 +21,7 @@ const FlagRegister = struct {
     c: bool = false,
     const Conditions = union(enum) { z: bool, c: bool, s: bool, h: bool, none: bool };
 
-    fn check(self: *@This()) void {
+    fn update(self: *@This()) void {
         self.z = (self.value >> 7) & 0b1 == 1;
         self.s = (self.value >> 6) & 0b1 == 1;
         self.h = (self.value >> 5) & 0b1 == 1;
@@ -33,8 +33,51 @@ const FlagRegister = struct {
             @as(u8, @intFromBool(self.s)) << 6 |
             @as(u8, @intFromBool(self.h)) << 5 |
             @as(u8, @intFromBool(self.c)) << 4;
-        self.check();
-        println("new flags: z: {any}, c: {any}, s: {any}, h: {any}", .{ self.z, self.c, self.s, self.h });
+        self.update();
+        print("new flags: z: {any}, c: {any}, s: {any}, h: {any}\n", .{ self.z, self.c, self.s, self.h });
+    }
+    fn check(self: *@This(), condition: Conditions) bool {
+        var ret = true;
+        switch (condition) {
+            .h => |*h| {
+                if (h.*) {
+                    print("h, flag:{any}\n", .{self.h});
+                    if (!self.h) ret = false;
+                } else {
+                    print("not h flag:{any}\n", .{self.h});
+                    if (self.h) ret = false;
+                }
+            },
+            .z => |*z| {
+                if (z.*) {
+                    print("z flag:{any}\n", .{self.z});
+                    if (!self.z) ret = false;
+                } else {
+                    print("not z flag:{any}\n", .{self.z});
+                    if (self.z) ret = false;
+                }
+            },
+            .c => |*c| {
+                if (c.*) {
+                    print("c flag:{any}\n", .{self.c});
+                    if (!self.c) ret = false;
+                } else {
+                    print("not c flag:{any}\n", .{self.c});
+                    if (self.c) ret = false;
+                }
+            },
+            .s => |*s| {
+                if (s.*) {
+                    print("s flag:{any}\n", .{self.s});
+                    if (!self.s) ret = false;
+                } else {
+                    print("not s flag:{any}\n", .{self.s});
+                    if (self.s) ret = false;
+                }
+            },
+            .none => print("no condition, just jump\n", .{}),
+        }
+        return ret;
     }
 };
 
@@ -865,7 +908,7 @@ const InstructionSet = struct {
         if (args.target == regID.a) {
             gb.cpu.set_byte(regID.a, high);
             gb.cpu.f.value = low;
-            gb.cpu.f.check();
+            gb.cpu.f.update();
         } else gb.cpu.set_word(args.target, value);
         gb.cpu.pc += 1;
     }
@@ -880,56 +923,14 @@ const InstructionSet = struct {
     fn JR(gb: *GB, args: InstrArgs) void { // TODO ONLY 2 CYCLES IF NOT TAKEN OTHERWISE 3
         print("JR, \tcondition:", .{});
         const dist: i8 = @bitCast(gb.read_byte(gb.cpu.pc + 1));
-        
-        var jump = true;
-        switch (args.flagConditions) { // switches on the carry flags, determining if we should jump
-            .h => |*h| {
-                if (h.*) {
-                    println("h, flag:{any}", .{gb.cpu.f.h});
-                    if (!gb.cpu.f.h) jump = false;
-                } else {
-                    println("not h flag:{any}", .{gb.cpu.f.h});
-                    if (gb.cpu.f.h) jump = false;
-                }
-            },
-            .z => |*z| {
-                if (z.*) {
-                    println("z flag:{any}", .{gb.cpu.f.z});
-                    if (!gb.cpu.f.z) jump = false;
-                } else {
-                    println("not z flag:{any}", .{gb.cpu.f.z});
-                    if (gb.cpu.f.z) jump = false;
-                }
-            },
-            .c => |*c| {
-                if (c.*) {
-                    println("c flag:{any}", .{gb.cpu.f.c});
-                    if (!gb.cpu.f.c) jump = false;
-                } else {
-                    println("not c flag:{any}", .{gb.cpu.f.c});
-                    if (gb.cpu.f.c) jump = false;
-                }
-            },
-            .s => |*s| {
-                if (s.*) {
-                    println("s flag:{any}", .{gb.cpu.f.s});
-                    if (!gb.cpu.f.s) jump = false;
-                } else {
-                    println("not s flag:{any}", .{gb.cpu.f.s});
-                    if (gb.cpu.f.s) jump = false;
-                }
-            },
-            .none => println("no condition, just jump", .{}),
-        }
-        println(" by dist: [pc]0x{X} \t0x{X} ({d}) bytes ", .{ gb.cpu.pc + 1, dist, dist });
+        const jump = gb.cpu.f.check(args.flagConditions);
+        print(" by dist: [pc]0x{X} \t0x{X} ({d}) bytes \n", .{ gb.cpu.pc + 1, dist, dist });
         if (jump) {
             const new_mem: i17 = @as(i17, @intCast(gb.cpu.pc + 2)) + dist;
             gb.cpu.pc = @as(u8, @intCast(new_mem));
             print("to pc:0x{X}\n", .{gb.cpu.pc});
-            // if (dist == -2) {
-            // }
         } else { // next instruction, condition failed
-            println("skipped jump, failed condition", .{});
+            print("skipped jump, failed condition\n", .{});
             gb.cpu.pc += 2;
         }
     }
@@ -938,46 +939,7 @@ const InstructionSet = struct {
         gb.cpu.pc = gb.cpu.get_word(regID.h);
     }
     fn CALLn16(gb: *GB, args: InstrArgs) void { //
-        var call = true;
-        switch (args.flagConditions) {
-            .h => |*h| {
-                if (h.*) {
-                    println("h, flag:{any}", .{gb.cpu.f.h});
-                    if (!gb.cpu.f.h) call = false;
-                } else {
-                    println("not h flag:{any}", .{gb.cpu.f.h});
-                    if (gb.cpu.f.h) call = false;
-                }
-            },
-            .z => |*z| {
-                if (z.*) {
-                    println("z flag:{any}", .{gb.cpu.f.z});
-                    if (!gb.cpu.f.z) call = false;
-                } else {
-                    println("not z flag:{any}", .{gb.cpu.f.z});
-                    if (gb.cpu.f.z) call = false;
-                }
-            },
-            .c => |*c| {
-                if (c.*) {
-                    println("c flag:{any}", .{gb.cpu.f.c});
-                    if (!gb.cpu.f.c) call = false;
-                } else {
-                    println("not c flag:{any}", .{gb.cpu.f.c});
-                    if (gb.cpu.f.c) call = false;
-                }
-            },
-            .s => |*s| {
-                if (s.*) {
-                    println("s flag:{any}", .{gb.cpu.f.s});
-                    if (!gb.cpu.f.s) call = false;
-                } else {
-                    println("not s flag:{any}", .{gb.cpu.f.s});
-                    if (gb.cpu.f.s) call = false;
-                }
-            },
-            .none => println("no condition, just jump", .{}),
-        }
+        const call = gb.cpu.f.check(args.flagConditions);
         if (call) {
             const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
             const ret = gb.cpu.pc + 3;
@@ -988,53 +950,13 @@ const InstructionSet = struct {
             gb.writeByte(gb.cpu.sp, @truncate(ret));
             gb.cpu.pc = n;
         } else { // next instruction, condition failed
-            println("skipped jump, failed condition", .{});
+            print("skipped jump, failed condition\n", .{});
             gb.cpu.pc += 2;
         }
     }
     fn RET(gb: *GB, args: InstrArgs) void { // TODO TEST, UPDATE cycles 5 if condition met, 2 if not met, 4 if no condition
         print("RET, condition:{any}", .{args.flagConditions});
-        // var condition: bool = undefined;
-        var ret = true;
-        switch (args.flagConditions) {
-            .h => |*h| {
-                if (h.*) {
-                    println("h, flag:{any}", .{gb.cpu.f.h});
-                    if (!gb.cpu.f.h) ret = false;
-                } else {
-                    println("not h flag:{any}", .{gb.cpu.f.h});
-                    if (gb.cpu.f.h) ret = false;
-                }
-            },
-            .z => |*z| {
-                if (z.*) {
-                    println("z flag:{any}", .{gb.cpu.f.z});
-                    if (!gb.cpu.f.z) ret = false;
-                } else {
-                    println("not z flag:{any}", .{gb.cpu.f.z});
-                    if (gb.cpu.f.z) ret = false;
-                }
-            },
-            .c => |*c| {
-                if (c.*) {
-                    println("c flag:{any}", .{gb.cpu.f.c});
-                    if (!gb.cpu.f.c) ret = false;
-                } else {
-                    println("not c flag:{any}", .{gb.cpu.f.c});
-                    if (gb.cpu.f.c) ret = false;
-                }
-            },
-            .s => |*s| {
-                if (s.*) {
-                    println("s flag:{any}", .{gb.cpu.f.s});
-                    if (!gb.cpu.f.s) ret = false;
-                } else {
-                    println("not s flag:{any}", .{gb.cpu.f.s});
-                    if (gb.cpu.f.s) ret = false;
-                }
-            },
-            .none => println("no condition, just jump", .{}),
-        }
+        const ret = gb.cpu.f.check(args.flagConditions);
         if (ret) {
             const low = gb.read_byte(gb.cpu.sp);
             gb.cpu.sp += 1;
@@ -1051,7 +973,7 @@ const InstructionSet = struct {
         const reg = gb.cpu.get_byte(regID.a);
         print("n b1: [pc]0x{X} \t(0x{X}), A: 0x{X}\n", .{ gb.cpu.pc + 1, n, gb.cpu.get_byte(regID.a) });
         const res = @subWithOverflow(reg, n);
-        gb.cpu.f.z = res[0] == 0; 
+        gb.cpu.f.z = res[0] == 0;
         gb.cpu.f.s = true;
         gb.cpu.f.h = (reg & 0xF) < (res[0] & 0xF); // half carry conditions
         gb.cpu.f.c = res[1] == 1;
@@ -1063,7 +985,7 @@ const InstructionSet = struct {
         print("CPAr8, target = {any}\n", .{args.target});
         const reg = gb.cpu.get_byte(regID.a);
         const res = @subWithOverflow(reg, n);
-        gb.cpu.f.z = res[0] == 0; 
+        gb.cpu.f.z = res[0] == 0;
         gb.cpu.f.s = true;
         gb.cpu.f.h = (reg & 0xF) < (res[0] & 0xF); // half carry conditions
         gb.cpu.f.c = res[1] == 1;
@@ -1075,7 +997,7 @@ const InstructionSet = struct {
         const reg = gb.cpu.get_byte(regID.a);
         print("CPAHL, compare mem_place: 0x{X} ({d}) to A:{d}\n", .{ hl, gb.read_byte(hl), reg });
         const res = @subWithOverflow(reg, hl);
-        gb.cpu.f.z = res[0] == 0; 
+        gb.cpu.f.z = res[0] == 0;
         gb.cpu.f.s = true;
         gb.cpu.f.h = (reg & 0xF) < (res[0] & 0xF); // half carry conditions
         gb.cpu.f.c = res[1] == 1;
@@ -1170,13 +1092,13 @@ const CPU = struct {
             self.pc += 1;
             byte = gb.read_byte(self.pc);
         }
-        print("[pc]0x{X} \t(0x{X})\n", .{ self.pc, byte });
+        print("[pc]0x{X}\t(0x{X})\n", .{ self.pc, byte });
         const ins_args = try InstructionSet.from_byte(byte, prefixed);
         (ins_args.ins)(gb, ins_args.args);
-        print("\n", .{});
+        // print("\n", .{});
         if (self.last_ins == 0xFB) { // set IME flag after previous instruction
             print("set IME\n", .{});
-           
+
         }
         self.last_ins = byte;
         return ins_args.cycles;
@@ -1193,7 +1115,7 @@ const APU = struct {
 };
 
 
-/// Defines a gameboy GPU(PPU) 
+/// Defines a gameboy GPU(PPU)
 /// - Handles writiing to vram and processing pixels from memory to the screen
 const GPU = struct {
     const VRAM_BEGIN = 0x8000;
@@ -1217,10 +1139,10 @@ const GPU = struct {
     stat_reg: u8 = undefined,
     mode: Mode = undefined,
     lcd: LCD = undefined,
-    
+
     scanline: [LCD.screenWidthPx]Color = undefined,
     scanline_cycles_left: u16 = 456,
-    frame_cycles_spent: u8 = 0,
+    frames_cycled: u16 = 0,
 
     const Mode = enum { // modes specifying number of cycles
         HBLANK,
@@ -1251,6 +1173,7 @@ const GPU = struct {
     fn switchMode(self: *@This()) void {
         if (self.getSpecialRegister(.ly) >= 144) {
             self.mode = .VBLANK;
+            self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)];
             // TODO INTERRUPT
             return;
         }
@@ -1270,10 +1193,12 @@ const GPU = struct {
             },
             .VBLANK => {
                 self.mode = .SCAN;
-                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];                
+                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
+                print("new frame!!!\n\n\n\n\n", .{});
+                self.frames_cycled += 1;
             },
         }
-        // update STAT register 
+        // update STAT register
         var stat_reg = self.getSpecialRegister(.stat);
         // println("stat: {d}", .{stat_reg});
         stat_reg = (stat_reg & 0b1111_1100) | @intFromEnum(self.mode);
@@ -1289,7 +1214,7 @@ const GPU = struct {
     }
 
     fn do(self: *@This()) void {
-        // Operate GPU here 
+        // Operate GPU here
         switch (self.mode) {
             .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
                 for (self.oam) |byte| {
@@ -1299,74 +1224,48 @@ const GPU = struct {
             .RENDER => { // 3 transfers pixels to the LCD, one scanline at a time, duration variable
                 // var scanline: [LCD.screenWidthPx]Color = undefined;
                 // TODO: Generate the actual pixels for this scanline based on:
-                // - Background tiles at the current scroll position
-                // - Window tiles if enabled and visible on this line
-                // - Sprites that were found during OAM scan
-
-                // if (self.scanline_cycles_left < cycles) {
-                    
-                // }
+                    // - Background tiles at the current scroll position
+                    // - Window tiles if enabled and visible on this line
+                    // - Sprites that were found during OAM scan
+                @memset(&self.scanline, Color.white);
             },
             else => {} // no action for hblank or vblank
-        }     
+        }
     }
 
     fn tick(self: *@This(), cycles: u16) void {
-        // TODO the gpu should tick/cycle just as many 
-            // times as the cpu did, while being able to 
+        // TODO the gpu should tick/cycle just as many
+            // times as the cpu did, while being able to
             // process interrupts and continue on as well as changing modes midscanline when needed
-
         // time GPU here
         var cycles_left = cycles; // amt of cycles spent by cpu
-        
+
         while (cycles_left > 0) {
             const cycles_to_process: u16 = @min(cycles_left, self.scanline_cycles_left);
             self.do();
-
+            print("scanline cycles left: {d}, cycles left: {d}\n", .{self.scanline_cycles_left, cycles_left});
             self.scanline_cycles_left -= cycles_to_process;
             cycles_left -= cycles_to_process;
-            
 
             if (self.scanline_cycles_left == 0) {
                 const ly = self.getSpecialRegister(.ly);
+                print("ly: {d}, next: {d}\n", .{ly, ly + 1});
                 if (self.mode == Mode.RENDER) {
-                    println("Mode: {any}, stat update: {d}", .{self.mode, self.getSpecialRegister(.stat)});
-                    println("scanline cycles left: {d}, cycles left: {d}", .{self.scanline_cycles_left, cycles_left});
-                    println("ly: {d}, next: {d}\n", .{self.getSpecialRegister(.ly), self.getSpecialRegister(.ly) + 1});
-                    @memset(&self.scanline, Color.white);
-                    self.lcd.render_scanline(self.scanline, ly);
+                    print("render!! \n\n\n\n\n", .{});
+                    self.lcd.pushScanline(self.scanline, ly);
+                    self.lcd.renderScreen(ly);
                 }
-                 if (ly >= 153) {
+                if (ly >= 153) {
                     self.setSpecialRegister(.ly, 0);
-                 }
-                 else if (self.mode == .HBLANK or self.mode == .VBLANK) {
-                    println("ly: {d}, next: {d}\n", .{self.getSpecialRegister(.ly), self.getSpecialRegister(.ly) + 1});
+                }
+                else if (self.mode == .RENDER or self.mode == .VBLANK) {
                     self.setSpecialRegister(.ly, ly + 1);
-                 }
+                }
                 self.switchMode();
-                // TODO LYC CHECK 
+                print("Mode switch: {any}, stat update: {d}\n", .{self.mode, self.getSpecialRegister(.stat)});
+                // TODO LYC CHECK
             }
-        }   
-        // const normalized_address = fixed_address & 0xFFFE;
-        //
-        // const b1 = self.read_vram(normalized_address);
-        // const b2 = self.read_vram(normalized_address + 1);
-        //
-        // const tile_index: u8 = fixed_address / 16; // 2 bpp * 8 rows of pixels per tile
-        //         const row_index = (fixed_address % 16) / 2; // new row every two bytes
-        //         // print("Row: {d}", .{row_index});
-        //         for (0..8) |pixel_index| { // loop through pixels in current row
-        //             const msb: u1 = @truncate(b2 >> @intCast(pixel_index)); // most significant bit
-        //             const lsb: u1 = @truncate(b1 >> @intCast(pixel_index));
-        //     print(" 0b{b}{b} ", .{ msb, lsb });
-        //
-        //     const color = switch (@as(u2, msb) << 1 | lsb) {
-        //         0b00 => GPU.Color.white,
-        //         0b01 => GPU.Color.lgray,
-        //         0b10 => GPU.Color.dgray,
-        //         0b11 => GPU.Color.black,
-        //     };
-        // }
+        }
     }
 
     /// DMA Transfer from RAM to OAM mem
@@ -1433,7 +1332,7 @@ const LCD = struct {
     grid_pixel_sz: u16 = undefined,
     // grid_pixel_w: f32 = undefined,
 
-    const special_registers = enum(u8) { 
+    const special_registers = enum(u8) {
         lcdc,
         stat,
         scy,
@@ -1497,7 +1396,8 @@ const LCD = struct {
                 try std.posix.getrandom(std.mem.asBytes(&seed));
                 var prng = std.Random.DefaultPrng.init(seed);
                 const rand = prng.random();
-                color = rand.enumValue(GPU.Color);                pixel.* = color;
+                color = rand.enumValue(GPU.Color);
+                pixel.* = color;
             }
             // @memset(//row, color);
         }
@@ -1511,10 +1411,9 @@ const LCD = struct {
         rect.w = if (@TypeOf(w) == f32) w else @as(f32, @floatFromInt(w));
         rect.h = if (@TypeOf(h) == f32) h else @as(f32, @floatFromInt(h));
     }
-
     fn updateDimensions() void {
-        center = @as(u16, @intCast(window_width)) / 2;
-        println("Center: {d}", .{center});
+        // center = @as(u16, @intCast(window_width)) / 2;
+        // println("Center: {d}", .{center});
         screenH = @intFromFloat(@as(f32, @floatFromInt(window_height - aboveScreen)) * 0.4);
 
         screenW = screenH * screenWidthPx / screenHeightPx;
@@ -1522,40 +1421,25 @@ const LCD = struct {
             screenW = @intCast(window_width - 20);
             screenH = screenW * screenHeightPx / screenWidthPx;
         }
-        println("sH: {d}", .{screenH});
-        println("sW: {d}", .{screenW});
+        // println("sH: {d}", .{screenH});
+        // println("sW: {d}", .{screenW});
         sidebar = center - screenW / 2;
-        println("sidebar: {d}", .{sidebar});
+        // println("sidebar: {d}", .{sidebar});
         pxSize = @as(f32, @floatFromInt(screenH)) / screenHeightPx;
-        println("pxSize: {any}", .{pxSize});
+        // println("pxSize: {any}", .{pxSize});
 
     }
-    pub fn render_scanline(self: *@This(), scanline: [screenWidthPx]GPU.Color, y: u8 ) void {
-        var rect = g.SDL_FRect{};
-        // SCANLINE 
-        for (scanline, 0..) |px, x| {
-            _ = switch (px) {
-                .white => g.SDL_SetRenderDrawColor(self.renderer, 0, 200, 0, 255),
-                .lgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 160, 0, 255),
-                .dgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 120, 0, 255),
-                .black => g.SDL_SetRenderDrawColor(self.renderer, 0, 80, 0, 255)
-            };
-            const xPos = @as(f32, @floatFromInt(sidebar)) + @as(f32, @floatFromInt(x)) * pxSize;
-            const yPos = @as(f32, @floatFromInt(aboveScreen)) + @as(f32, @floatFromInt(y)) * pxSize;
-            self.setRect(&rect, xPos, yPos, pxSize, pxSize);
-            _ = g.SDL_RenderFillRect(self.renderer, &rect);
-        }
-        _ = g.SDL_RenderPresent(self.renderer);
+    fn pushScanline(self: *@This(),  new_scanline: [screenWidthPx]GPU.Color, ly: u8) void {
+        @memcpy(&self.screen[ly], &new_scanline);
     }
-    fn renderBody(self: *@This()) void {
+
+    fn renderScreen(self: *@This(), ly: u8) void {
+        // if (ly == 0) self.renderBody();
         _ = g.SDL_SetRenderDrawColor(self.renderer, 255, 192, 220, 255);
         _ = g.SDL_RenderClear(self.renderer);
-        _ = g.SDL_SetRenderDrawColor(self.renderer, 0, 255, 0, 255);
-        println("screen: {d}x{d}\npxSize: {any}\nrendered screen width: {d}\nrendered screen height: {d}", .{screenW, screenH, pxSize, pxSize * screenWidthPx, pxSize * screenHeightPx});
-
         var rect = g.SDL_FRect{};
         // render the screen in the right place
-        // SCREEN
+       // SCREEN
         _ = g.SDL_SetRenderDrawColor(self.renderer, 230, 230, 230, 255);
         self.setRect(&rect, sidebar, aboveScreen - 5, screenW + 5, 5); // top of screen
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
@@ -1570,15 +1454,30 @@ const LCD = struct {
 
         self.setRect(&rect, sidebar + screenW, aboveScreen, 5, screenH + 5); // left side of screen
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
+
+        for (self.screen, 0..) |row, y| {
+            // print("y: {d}, ly:{d}\n", .{y, ly});
+            // _ = ly;
+            for (row, 0..) |px, x| {
+                _ = switch (px) {
+                    .white => g.SDL_SetRenderDrawColor(self.renderer, 0, 200, 0, 255),
+                    .lgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 160, 0, 255),
+                    .dgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 120, 0, 255),
+                    .black => g.SDL_SetRenderDrawColor(self.renderer, 0, 80, 0, 255)
+                };
+                if (y == ly) {
+                    _ = g.SDL_SetRenderDrawColor(self.renderer, 25, 51, 0, 0);
+                }
+                const xPos = @as(f32, @floatFromInt(sidebar)) + @as(f32, @floatFromInt(x)) * pxSize;
+                const yPos = @as(f32, @floatFromInt(aboveScreen)) + @as(f32, @floatFromInt(y)) * pxSize;
+                self.setRect(&rect, xPos, yPos, pxSize, pxSize);
+                _ = g.SDL_RenderFillRect(self.renderer, &rect);
+
+            }
+        }
         _ = g.SDL_RenderPresent(self.renderer);
     }
-    // pub fn render(self: *@This()) void {
-    //     _ = g.SDL_SetRenderDrawColor(self.renderer, 255, 192, 220, 255);
-    //     _ = g.SDL_RenderClear(self.renderer);
 
-    //     println("rendering {d}x{d}\n", .{window_width, window_height});
-    //     _ = g.SDL_RenderPresent(self.renderer);
-    // }
     fn startAndCreateRenderer(self: *@This()) !void {
         defer updateDimensions();
         if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
@@ -1613,7 +1512,8 @@ const LCD = struct {
             if (window_height == 0 or window_width == 0) {
                 return error.DetectedZeroWidthWin;
             }
-        }   
+        }
+        // self.renderBody();
     }
     pub fn screen_dump(self: *@This()) void {
         print("Actual memspace dump: \n", .{});
@@ -1657,7 +1557,7 @@ pub const GB = struct {
             return self.memory[address];
         }
 
-    
+
     pub fn writeByte(self: *@This(), address: usize, value: u8) void {
         switch (address) {
             GPU.VRAM_BEGIN...GPU.VRAM_END + 1 => {
@@ -1712,9 +1612,11 @@ pub const GB = struct {
     }
 
     pub fn go(self: *@This()) !void {
-        while (self.running) {
+        // while (self.running) {
+        while (self.cpu.pc <= 0x100 and self.running) {
             try self.getEvents();
             try self.do();
+            if (self.cpu.pc == 0x80) break;
         //TODO: Update peripherals & timing
         }
     }
@@ -1768,9 +1670,12 @@ pub const GB = struct {
 
     pub fn reg_dump(self: *@This()) void {
         print("Actual memspace dump: \n", .{});
-        for (self.memory[LCD.special_registers.start .. LCD.special_registers.end + 1], LCD.special_registers.start..LCD.special_registers.end + 1) |value, i| {
-            println("register@0x{x}: 0x{x} ", .{i, value});
-        }
+        // for (self.memory[LCD.special_registers.start .. LCD.special_registers.end + 1], LCD.special_registers.start..LCD.special_registers.end + 1) |value, i| {
+        //     println("register@0x{x}: 0x{x} ", .{i, value});
+        // }
+        const i = 0xFF44;
+        println("register@0x{x}: 0x{x} ", .{i, self.gpu.getSpecialRegister(.ly)});
+        // println("register@0x{x}: 0x{x} ", .{i, value});
         print("\n", .{});
     }
 
