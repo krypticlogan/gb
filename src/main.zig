@@ -6,7 +6,10 @@ const g = @cImport({
     @cDefine("SDL_MAIN_HANDLED", {});
     @cInclude("SDL3/SDL_main.h");
 });
-const print = std.debug.print;
+var DEBUG = true; // Set to false to disable debug prints
+fn print(comptime fmt: []const u8, args: anytype) void {
+    if (DEBUG) std.debug.print(fmt, args);
+}
 fn println(comptime fmt: []const u8, args: anytype) void {
     print(fmt, args);
     print("\n", .{});
@@ -82,9 +85,14 @@ const FlagRegister = struct {
 };
 
 const InstructionSet = struct {
-    const InstrFn = ?*const fn (*GB, InstrArgs) void;
+    const InstrFn = ?*const fn (*GB, InstrArgs) u8;
     const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: FlagRegister.Conditions, targets: struct { to: regID, from: regID } };
-
+    fn ConditionalInsCycles(byte: u8, taken: bool) u8 {
+        return switch (byte) {
+            0x18 => if (taken) 3 else 2,
+            else => unreachable,
+        };
+    }
     const table = [_]struct { u8, InstrFn, InstrArgs, u8 }{
         .{ 0x00, NOP, .{ .none = {} }, 1 }, // NOP
         .{ 0x01, LD16, .{ .target = regID.b }, 3 }, // LD BC, d16
@@ -110,7 +118,7 @@ const InstructionSet = struct {
         .{ 0x15, DECr8, .{ .target = regID.d }, 1 }, // DEC D
         .{ 0x16, LD8, .{ .target = regID.d }, 2 }, // LD D, d8
         .{ 0x17, null, .{ .none = {} }, 4 }, // RLA
-        .{ 0x18, JR, .{ .flagConditions = .{ .none = true } }, 3 }, // JR r8
+        .{ 0x18, JR, .{ .flagConditions = .{ .none = true } }, 2 }, // JR r8
         .{ 0x19, ADDHLr16, .{ .target = regID.d }, 2 }, // ADD HL, DE
         .{ 0x1A, LDAr16, .{ .target = regID.d }, 2 }, // LD A, (DE)
         .{ 0x1B, DECr16, .{ .target = regID.d }, 2 }, // DEC DE
@@ -287,11 +295,11 @@ const InstructionSet = struct {
         .{ 0xC6, null, .{ .none = {} }, 8 }, // ADD A, d8
         .{ 0xC7, null, .{ .none = {} }, 16 }, // RST 00H
         .{ 0xC8, null, .{ .none = {} }, 20 }, // RET Z
-        .{ 0xC9, RET, .{ .flagConditions = .{ .none = true } }, 4 }, // RET
+        .{ 0xC9, RET, .{ .flagConditions = .{ .none = true } }, 2 }, // RET
         .{ 0xCA, null, .{ .none = {} }, 16 }, // JP Z, a16
         .{ 0xCB, null, .{ .none = {} }, 4 }, // PREFIX CB
         .{ 0xCC, null, .{ .none = {} }, 24 }, // CALL Z, a16
-        .{ 0xCD, CALLn16, .{ .flagConditions = .{ .none = true } }, 6 }, // CALL a16
+        .{ 0xCD, CALLn16, .{ .flagConditions = .{ .none = true } }, 3 }, // CALL a16
         .{ 0xCE, null, .{ .none = {} }, 8 }, // ADC A, d8
         .{ 0xCF, null, .{ .none = {} }, 16 }, // RST 08H
         .{ 0xD0, null, .{ .none = {} }, 20 }, // RET NC
@@ -603,8 +611,8 @@ const InstructionSet = struct {
         .{ 0xFF, null, .{ .none = {} }, 8 }, // SET 7, A
     };
 
-    fn from_byte(byte: u8, prefixed: bool) !struct { ins: *const fn (*GB, InstrArgs) void, args: InstrArgs, cycles: u8 } {
-        var ins: ?*const fn (*GB, InstrArgs) void = undefined;
+    fn from_byte(byte: u8, prefixed: bool) !struct { ins: *const fn (*GB, InstrArgs) u8, args: InstrArgs, cycles: u8 } {
+        var ins: ?*const fn (*GB, InstrArgs) u8 = undefined;
         var args: InstrArgs = undefined;
         var cycles: u8 = undefined;
         if ((byte >= 0 and byte < table.len)) {
@@ -619,15 +627,16 @@ const InstructionSet = struct {
                 cycles = prefix_table[byte][3];
             }
             if (ins == null) return error.NullInstruction;
-            return .{ .ins = ins.?, .args = args, .cycles = cycles};
+            return .{ .ins = ins.?, .args = args, .cycles = cycles };
         } else return error.IllegalByte;
     }
 
-    fn NOP(gb: *GB, _: InstrArgs) void { // TODO test
+    fn NOP(gb: *GB, _: InstrArgs) u8 { // TODO test
         print("NOP\n", .{});
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn INCr8(gb: *GB, args: InstrArgs) void { // TODO TEST
+    fn INCr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST
         const value = gb.cpu.get_byte(args.target);
         print("INCr8, target: {any}\n", .{args.target});
         gb.cpu.set_byte(args.target, @addWithOverflow(value, 1)[0]);
@@ -636,60 +645,69 @@ const InstructionSet = struct {
         gb.cpu.f.s = false;
         gb.cpu.f.write();
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn INCr16(gb: *GB, args: InstrArgs) void { // TODO TEST
+    fn INCr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST
         const value = gb.cpu.get_word(args.target);
         const res = @addWithOverflow(value, 1)[0];
-        print("INCr16, target: {any}\n 0x{X} + 1 = 0x{X}", .{args.target, value, res});
+        print("INCr16, target: {any}\n 0x{X} + 1 = 0x{X}", .{ args.target, value, res });
         gb.cpu.set_word(args.target, res);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn DECr8(gb: *GB, args: InstrArgs) void { // TODO TEST -- overflow? r16 too
+    fn DECr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST -- overflow? r16 too
         const value = gb.cpu.get_byte(args.target);
-        print("DECr8, target: {any}\n", .{args.target});
-        gb.cpu.set_byte(args.target, @subWithOverflow(value, 1)[0]);
-        gb.cpu.f.z = value == 1;
+        print("DECr8, target: {any} ({d} -= 1)\n", .{ args.target, gb.cpu.get_byte(args.target) });
+        const res = @subWithOverflow(value, 1)[0];
+        gb.cpu.set_byte(args.target, res);
+        gb.cpu.f.z = res == 0;
         gb.cpu.f.s = true;
         gb.cpu.f.h = (value & 0xF) & 0x10 == 0x10; // half carry conditions
         gb.cpu.f.write();
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn DECr16(gb: *GB, args: InstrArgs) void { // TODO TEST
+    fn DECr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST
         const value = gb.cpu.get_byte(args.target);
         print("DECr16, target: {any}\n", .{args.target});
         gb.cpu.set_word(args.target, @subWithOverflow(value, 1)[0]);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn LD8(gb: *GB, args: InstrArgs) void { // LD r8, n8 TODO TEST
+    fn LD8(gb: *GB, args: InstrArgs) u8 { // LD r8, n8 TODO TEST
         const n: u8 = gb.read_byte(gb.cpu.pc + 1);
         print("LD8, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
         print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_byte(args.target, n);
         gb.cpu.pc += 2;
+        return 0;
     }
-    fn LD16(gb: *GB, args: InstrArgs) void { // LD r16, n16 TODO TEST
+    fn LD16(gb: *GB, args: InstrArgs) u8 { // LD r16, n16 TODO TEST
         const n: u16 = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         print("LD16, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
         print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
         print("n b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_word(args.target, n);
         gb.cpu.pc += 3;
+        return 0;
     }
-    fn LDr8(gb: *GB, args: InstrArgs) void { // LD r8, r8 TODO TEST
+    fn LDr8(gb: *GB, args: InstrArgs) u8 { // LD r8, r8 TODO TEST
         print("LDr8, targets: from {any} --> to {any}\n", .{ args.targets.from, args.targets.to });
         print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(args.targets.to), gb.cpu.get_byte(args.targets.from) });
         gb.cpu.set_byte(args.targets.to, gb.cpu.get_byte(args.targets.from));
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn LDAHL(gb: *GB, _: InstrArgs) void { // LD r8, r8 TODO TEST
+    fn LDAHL(gb: *GB, _: InstrArgs) u8 { // LD r8, r8 TODO TEST
         const mem_place = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         print("LDHL, mem@hl:0x{X} --> to A\n", .{mem_place});
         print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(regID.a), gb.read_byte(mem_place) });
         gb.cpu.set_byte(regID.a, value);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn LDSP16(gb: *GB, _: InstrArgs) void { // LD r16, n16, 0x31
+    fn LDSP16(gb: *GB, _: InstrArgs) u8 { // LD r16, n16, 0x31
         print("LD16SP\n", .{});
         const n: u16 = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
@@ -697,24 +715,27 @@ const InstructionSet = struct {
         gb.cpu.sp = n;
         print("after op: sp: {d}\n", .{gb.cpu.sp});
         gb.cpu.pc += 3;
+        return 0;
     }
-    fn LDHL8(gb: *GB, _: InstrArgs) void { // LD[HL], n8
+    fn LDHL8(gb: *GB, _: InstrArgs) u8 { // LD[HL], n8
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.read_byte(gb.cpu.pc + 1);
         print("LDHLDA\thl:0x{X}\tvalue:0x{x}\nmem@hl: 0x{x}\n", .{ hl, value, gb.read_byte(hl) });
         gb.writeByte(hl, value);
         print("after op: mem@hl: 0x{X}\thl:{d}\n", .{ hl, gb.read_byte(hl), hl });
         gb.cpu.pc += 2;
+        return 0;
     }
-    fn LDHLR(gb: *GB, args: InstrArgs) void { // LD[HL],r8
+    fn LDHLR(gb: *GB, args: InstrArgs) u8 { // LD[HL],r8
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(args.target);
         print("LDHLR, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
         gb.writeByte(hl, value);
         print("after op: mem@0x{X}: 0x{X}\n", .{ hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn LDHLIA(gb: *GB, _: InstrArgs) void { // LD [HLI],A
+    fn LDHLIA(gb: *GB, _: InstrArgs) u8 { // LD [HLI],A
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         print("LDHLIA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
@@ -722,8 +743,9 @@ const InstructionSet = struct {
         gb.cpu.set_word(regID.h, hl + 1);
         print("after op: hl+1= 0x{X}\t mem@0x{X}: 0x{X}\n", .{ gb.cpu.get_word(regID.h), hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn LDHLDA(gb: *GB, _: InstrArgs) void { // LD [HLD],A
+    fn LDHLDA(gb: *GB, _: InstrArgs) u8 { // LD [HLD],A
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         print("LDHLDA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
@@ -731,24 +753,27 @@ const InstructionSet = struct {
         gb.cpu.set_word(regID.h, hl - 1);
         print("after op: mem@0x{X}: 0x{X}\n", .{ hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn LDHCA(gb: *GB, _: InstrArgs) void {
+    fn LDHCA(gb: *GB, _: InstrArgs) u8 {
         const c = gb.cpu.get_byte(regID.c);
         const a = gb.cpu.get_byte(regID.a);
         const mem_place = 0xFF00 + @as(u16, c);
         print("LDHCA, memplace@0x{X} --> 0x{X}\n", .{ mem_place, a });
         gb.writeByte(mem_place, a);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn LDHAC(gb: *GB, _: InstrArgs) void { // Load value in register A from the byte at address $FF00+c
+    fn LDHAC(gb: *GB, _: InstrArgs) u8 { // Load value in register A from the byte at address $FF00+c
         const a = gb.cpu.get_byte(regID.a);
         const c = gb.cpu.get_byte(regID.c);
         const byte = gb.read_byte(0xFF00 + @as(u16, c));
         print("LDHAC byte: 0x{X} --> A\n", .{byte});
         gb.cpu.set_byte(a, byte);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn LDAn16(gb: *GB, _: InstrArgs) void { // TODO TEST Load value in register A from the byte at address n16.
+    fn LDAn16(gb: *GB, _: InstrArgs) u8 { // TODO TEST Load value in register A from the byte at address n16.
         const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         const n = gb.read_byte(memory_place);
         print("LDAn16, n: Ox{X} --> A\n", .{n});
@@ -756,20 +781,22 @@ const InstructionSet = struct {
         print("memplace b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 3;
+        return 0;
     }
-    fn LDHAn16(gb: *GB, _: InstrArgs) void { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
+    fn LDHAn16(gb: *GB, _: InstrArgs) u8 { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
         const memory_place = 0xFF00 + @as(u16, gb.read_byte(gb.cpu.pc + 1));
         print("LDHAn16, \n", .{});
         print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
         // print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         if (memory_place >= 0xFF00 and memory_place <= 0xFFFF) {
             const n = gb.read_byte(memory_place);
-            print("n: 0x{X} --> A\n", .{ n });
+            print("n: 0x{X} --> A\n", .{n});
             gb.cpu.set_byte(regID.a, n);
         }
         gb.cpu.pc += 2;
+        return 0;
     }
-    fn LDn16A(gb: *GB, _: InstrArgs) void { // TODO TEST Store value in register A into the byte at address n16.
+    fn LDn16A(gb: *GB, _: InstrArgs) u8 { // TODO TEST Store value in register A into the byte at address n16.
         const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
@@ -777,8 +804,9 @@ const InstructionSet = struct {
         print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
         print("memplace b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.pc += 3;
+        return 0;
     }
-    fn LDHn16A(gb: *GB, _: InstrArgs) void { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
+    fn LDHn16A(gb: *GB, _: InstrArgs) u8 { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
         print("LDHn16A\n", .{});
         const memory_place = 0xFF00 + @as(u16, gb.read_byte(gb.cpu.pc + 1));
         print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
@@ -789,23 +817,26 @@ const InstructionSet = struct {
             print("n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
         }
         gb.cpu.pc += 2;
+        return 0;
     }
-    fn LDAr16(gb: *GB, args: InstrArgs) void { // TODO TEST Load value in register A from the byte pointed to by register r16.
+    fn LDAr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST Load value in register A from the byte pointed to by register r16.
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.read_byte(memory_place);
         print("LDAr16, n: 0x{X} --> A\n", .{n});
         gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn LDr16A(gb: *GB, args: InstrArgs) void { // TODO TEST Store value in register A into the byte pointed to by register r16.
+    fn LDr16A(gb: *GB, args: InstrArgs) u8 { // TODO TEST Store value in register A into the byte pointed to by register r16.
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
         print("LDr16A, n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
         gb.cpu.pc += 1;
+        return 0;
     }
 
-    fn XORA(gb: *GB, args: InstrArgs) void {
+    fn XORA(gb: *GB, args: InstrArgs) u8 {
         print("XORA, target {any}\n", .{args.target});
         gb.cpu.registers[@intFromEnum(regID.a)] ^= gb.cpu.registers[@intFromEnum(args.target)];
         if (gb.cpu.registers[@intFromEnum(regID.a)] == 0) {
@@ -813,8 +844,9 @@ const InstructionSet = struct {
             gb.cpu.f.write();
         }
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn ADDAr8(gb: *GB, args: InstrArgs) void { // TODO finish, TEST, flags
+    fn ADDAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
         const value = gb.cpu.get_byte(args.target);
         print("ADDAr8 target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
@@ -826,8 +858,9 @@ const InstructionSet = struct {
         gb.cpu.f.write();
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn SUBAr8(gb: *GB, args: InstrArgs) void { // TODO finish, TEST, flags
+    fn SUBAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
         const value = gb.cpu.get_byte(args.target);
         print("SUBA target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
@@ -839,8 +872,9 @@ const InstructionSet = struct {
         gb.cpu.f.write();
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn ADDAHL(gb: *GB, _: InstrArgs) void { // TODO Add the byte pointed to by HL to A.
+    fn ADDAHL(gb: *GB, _: InstrArgs) u8 { // TODO Add the byte pointed to by HL to A.
         const mem_place = gb.cpu.get_word(regID.h);
         const value = gb.read_byte(mem_place);
         print("ADDAHL:A + mem@0x{X}: value: {d} \n", .{ mem_place, value });
@@ -853,11 +887,12 @@ const InstructionSet = struct {
         gb.cpu.f.write();
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn ADDHLr16(gb: *GB, args: InstrArgs) void { // TODO finish, TEST, flags
+    fn ADDHLr16(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_word(args.target);
-        print("ADDHL {any} + hl, {d} + {d} \n", .{args.target, value, hl });
+        print("ADDHL {any} + hl, {d} + {d} \n", .{ args.target, value, hl });
         const res: u16 = @addWithOverflow(hl, value)[0];
         gb.cpu.f.s = false;
         gb.cpu.f.h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
@@ -865,20 +900,23 @@ const InstructionSet = struct {
         gb.cpu.f.write();
         gb.cpu.set_word(regID.h, res);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn EI(gb: *GB, _: InstrArgs) void { // TODO TEST
+    fn EI(gb: *GB, _: InstrArgs) u8 { // TODO TEST
         print("EI\n", .{});
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn RRCA(gb: *GB, _: InstrArgs) void { // TODO TEST
+    fn RRCA(gb: *GB, _: InstrArgs) u8 { // TODO TEST
         const a = gb.cpu.get_byte(regID.a);
         print("RRCA\n", .{});
         gb.cpu.set_byte(regID.a, a << 7 | a >> 1);
         gb.cpu.f.c = (@as(u1, @truncate(a)) == 1);
         gb.cpu.f.write();
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn PUSH(gb: *GB, args: InstrArgs) void {
+    fn PUSH(gb: *GB, args: InstrArgs) u8 {
         var high: u8 = undefined;
         var low: u8 = undefined;
         if (args.target == regID.a) {
@@ -897,8 +935,9 @@ const InstructionSet = struct {
         gb.cpu.sp -= 1;
         gb.writeByte(gb.cpu.sp, low);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn POP(gb: *GB, args: InstrArgs) void {
+    fn POP(gb: *GB, args: InstrArgs) u8 {
         const low = gb.read_byte(gb.cpu.sp);
         gb.cpu.sp += 1;
         const high = gb.read_byte(gb.cpu.sp);
@@ -911,35 +950,48 @@ const InstructionSet = struct {
             gb.cpu.f.update();
         } else gb.cpu.set_word(args.target, value);
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn JP(gb: *GB, args: InstrArgs) void { // TODO ONLY 3 CYCLES IF NOT TAKEN OTHERWISE 4
+    fn JP(gb: *GB, args: InstrArgs) u8 { // TODO ONLY 3 CYCLES IF NOT TAKEN OTHERWISE 4
         print("JP", .{});
-        if (args.condition) {
+        const jump = gb.cpu.f.check(args.flagConditions);
+        if (jump) {
             const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
             print("to 0x{X}\n", .{n});
             gb.cpu.pc = n;
-        } else gb.cpu.pc += 3;
+            return 1; // Extra cycle when taken
+        } else {
+            gb.cpu.pc += 3;
+            return 0; // No extra cycles when not taken
+        }
     }
-    fn JR(gb: *GB, args: InstrArgs) void { // TODO ONLY 2 CYCLES IF NOT TAKEN OTHERWISE 3
+    fn JR(gb: *GB, args: InstrArgs) u8 { // TODO ONLY 2 CYCLES IF NOT TAKEN OTHERWISE 3
         print("JR, \tcondition:", .{});
         const dist: i8 = @bitCast(gb.read_byte(gb.cpu.pc + 1));
         const jump = gb.cpu.f.check(args.flagConditions);
         print(" by dist: [pc]0x{X} \t0x{X} ({d}) bytes \n", .{ gb.cpu.pc + 1, dist, dist });
+
+        // const byte = gb.read_byte(gb.cpu.pc);
         if (jump) {
             const new_mem: i17 = @as(i17, @intCast(gb.cpu.pc + 2)) + dist;
             gb.cpu.pc = @as(u8, @intCast(new_mem));
             print("to pc:0x{X}\n", .{gb.cpu.pc});
+            return 1; // Extra cycle when taken
         } else { // next instruction, condition failed
             print("skipped jump, failed condition\n", .{});
             gb.cpu.pc += 2;
+            return 0; // No extra cycles needed
         }
     }
-    fn JPHL(gb: *GB, _: InstrArgs) void {
+    fn JPHL(gb: *GB, _: InstrArgs) u8 {
         print("JPHL\n", .{});
         gb.cpu.pc = gb.cpu.get_word(regID.h);
+        return 0;
     }
-    fn CALLn16(gb: *GB, args: InstrArgs) void { //
+    fn CALLn16(gb: *GB, args: InstrArgs) u8 { //
         const call = gb.cpu.f.check(args.flagConditions);
+        // const byte = gb.read_byte(gb.cpu.pc);
+
         if (call) {
             const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
             const ret = gb.cpu.pc + 3;
@@ -949,25 +1001,31 @@ const InstructionSet = struct {
             gb.cpu.sp -= 1;
             gb.writeByte(gb.cpu.sp, @truncate(ret));
             gb.cpu.pc = n;
+            return 3;
         } else { // next instruction, condition failed
             print("skipped jump, failed condition\n", .{});
-            gb.cpu.pc += 2;
+            gb.cpu.pc += 3;
+            return 0; // No extra cycles needed
         }
     }
-    fn RET(gb: *GB, args: InstrArgs) void { // TODO TEST, UPDATE cycles 5 if condition met, 2 if not met, 4 if no condition
+    fn RET(gb: *GB, args: InstrArgs) u8 { // TODO TEST, UPDATE cycles 5 if condition met, 2 if not met, 4 if no condition
         print("RET, condition:{any}", .{args.flagConditions});
         const ret = gb.cpu.f.check(args.flagConditions);
+        // const byte = gb.read_byte(gb.cpu.pc);
+
         if (ret) {
             const low = gb.read_byte(gb.cpu.sp);
             gb.cpu.sp += 1;
             const high = gb.read_byte(gb.cpu.sp);
             gb.cpu.sp += 1;
             gb.cpu.pc = @as(u16, high) << 8 | low;
+            return 3; // 3 cycles if condition met
         } else {
             gb.cpu.pc += 1;
+            return 0; // No extra cycles when not taken
         }
     }
-    fn CPAn8(gb: *GB, _: InstrArgs) void { // TODO TEST;
+    fn CPAn8(gb: *GB, _: InstrArgs) u8 { // TODO TEST;
         print("CPAn8, \n", .{});
         const n = gb.read_byte(gb.cpu.pc + 1);
         const reg = gb.cpu.get_byte(regID.a);
@@ -979,8 +1037,9 @@ const InstructionSet = struct {
         gb.cpu.f.c = res[1] == 1;
         gb.cpu.f.write();
         gb.cpu.pc += 2;
+        return 0;
     }
-    fn CPAr8(gb: *GB, args: InstrArgs) void { // TODO TEST;
+    fn CPAr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST;
         const n = gb.cpu.get_byte(args.target);
         print("CPAr8, target = {any}\n", .{args.target});
         const reg = gb.cpu.get_byte(regID.a);
@@ -991,8 +1050,9 @@ const InstructionSet = struct {
         gb.cpu.f.c = res[1] == 1;
         gb.cpu.f.write();
         gb.cpu.pc += 1;
+        return 0;
     }
-    fn CPAHL(gb: *GB, _: InstrArgs) void { // TODO TEST;
+    fn CPAHL(gb: *GB, _: InstrArgs) u8 { // TODO TEST;
         const hl = gb.cpu.get_word(regID.h);
         const reg = gb.cpu.get_byte(regID.a);
         print("CPAHL, compare mem_place: 0x{X} ({d}) to A:{d}\n", .{ hl, gb.read_byte(hl), reg });
@@ -1003,10 +1063,11 @@ const InstructionSet = struct {
         gb.cpu.f.c = res[1] == 1;
         gb.cpu.f.write();
         gb.cpu.pc += 1;
+        return 0;
     }
 
     // PREFIX INSTRUCTIONS
-    fn BITTEST(gb: *GB, args: InstrArgs) void { // TODO TEST
+    fn BITTEST(gb: *GB, args: InstrArgs) u8 { // TODO TEST
         const bit: u3 = args.bit_target.bit;
         const target = gb.cpu.get_byte(args.bit_target.target);
         print("BITTEST, target: {any}, bit: {any}, reg_bin: 0b{b}", .{ args.bit_target.target, args.bit_target.bit, target });
@@ -1015,8 +1076,9 @@ const InstructionSet = struct {
         gb.cpu.f.h = true; // set half carry
         gb.cpu.f.write();
         gb.cpu.pc += 2;
+        return 0;
     }
-    fn BITTESTHL(gb: *GB, args: InstrArgs) void { // TODO TEST
+    fn BITTESTHL(gb: *GB, args: InstrArgs) u8 { // TODO TEST
         const bit: u3 = args.bit_target.bit;
         print("BITTESTHL, target: {any}, bit: {any}\n", .{ args.bit_target.target, args.bit_target.bit });
         const hl = gb.cpu.get_word(args.target);
@@ -1025,8 +1087,9 @@ const InstructionSet = struct {
         gb.cpu.f.h = true;
         gb.cpu.f.write();
         gb.cpu.pc += 2;
+        return 0;
     }
-    fn RL(gb: *GB, args: InstrArgs) void { // TODO TEST Rotate bits in register r8 left through carry.
+    fn RL(gb: *GB, args: InstrArgs) u8 { // TODO TEST Rotate bits in register r8 left through carry.
         const carried = gb.cpu.f.c;
         const reg = gb.cpu.get_byte(args.target);
         print("RL, target: {any}, prior: 0b{b}, carried = {d}\n", .{ args.target, reg, @intFromBool(carried) });
@@ -1037,6 +1100,7 @@ const InstructionSet = struct {
         gb.cpu.set_byte(args.target, rotated);
         print("after: 0b{b}\n", .{gb.cpu.get_byte(args.target)});
         gb.cpu.pc += 2;
+        return 0;
     }
 };
 
@@ -1094,14 +1158,13 @@ const CPU = struct {
         }
         print("[pc]0x{X}\t(0x{X})\n", .{ self.pc, byte });
         const ins_args = try InstructionSet.from_byte(byte, prefixed);
-        (ins_args.ins)(gb, ins_args.args);
+        const extra_cycles = (ins_args.ins)(gb, ins_args.args);
         // print("\n", .{});
         if (self.last_ins == 0xFB) { // set IME flag after previous instruction
             print("set IME\n", .{});
-
         }
         self.last_ins = byte;
-        return ins_args.cycles;
+        return ins_args.cycles + extra_cycles;
     }
 };
 
@@ -1113,7 +1176,6 @@ const APU = struct {
         return;
     }
 };
-
 
 /// Defines a gameboy GPU(PPU)
 /// - Handles writiing to vram and processing pixels from memory to the screen
@@ -1129,11 +1191,11 @@ const GPU = struct {
     vram: *[VRAM_SIZE]u8 = undefined,
     oam: *[OAM_SIZE]u8 = undefined,
     // Stores sprite attributes (position, tile index, attributes).
-        // Cannot be accessed during scanline rendering. -- writeOAM & read
-        // Control rendering behavior.
-        // Define which layers are enabled.
+    // Cannot be accessed during scanline rendering. -- writeOAM & read
+    // Control rendering behavior.
+    // Define which layers are enabled.
     special_registers: *[12]u8 = undefined,
-     // LCD Control Registers (I/O Registers at $FF40–$FF4B)
+    // LCD Control Registers (I/O Registers at $FF40–$FF4B)
     tile_set: [384]Tile = undefined,
     sprite_set: [10]Tile = undefined, // TODO actually sprite
     stat_reg: u8 = undefined,
@@ -1141,15 +1203,15 @@ const GPU = struct {
     lcd: LCD = undefined,
 
     scanline: [LCD.screenWidthPx]Color = undefined,
-    scanline_cycles_left: u16 = 456,
+    mode_cycles_left: u16 = 456,
     frames_cycled: u16 = 0,
 
-    const Mode = enum { // modes specifying number of cycles
+    const Mode = enum { // modes specifying number of cycles per scanline
         HBLANK,
         VBLANK,
         SCAN,
         RENDER,
-        const cycles: [4]u16 = .{204, 456, 80, 172};
+        const cycles: [4]u16 = .{ 204, 456, 80, 172 };
     };
 
     const Color = enum(u2) { black, dgray, lgray, white };
@@ -1163,106 +1225,111 @@ const GPU = struct {
         return tile;
     }
 
+    fn init(self: *@This(), gb: *GB) !void {
+        self.vram = gb.memory[VRAM_BEGIN .. VRAM_END + 1];
+        self.oam = gb.memory[OAM_BEGIN .. OAM_END + 1];
+        self.special_registers = gb.memory[LCD.special_registers.start .. LCD.special_registers.end + 1];
+        self.mode = .SCAN;
+        self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
+        try self.lcd.init();
+        @memset(&self.tile_set, empty_tile(self));
+    }
+
     fn setSpecialRegister(self: *@This(), register: LCD.special_registers, value: u8) void {
         self.special_registers[@intFromEnum(register)] = value;
     }
     fn getSpecialRegister(self: *@This(), register: LCD.special_registers) u8 {
         return self.special_registers[@intFromEnum(register)];
     }
-
     fn switchMode(self: *@This()) void {
-        if (self.getSpecialRegister(.ly) >= 144) {
-            self.mode = .VBLANK;
-            self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)];
-            // TODO INTERRUPT
-            return;
-        }
         switch (self.mode) {
             .SCAN => {
                 self.mode = .RENDER;
-                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.RENDER)];
+                self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.RENDER)];
             },
             .RENDER => {
+                // print("render!! \n\n\n\n\n", .{});
+                self.lcd.pushScanline(self.scanline, self.getSpecialRegister(.ly));
                 self.mode = .HBLANK;
-                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.HBLANK)];
+                self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.HBLANK)];
             },
             .HBLANK => {
-                self.mode = .SCAN;
-                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
-                // self.setSpecialRegister(.ly, 144);
+                // Increment LY register
+                const ly = self.getSpecialRegister(.ly);
+                self.setSpecialRegister(.ly, ly + 1);
+
+                if (self.getSpecialRegister(.ly) == 144) {
+                    self.lcd.renderScreen(self.lcd.screen.len); // render at the last scanline
+                    self.mode = .VBLANK;
+                    self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)]; // per scanline
+                } else {
+                    self.mode = .SCAN;
+                    self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
+                }
+                // TODO INTERRUPT
             },
             .VBLANK => {
-                self.mode = .SCAN;
-                self.scanline_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
-                print("new frame!!!\n\n\n\n\n", .{});
-                self.frames_cycled += 1;
+                const new_ly = self.getSpecialRegister(.ly) + 1;
+                // self.setSpecialRegister(.ly, ly + 1);
+                if (new_ly > 153) { // 153 is the end of VBLANK
+                    self.setSpecialRegister(.ly, 0); // reset LY to 0
+                    self.mode = .SCAN;
+                    self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
+                    // DEBUG = true;
+                    print("new frame!!!\n\n\n\n\n", .{});
+                    // DEBUG = false;
+                    self.frames_cycled += 1;
+                } else {
+                    self.setSpecialRegister(.ly, new_ly);
+                    self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)];
+                }
             },
         }
-        // update STAT register
+        // cycles_between_mode = 0;
+        // update STAT registerx
         var stat_reg = self.getSpecialRegister(.stat);
         // println("stat: {d}", .{stat_reg});
         stat_reg = (stat_reg & 0b1111_1100) | @intFromEnum(self.mode);
         self.setSpecialRegister(.stat, stat_reg);
     }
 
-    fn init(self: *@This(), gb: *GB) !void {
-        self.vram = gb.memory[VRAM_BEGIN .. VRAM_END + 1];
-        self.oam = gb.memory[OAM_BEGIN .. OAM_END + 1];
-        self.special_registers = gb.memory[LCD.special_registers.start..LCD.special_registers.end + 1];
-        try self.lcd.init();
-        @memset(&self.tile_set, empty_tile(self));
-    }
-
     fn do(self: *@This()) void {
         // Operate GPU here
         switch (self.mode) {
             .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
-                for (self.oam) |byte| {
-                    _  = byte; // decode sprites
-                }
+                print("scanning\n", .{});
+                // for (self.oam) |byte| {
+                //     _  = byte; // decode sprites
+                // }
             },
             .RENDER => { // 3 transfers pixels to the LCD, one scanline at a time, duration variable
                 // var scanline: [LCD.screenWidthPx]Color = undefined;
                 // TODO: Generate the actual pixels for this scanline based on:
-                    // - Background tiles at the current scroll position
-                    // - Window tiles if enabled and visible on this line
-                    // - Sprites that were found during OAM scan
+                // - Background tiles at the current scroll position
+                // - Window tiles if enabled and visible on this line
+                // - Sprites that were found during OAM scan
                 @memset(&self.scanline, Color.white);
             },
-            else => {} // no action for hblank or vblank
+            else => {}, // no action for hblank or vblank
         }
     }
 
     fn tick(self: *@This(), cycles: u16) void {
         // TODO the gpu should tick/cycle just as many
-            // times as the cpu did, while being able to
-            // process interrupts and continue on as well as changing modes midscanline when needed
-        // time GPU here
-        var cycles_left = cycles; // amt of cycles spent by cpu
+        // times as the cpu did, while being able to
+        // process interrupts and continue on as well as changing modes midscanline when needed
 
+        var cycles_left = cycles; // amt of cycles spent by cpu
         while (cycles_left > 0) {
-            const cycles_to_process: u16 = @min(cycles_left, self.scanline_cycles_left);
+            const cycles_to_process: u16 = @min(cycles_left, self.mode_cycles_left);
             self.do();
-            print("scanline cycles left: {d}, cycles left: {d}\n", .{self.scanline_cycles_left, cycles_left});
-            self.scanline_cycles_left -= cycles_to_process;
+
+            self.mode_cycles_left -= cycles_to_process;
             cycles_left -= cycles_to_process;
 
-            if (self.scanline_cycles_left == 0) {
-                const ly = self.getSpecialRegister(.ly);
-                print("ly: {d}, next: {d}\n", .{ly, ly + 1});
-                if (self.mode == Mode.RENDER) {
-                    print("render!! \n\n\n\n\n", .{});
-                    self.lcd.pushScanline(self.scanline, ly);
-                    self.lcd.renderScreen(ly);
-                }
-                if (ly >= 153) {
-                    self.setSpecialRegister(.ly, 0);
-                }
-                else if (self.mode == .RENDER or self.mode == .VBLANK) {
-                    self.setSpecialRegister(.ly, ly + 1);
-                }
-                self.switchMode();
-                print("Mode switch: {any}, stat update: {d}\n", .{self.mode, self.getSpecialRegister(.stat)});
+            if (self.mode_cycles_left == 0) {
+                self.switchMode(); // handles drawing the screen, updating ly
+                print("Mode switch: {any}, LY: {d}, stat: {d}\n", .{ self.mode, self.getSpecialRegister(.ly), self.getSpecialRegister(.stat) });
                 // TODO LYC CHECK
             }
         }
@@ -1406,7 +1473,7 @@ const LCD = struct {
 
     fn setRect(self: *@This(), rect: *g.SDL_FRect, x: anytype, y: anytype, w: anytype, h: anytype) void {
         _ = self;
-        rect.x = if (@TypeOf(x) == f32)  x else @as(f32, @floatFromInt(x));
+        rect.x = if (@TypeOf(x) == f32) x else @as(f32, @floatFromInt(x));
         rect.y = if (@TypeOf(y) == f32) y else @as(f32, @floatFromInt(y));
         rect.w = if (@TypeOf(w) == f32) w else @as(f32, @floatFromInt(w));
         rect.h = if (@TypeOf(h) == f32) h else @as(f32, @floatFromInt(h));
@@ -1429,7 +1496,7 @@ const LCD = struct {
         // println("pxSize: {any}", .{pxSize});
 
     }
-    fn pushScanline(self: *@This(),  new_scanline: [screenWidthPx]GPU.Color, ly: u8) void {
+    fn pushScanline(self: *@This(), new_scanline: [screenWidthPx]GPU.Color, ly: u8) void {
         @memcpy(&self.screen[ly], &new_scanline);
     }
 
@@ -1439,7 +1506,7 @@ const LCD = struct {
         _ = g.SDL_RenderClear(self.renderer);
         var rect = g.SDL_FRect{};
         // render the screen in the right place
-       // SCREEN
+        // SCREEN
         _ = g.SDL_SetRenderDrawColor(self.renderer, 230, 230, 230, 255);
         self.setRect(&rect, sidebar, aboveScreen - 5, screenW + 5, 5); // top of screen
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
@@ -1454,8 +1521,8 @@ const LCD = struct {
 
         self.setRect(&rect, sidebar + screenW, aboveScreen, 5, screenH + 5); // left side of screen
         _ = g.SDL_RenderFillRect(self.renderer, &rect);
-
         for (self.screen, 0..) |row, y| {
+            var done = false;
             // print("y: {d}, ly:{d}\n", .{y, ly});
             // _ = ly;
             for (row, 0..) |px, x| {
@@ -1463,17 +1530,19 @@ const LCD = struct {
                     .white => g.SDL_SetRenderDrawColor(self.renderer, 0, 200, 0, 255),
                     .lgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 160, 0, 255),
                     .dgray => g.SDL_SetRenderDrawColor(self.renderer, 0, 120, 0, 255),
-                    .black => g.SDL_SetRenderDrawColor(self.renderer, 0, 80, 0, 255)
+                    .black => g.SDL_SetRenderDrawColor(self.renderer, 0, 80, 0, 255),
                 };
                 if (y == ly) {
                     _ = g.SDL_SetRenderDrawColor(self.renderer, 25, 51, 0, 0);
+                    done = true;
+                    break;
                 }
                 const xPos = @as(f32, @floatFromInt(sidebar)) + @as(f32, @floatFromInt(x)) * pxSize;
                 const yPos = @as(f32, @floatFromInt(aboveScreen)) + @as(f32, @floatFromInt(y)) * pxSize;
                 self.setRect(&rect, xPos, yPos, pxSize, pxSize);
                 _ = g.SDL_RenderFillRect(self.renderer, &rect);
-
             }
+            if (done) break;
         }
         _ = g.SDL_RenderPresent(self.renderer);
     }
@@ -1495,7 +1564,7 @@ const LCD = struct {
             return error.WindowNull;
         }
         _ = g.SDL_SetWindowResizable(win.?, true);
-        _ =  g.SDL_SetWindowMinimumSize(win.?, initWinW, initWinH);
+        _ = g.SDL_SetWindowMinimumSize(win.?, initWinW, initWinH);
         // _ = g.SDL_MaximizeWindow(win.?);
 
         if (renderer == null) {
@@ -1508,7 +1577,7 @@ const LCD = struct {
             println("err while getting window size: {s}", .{g.SDL_GetError()});
             return error.NoWinSize;
         } else {
-            println("window size: {d}x{d}", .{window_width, window_height});
+            println("window size: {d}x{d}", .{ window_width, window_height });
             if (window_height == 0 or window_width == 0) {
                 return error.DetectedZeroWidthWin;
             }
@@ -1540,23 +1609,29 @@ pub const GB = struct {
     memory: [0xFFFF]u8 = undefined,
     running: bool = undefined,
     cycles_spent: usize = 0,
+    clock: std.time.Timer = undefined,
+    last_frame: std.time.Instant = undefined,
+
     const sr = LCD.special_registers;
     /// nintendo logo
     const LOGO: [48]u8 = .{ 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E };
+
+    const freqMHz = @as(f64, 1) / 4.19;
+    const cycle_time_ns = @round(freqMHz * std.math.pow(u16, 10, 3)); // tick at 4.19 MHz
 
     pub fn init(self: *@This()) !void {
         @memset(&self.memory, 0);
         @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
         try self.cpu.init();
         try self.gpu.init(self);
+        self.clock = try std.time.Timer.start();
         self.running = true;
     }
 
     pub fn read_byte(self: *@This(), address: usize) u8 {
         // TODO: implement memory mapping based on address
-            return self.memory[address];
-        }
-
+        return self.memory[address];
+    }
 
     pub fn writeByte(self: *@This(), address: usize, value: u8) void {
         switch (address) {
@@ -1568,7 +1643,7 @@ pub const GB = struct {
             @intFromEnum(LCD.special_registers.dma) => {
                 const prefix = address / 0x100;
                 const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
-                @memcpy( self.memory[GPU.OAM_BEGIN .. GPU.OAM_END], self.memory[ram_address..ram_address + GPU.OAM_END]);
+                @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END], self.memory[ram_address .. ram_address + GPU.OAM_END]);
             },
             0xFF50 => { // Disable bootrom register
                 // Unmap and replace the bootrom with cartridge data
@@ -1610,14 +1685,41 @@ pub const GB = struct {
             // print("0x{x} ", .{byte});
         }
     }
+    fn tick(self: *@This()) bool {
+        if (self.clock.read() >= cycle_time_ns) {
+            _ = self.clock.lap();
+            // _ = self.clock.sample();
+            return true;
+        }
+        return false;
+    }
+
+    fn readFPS(self: *GB, new_frame: bool) u16 {
+        if (new_frame) {
+            std.time.Instant.since(self.last_frame);
+        }
+    }
 
     pub fn go(self: *@This()) !void {
-        // while (self.running) {
-        while (self.cpu.pc <= 0x100 and self.running) {
+        var last_scy: isize = -1;
+        var last_frame: i128 = std.time.nanoTimestamp();
+        var last_ly: u8 = 0;
+        while (self.cpu.pc < 0x100 and self.running and self.tick()) {
             try self.getEvents();
             try self.do();
-            if (self.cpu.pc == 0x80) break;
-        //TODO: Update peripherals & timing
+            const scy = self.gpu.getSpecialRegister(.scy);
+            const ly = self.gpu.getSpecialRegister(.ly);
+            // DEBUG = true;
+            if (last_scy != scy) print("scy: {d}\n", .{scy});
+            if (last_ly != ly and ly == 144) {
+                print("new frame after: {d} seconds \n", .{std.time.nanoTimestamp() - last_frame});
+                last_frame = std.time.nanoTimestamp();
+            }
+            // DEBUG = false;
+            last_scy = scy;
+            last_ly = ly;
+            // if (self.cpu.pc == 0x80) break;
+            //TODO: Update peripherals & timing
         }
     }
     fn do(self: *@This()) !void {
@@ -1640,12 +1742,6 @@ pub const GB = struct {
                     _ = g.SDL_GetWindowSizeInPixels(self.gpu.lcd.win, &LCD.window_width, &LCD.window_height);
                     LCD.updateDimensions();
                 },
-                // g.eventwindow
-                // g.SDL_EVENT_WINDOW_ENTER_FULLSCREEN => {
-                //     print("FULLSCREEN, NEW SIZE\n\n\n\n\n\n", .{});
-                //     _ = g.SDL_GetWindowSizeInPixels(self.gpu.lcd.win, &LCD.window_width, &LCD.window_height);
-                //     LCD.updateDimensions();
-                // },
                 else => {},
             }
         }
@@ -1674,7 +1770,7 @@ pub const GB = struct {
         //     println("register@0x{x}: 0x{x} ", .{i, value});
         // }
         const i = 0xFF44;
-        println("register@0x{x}: 0x{x} ", .{i, self.gpu.getSpecialRegister(.ly)});
+        println("register@0x{x}: 0x{x} ", .{ i, self.gpu.getSpecialRegister(.ly) });
         // println("register@0x{x}: 0x{x} ", .{i, value});
         print("\n", .{});
     }
@@ -1698,6 +1794,3 @@ pub fn main() !void {
     defer gb.endGB();
     try gb.go();
 }
-
-
-
