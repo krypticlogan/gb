@@ -83,545 +83,526 @@ const FlagRegister = struct {
 };
 
 const InstructionSet = struct {
-    const InstrFn = ?*const fn (*GB, InstrArgs) u8;
+    const InstrFn = *const fn (*GB, InstrArgs) u8;
     const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: FlagRegister.Conditions, targets: struct { to: regID, from: regID } };
-    const table = [_]struct { u8, InstrFn, InstrArgs, u8 }{
-        .{ 0x00, NOP, .{ .none = {} }, 1 }, // NOP
-        .{ 0x01, LD16, .{ .target = regID.b }, 3 }, // LD BC, d16
-        .{ 0x02, null, .{ .none = {} }, 8 }, // LD (BC), A
-        .{ 0x03, null, .{ .none = {} }, 8 }, // INC BC
-        .{ 0x04, INCr8, .{ .target = regID.b }, 1 }, // INC B
-        .{ 0x05, DECr8, .{ .target = regID.b }, 1 }, // DEC B
-        .{ 0x06, LD8, .{ .target = regID.b }, 2 }, // LD B, d8
-        .{ 0x07, null, .{ .none = {} }, 4 }, // RLCA
-        .{ 0x08, null, .{ .none = {} }, 20 }, // LD (a16), SP
-        .{ 0x09, null, .{ .none = {} }, 8 }, // ADD HL, BC
-        .{ 0x0A, null, .{ .none = {} }, 8 }, // LD A, (BC)
-        .{ 0x0B, null, .{ .none = {} }, 8 }, // DEC BC
-        .{ 0x0C, INCr8, .{ .target = regID.c }, 1 }, // INC C
-        .{ 0x0D, DECr8, .{ .target = regID.c }, 1 }, // DEC C
-        .{ 0x0E, LD8, .{ .target = regID.c }, 2 }, // LD C, d8
-        .{ 0x0F, RRCA, .{ .none = {} }, 1 }, // RRCA
-        .{ 0x10, null, .{ .none = {} }, 4 }, // STOP 0
-        .{ 0x11, LD16, .{ .target = regID.d }, 3 }, // LD DE, d16
-        .{ 0x12, null, .{ .none = {} }, 8 }, // LD (DE), A
-        .{ 0x13, INCr16, .{ .target = regID.d }, 2 }, // INC DE
-        .{ 0x14, INCr8, .{ .target = regID.d }, 1 }, // INC D
-        .{ 0x15, DECr8, .{ .target = regID.d }, 1 }, // DEC D
-        .{ 0x16, LD8, .{ .target = regID.d }, 2 }, // LD D, d8
-        .{ 0x17, null, .{ .none = {} }, 4 }, // RLA
-        .{ 0x18, JR, .{ .flagConditions = .{ .none = true } }, 2 }, // JR r8
-        .{ 0x19, ADDHLr16, .{ .target = regID.d }, 2 }, // ADD HL, DE
-        .{ 0x1A, LDAr16, .{ .target = regID.d }, 2 }, // LD A, (DE)
-        .{ 0x1B, DECr16, .{ .target = regID.d }, 2 }, // DEC DE
-        .{ 0x1C, INCr8, .{ .target = regID.e }, 1 }, // INC E
-        .{ 0x1D, DECr8, .{ .target = regID.e }, 1 }, // DEC E
-        .{ 0x1E, LD8, .{ .target = regID.e }, 2 }, // LD E, d8
-        .{ 0x1F, null, .{ .none = {} }, 4 }, // RRA
-        .{ 0x20, JR, .{ .flagConditions = .{ .z = false } }, 3 }, // JR NZ, r8
-        .{ 0x21, LD16, .{ .target = regID.h }, 3 }, // LD HL, d16
-        .{ 0x22, LDHLIA, .{ .none = {} }, 2 }, // LD (HL+), A
-        .{ 0x23, INCr16, .{ .target = regID.h }, 2 }, // INC HL
-        .{ 0x24, INCr8, .{ .target = regID.h }, 1 }, // INC H
-        .{ 0x25, null, .{ .none = {} }, 4 }, // DEC H
-        .{ 0x26, null, .{ .none = {} }, 8 }, // LD H, d8
-        .{ 0x27, null, .{ .none = {} }, 4 }, // DAA
-        .{ 0x28, JR, .{ .flagConditions = .{ .z = true } }, 3 }, // JR Z, r8
-        .{ 0x29, null, .{ .none = {} }, 8 }, // ADD HL, HL
-        .{ 0x2A, null, .{ .none = {} }, 8 }, // LD A, (HL+)
-        .{ 0x2B, null, .{ .none = {} }, 8 }, // DEC HL
-        .{ 0x2C, null, .{ .none = {} }, 4 }, // INC L
-        .{ 0x2D, null, .{ .none = {} }, 4 }, // DEC L
-        .{ 0x2E, LD8, .{ .target = regID.l }, 2 }, // LD L, d8
-        .{ 0x2F, null, .{ .none = {} }, 4 }, // CPL
-        .{ 0x30, null, .{ .none = {} }, 12 }, // JR NC, r8
-        .{ 0x31, LDSP16, .{ .none = {} }, 3 }, // LD SP, d16
-        .{ 0x32, LDHLDA, .{ .none = {} }, 2 }, // LD (HL-), A
-        .{ 0x33, null, .{ .none = {} }, 8 }, // INC SP
-        .{ 0x34, null, .{ .none = {} }, 12 }, // INC (HL)
-        .{ 0x35, null, .{ .none = {} }, 12 }, // DEC (HL)
-        .{ 0x36, null, .{ .none = {} }, 12 }, // LD (HL), d8
-        .{ 0x37, null, .{ .none = {} }, 4 }, // SCF
-        .{ 0x38, null, .{ .none = {} }, 12 }, // JR C, r8
-        .{ 0x39, null, .{ .none = {} }, 8 }, // ADD HL, SP
-        .{ 0x3A, null, .{ .none = {} }, 8 }, // LD A, (HL-)
-        .{ 0x3B, null, .{ .none = {} }, 8 }, // DEC SP
-        .{ 0x3C, null, .{ .none = {} }, 4 }, // INC A
-        .{ 0x3D, DECr8, .{ .target = regID.a }, 1 }, // DEC A
-        .{ 0x3E, LD8, .{ .target = regID.a }, 1 }, // LD A, d8
-        .{ 0x3F, null, .{ .none = {} }, 4 }, // CCF
-        .{ 0x40, null, .{ .none = {} }, 4 }, // LD B, B
-        .{ 0x41, null, .{ .none = {} }, 4 }, // LD B, C
-        .{ 0x42, null, .{ .none = {} }, 4 }, // LD B, D
-        .{ 0x43, null, .{ .none = {} }, 4 }, // LD B, E
-        .{ 0x44, null, .{ .none = {} }, 4 }, // LD B, H
-        .{ 0x45, null, .{ .none = {} }, 4 }, // LD B, L
-        .{ 0x46, null, .{ .none = {} }, 8 }, // LD B, (HL)
-        .{ 0x47, null, .{ .none = {} }, 4 }, // LD B, A
-        .{ 0x48, null, .{ .none = {} }, 4 }, // LD C, B
-        .{ 0x49, null, .{ .none = {} }, 4 }, // LD C, C
-        .{ 0x4A, null, .{ .none = {} }, 4 }, // LD C, D
-        .{ 0x4B, null, .{ .none = {} }, 4 }, // LD C, E
-        .{ 0x4C, null, .{ .none = {} }, 4 }, // LD C, H
-        .{ 0x4D, null, .{ .none = {} }, 4 }, // LD C, L
-        .{ 0x4E, null, .{ .none = {} }, 8 }, // LD C, (HL)
-        .{ 0x4F, LDr8, .{ .targets = .{ .to = regID.c, .from = regID.a } }, 1 }, // LD C, A
-        .{ 0x50, null, .{ .none = {} }, 4 }, // LD D, B
-        .{ 0x51, null, .{ .none = {} }, 4 }, // LD D, C
-        .{ 0x52, null, .{ .none = {} }, 4 }, // LD D, D
-        .{ 0x53, null, .{ .none = {} }, 4 }, // LD D, E
-        .{ 0x54, null, .{ .none = {} }, 4 }, // LD D, H
-        .{ 0x55, null, .{ .none = {} }, 4 }, // LD D, L
-        .{ 0x56, null, .{ .none = {} }, 8 }, // LD D, (HL)
-        .{ 0x57, LDr8, .{ .targets = .{ .to = regID.d, .from = regID.a } }, 1 }, // LD D, A
-        .{ 0x58, null, .{ .none = {} }, 4 }, // LD E, B
-        .{ 0x59, null, .{ .none = {} }, 4 }, // LD E, C
-        .{ 0x5A, null, .{ .none = {} }, 4 }, // LD E, D
-        .{ 0x5B, null, .{ .none = {} }, 4 }, // LD E, E
-        .{ 0x5C, null, .{ .none = {} }, 4 }, // LD E, H
-        .{ 0x5D, null, .{ .none = {} }, 4 }, // LD E, L
-        .{ 0x5E, null, .{ .none = {} }, 8 }, // LD E, (HL)
-        .{ 0x5F, null, .{ .none = {} }, 4 }, // LD E, A
-        .{ 0x60, null, .{ .none = {} }, 4 }, // LD H, B
-        .{ 0x61, null, .{ .none = {} }, 4 }, // LD H, C
-        .{ 0x62, null, .{ .none = {} }, 4 }, // LD H, D
-        .{ 0x63, null, .{ .none = {} }, 4 }, // LD H, E
-        .{ 0x64, null, .{ .none = {} }, 4 }, // LD H, H
-        .{ 0x65, null, .{ .none = {} }, 4 }, // LD H, L
-        .{ 0x66, null, .{ .none = {} }, 8 }, // LD H, (HL)
-        .{ 0x67, LDr8, .{ .targets = .{ .to = regID.h, .from = regID.a } }, 1 }, // LD H, A
-        .{ 0x68, null, .{ .none = {} }, 4 }, // LD L, B
-        .{ 0x69, null, .{ .none = {} }, 4 }, // LD L, C
-        .{ 0x6A, null, .{ .none = {} }, 4 }, // LD L, D
-        .{ 0x6B, null, .{ .none = {} }, 4 }, // LD L, E
-        .{ 0x6C, null, .{ .none = {} }, 4 }, // LD L, H
-        .{ 0x6D, null, .{ .none = {} }, 4 }, // LD L, L
-        .{ 0x6E, null, .{ .none = {} }, 8 }, // LD L, (HL)
-        .{ 0x6F, null, .{ .none = {} }, 4 }, // LD L, A
-        .{ 0x70, null, .{ .none = {} }, 8 }, // LD (HL), B
-        .{ 0x71, null, .{ .none = {} }, 8 }, // LD (HL), C
-        .{ 0x72, null, .{ .none = {} }, 8 }, // LD (HL), D
-        .{ 0x73, null, .{ .none = {} }, 8 }, // LD (HL), E
-        .{ 0x74, null, .{ .none = {} }, 8 }, // LD (HL), H
-        .{ 0x75, null, .{ .none = {} }, 8 }, // LD (HL), L
-        .{ 0x76, null, .{ .none = {} }, 4 }, // HALT
-        .{ 0x77, LDHLR, .{ .target = regID.a }, 2 }, // LD (HL), A
-        .{ 0x78, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.b } }, 1 }, // LD A, B
-        .{ 0x79, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.c } }, 1 }, // LD A, C
-        .{ 0x7A, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.d } }, 1 }, // LD A, D
-        .{ 0x7B, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.e } }, 1 }, // LD A, E
-        .{ 0x7C, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.h } }, 1 }, // LD A, H
-        .{ 0x7D, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.l } }, 1 }, // LD A, L
-        .{ 0x7E, LDAHL, .{ .none = {} }, 8 }, // LD A, (HL)
-        .{ 0x7F, LDr8, .{ .targets = .{ .to = regID.a, .from = regID.a } }, 1 }, // LD A, A
-        .{ 0x80, ADDAr8, .{ .target = regID.b }, 1 }, // ADD A, B
-        .{ 0x81, ADDAr8, .{ .target = regID.c }, 1 }, // ADD A, C
-        .{ 0x82, ADDAr8, .{ .target = regID.d }, 1 }, // ADD A, D
-        .{ 0x83, ADDAr8, .{ .target = regID.e }, 1 }, // ADD A, E
-        .{ 0x84, ADDAr8, .{ .target = regID.h }, 1 }, // ADD A, H
-        .{ 0x85, ADDAr8, .{ .target = regID.l }, 1 }, // ADD A, L
-        .{ 0x86, ADDAHL, .{ .none = {} }, 2 }, // ADD A, (HL)
-        .{ 0x87, null, .{ .none = {} }, 4 }, // ADD A, A
-        .{ 0x88, null, .{ .none = {} }, 4 }, // ADC A, B
-        .{ 0x89, null, .{ .none = {} }, 4 }, // ADC A, C
-        .{ 0x8A, null, .{ .none = {} }, 4 }, // ADC A, D
-        .{ 0x8B, null, .{ .none = {} }, 4 }, // ADC A, E
-        .{ 0x8C, null, .{ .none = {} }, 4 }, // ADC A, H
-        .{ 0x8D, null, .{ .none = {} }, 4 }, // ADC A, L
-        .{ 0x8E, null, .{ .none = {} }, 8 }, // ADC A, (HL)
-        .{ 0x8F, null, .{ .none = {} }, 4 }, // ADC A, A
-        .{ 0x90, SUBAr8, .{ .target = regID.b }, 1 }, // SUB B
-        .{ 0x91, SUBAr8, .{ .target = regID.c }, 1 }, // SUB C
-        .{ 0x92, SUBAr8, .{ .target = regID.d }, 1 }, // SUB D
-        .{ 0x93, SUBAr8, .{ .target = regID.e }, 1 }, // SUB E
-        .{ 0x94, SUBAr8, .{ .target = regID.h }, 1 }, // SUB H
-        .{ 0x95, SUBAr8, .{ .target = regID.l }, 1 }, // SUB L
-        .{ 0x96, null, .{ .none = {} }, 8 }, // SUB (HL)
-        .{ 0x97, SUBAr8, .{ .target = regID.a }, 1 }, // SUB A
-        .{ 0x98, null, .{ .none = {} }, 4 }, // SBC A, B
-        .{ 0x99, null, .{ .none = {} }, 4 }, // SBC A, C
-        .{ 0x9A, null, .{ .none = {} }, 4 }, // SBC A, D
-        .{ 0x9B, null, .{ .none = {} }, 4 }, // SBC A, E
-        .{ 0x9C, null, .{ .none = {} }, 4 }, // SBC A, H
-        .{ 0x9D, null, .{ .none = {} }, 4 }, // SBC A, L
-        .{ 0x9E, null, .{ .none = {} }, 8 }, // SBC A, (HL)
-        .{ 0x9F, null, .{ .none = {} }, 4 }, // SBC A, A
-        .{ 0xA0, null, .{ .none = {} }, 4 }, // AND B
-        .{ 0xA1, null, .{ .none = {} }, 4 }, // AND C
-        .{ 0xA2, null, .{ .none = {} }, 4 }, // AND D
-        .{ 0xA3, null, .{ .none = {} }, 4 }, // AND E
-        .{ 0xA4, null, .{ .none = {} }, 4 }, // AND H
-        .{ 0xA5, null, .{ .none = {} }, 4 }, // AND L
-        .{ 0xA6, null, .{ .none = {} }, 8 }, // AND (HL)
-        .{ 0xA7, null, .{ .none = {} }, 4 }, // AND A
-        .{ 0xA8, null, .{ .none = {} }, 4 }, // XOR B
-        .{ 0xA9, null, .{ .none = {} }, 4 }, // XOR C
-        .{ 0xAA, null, .{ .none = {} }, 4 }, // XOR D
-        .{ 0xAB, null, .{ .none = {} }, 4 }, // XOR E
-        .{ 0xAC, null, .{ .none = {} }, 4 }, // XOR H
-        .{ 0xAD, null, .{ .none = {} }, 4 }, // XOR L
-        .{ 0xAE, null, .{ .none = {} }, 8 }, // XOR (HL)
-        .{ 0xAF, XORA, .{ .target = regID.a }, 1 }, // XOR A
-        .{ 0xB0, null, .{ .none = {} }, 4 }, // OR B
-        .{ 0xB1, null, .{ .none = {} }, 4 }, // OR C
-        .{ 0xB2, null, .{ .none = {} }, 4 }, // OR D
-        .{ 0xB3, null, .{ .none = {} }, 4 }, // OR E
-        .{ 0xB4, null, .{ .none = {} }, 4 }, // OR H
-        .{ 0xB5, null, .{ .none = {} }, 4 }, // OR L
-        .{ 0xB6, null, .{ .none = {} }, 8 }, // OR (HL)
-        .{ 0xB7, null, .{ .none = {} }, 4 }, // OR A
-        .{ 0xB8, null, .{ .none = {} }, 4 }, // CP B
-        .{ 0xB9, null, .{ .none = {} }, 4 }, // CP C
-        .{ 0xBA, null, .{ .none = {} }, 4 }, // CP D
-        .{ 0xBB, null, .{ .none = {} }, 4 }, // CP E
-        .{ 0xBC, null, .{ .none = {} }, 4 }, // CP H
-        .{ 0xBD, null, .{ .none = {} }, 4 }, // CP L
-        .{ 0xBE, CPAHL, .{ .none = {} }, 2 }, // CP (HL)
-        .{ 0xBF, null, .{ .none = {} }, 4 }, // CP A
-        .{ 0xC0, null, .{ .none = {} }, 20 }, // RET NZ
-        .{ 0xC1, POP, .{ .target = regID.b }, 3 }, // POP BC
-        .{ 0xC2, null, .{ .none = {} }, 16 }, // JP NZ, a16
-        .{ 0xC3, null, .{ .none = {} }, 16 }, // JP a16
-        .{ 0xC4, null, .{ .none = {} }, 24 }, // CALL NZ, a16
-        .{ 0xC5, PUSH, .{ .target = regID.b }, 1 }, // PUSH BC
-        .{ 0xC6, null, .{ .none = {} }, 8 }, // ADD A, d8
-        .{ 0xC7, null, .{ .none = {} }, 16 }, // RST 00H
-        .{ 0xC8, null, .{ .none = {} }, 20 }, // RET Z
-        .{ 0xC9, RET, .{ .flagConditions = .{ .none = true } }, 2 }, // RET
-        .{ 0xCA, null, .{ .none = {} }, 16 }, // JP Z, a16
-        .{ 0xCB, null, .{ .none = {} }, 4 }, // PREFIX CB
-        .{ 0xCC, null, .{ .none = {} }, 24 }, // CALL Z, a16
-        .{ 0xCD, CALLn16, .{ .flagConditions = .{ .none = true } }, 3 }, // CALL a16
-        .{ 0xCE, null, .{ .none = {} }, 8 }, // ADC A, d8
-        .{ 0xCF, null, .{ .none = {} }, 16 }, // RST 08H
-        .{ 0xD0, null, .{ .none = {} }, 20 }, // RET NC
-        .{ 0xD1, null, .{ .none = {} }, 12 }, // POP DE
-        .{ 0xD2, null, .{ .none = {} }, 16 }, // JP NC, a16
-        .{ 0xD3, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xD4, null, .{ .none = {} }, 24 }, // CALL NC, a16
-        .{ 0xD5, null, .{ .none = {} }, 16 }, // PUSH DE
-        .{ 0xD6, null, .{ .none = {} }, 8 }, // SUB d8
-        .{ 0xD7, null, .{ .none = {} }, 16 }, // RST 10H
-        .{ 0xD8, null, .{ .none = {} }, 20 }, // RET C
-        .{ 0xD9, null, .{ .none = {} }, 16 }, // RETI
-        .{ 0xDA, null, .{ .none = {} }, 16 }, // JP C, a16
-        .{ 0xDB, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xDC, null, .{ .none = {} }, 24 }, // CALL C, a16
-        .{ 0xDD, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xDE, null, .{ .none = {} }, 8 }, // SBC A, d8
-        .{ 0xDF, null, .{ .none = {} }, 16 }, // RST 18H
-        .{ 0xE0, LDHn16A, .{ .none = {} }, 3 }, // LDH (a8), A
-        .{ 0xE1, null, .{ .none = {} }, 12 }, // POP HL
-        .{ 0xE2, LDHCA, .{ .none = {} }, 2 }, // LD (C), A
-        .{ 0xE3, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xE4, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xE5, null, .{ .none = {} }, 16 }, // PUSH HL
-        .{ 0xE6, null, .{ .none = {} }, 8 }, // AND d8
-        .{ 0xE7, null, .{ .none = {} }, 16 }, // RST 20H
-        .{ 0xE8, null, .{ .none = {} }, 16 }, // ADD SP, r8
-        .{ 0xE9, null, .{ .none = {} }, 4 }, // JP (HL)
-        .{ 0xEA, LDn16A, .{ .none = {} }, 4 }, // LD (a16), A
-        .{ 0xEB, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xEC, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xED, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xEE, null, .{ .none = {} }, 8 }, // XOR d8
-        .{ 0xEF, null, .{ .none = {} }, 16 }, // RST 28H
-        .{ 0xF0, LDHAn16, .{ .none = {} }, 3 }, // LDH A, (a8)
-        .{ 0xF1, null, .{ .none = {} }, 12 }, // POP AF
-        .{ 0xF2, null, .{ .none = {} }, 8 }, // LD A, (C)
-        .{ 0xF3, null, .{ .none = {} }, 4 }, // DI
-        .{ 0xF4, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xF5, null, .{ .none = {} }, 16 }, // PUSH AF
-        .{ 0xF6, null, .{ .none = {} }, 8 }, // OR d8
-        .{ 0xF7, null, .{ .none = {} }, 16 }, // RST 30H
-        .{ 0xF8, null, .{ .none = {} }, 12 }, // LD HL, SP+r8
-        .{ 0xF9, null, .{ .none = {} }, 8 }, // LD SP, HL
-        .{ 0xFA, null, .{ .none = {} }, 16 }, // LD A, (a16)
-        .{ 0xFB, EI, .{ .none = {} }, 1 }, // EI
-        .{ 0xFC, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xFD, null, .{ .none = {} }, 4 }, // NOP
-        .{ 0xFE, CPAn8, .{ .none = {} }, 2 }, // CP d8
-        .{ 0xFF, null, .{ .none = {} }, 16 }, // RST 38H
+    const InstrInfo = struct { op: u8, ins: InstrFn, args: InstrArgs, cycles: u8 };
+    const table = [_]InstrInfo{
+        InstrInfo{ .op = 0x00, .ins = NOP, .args = .{ .none = {} }, .cycles = 1 }, // NOP
+        InstrInfo{ .op = 0x01, .ins = LD16, .args = .{ .target = regID.b }, .cycles = 3 }, // LD BC, d16
+        InstrInfo{ .op = 0x02, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (BC), A
+        InstrInfo{ .op = 0x03, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // INC BC
+        InstrInfo{ .op = 0x04, .ins = INCr8, .args = .{ .target = regID.b }, .cycles = 1 }, // INC B
+        InstrInfo{ .op = 0x05, .ins = DECr8, .args = .{ .target = regID.b }, .cycles = 1 }, // DEC B
+        InstrInfo{ .op = 0x06, .ins = LD8, .args = .{ .target = regID.b }, .cycles = 2 }, // LD B, d8
+        InstrInfo{ .op = 0x07, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // RLCA
+        InstrInfo{ .op = 0x08, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // LD (a16), SP
+        InstrInfo{ .op = 0x09, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADD HL, BC
+        InstrInfo{ .op = 0x0A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (BC)
+        InstrInfo{ .op = 0x0B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // DEC BC
+        InstrInfo{ .op = 0x0C, .ins = INCr8, .args = .{ .target = regID.c }, .cycles = 1 }, // INC C
+        InstrInfo{ .op = 0x0D, .ins = DECr8, .args = .{ .target = regID.c }, .cycles = 1 }, // DEC C
+        InstrInfo{ .op = 0x0E, .ins = LD8, .args = .{ .target = regID.c }, .cycles = 2 }, // LD C, d8
+        InstrInfo{ .op = 0x0F, .ins = RRCA, .args = .{ .none = {} }, .cycles = 1 }, // RRCA
+        InstrInfo{ .op = 0x10, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // STOP 0
+        InstrInfo{ .op = 0x11, .ins = LD16, .args = .{ .target = regID.d }, .cycles = 3 }, // LD DE, d16
+        InstrInfo{ .op = 0x12, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (DE), A
+        InstrInfo{ .op = 0x13, .ins = INCr16, .args = .{ .target = regID.d }, .cycles = 2 }, // INC DE
+        InstrInfo{ .op = 0x14, .ins = INCr8, .args = .{ .target = regID.d }, .cycles = 1 }, // INC D
+        InstrInfo{ .op = 0x15, .ins = DECr8, .args = .{ .target = regID.d }, .cycles = 1 }, // DEC D
+        InstrInfo{ .op = 0x16, .ins = LD8, .args = .{ .target = regID.d }, .cycles = 2 }, // LD D, d8
+        InstrInfo{ .op = 0x17, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // RLA
+        InstrInfo{ .op = 0x18, .ins = JR, .args = .{ .flagConditions = .{ .none = true } }, .cycles = 2 }, // JR r8
+        InstrInfo{ .op = 0x19, .ins = ADDHLr16, .args = .{ .target = regID.d }, .cycles = 2 }, // ADD HL, DE
+        InstrInfo{ .op = 0x1A, .ins = LDAr16, .args = .{ .target = regID.d }, .cycles = 2 }, // LD A, (DE)
+        InstrInfo{ .op = 0x1B, .ins = DECr16, .args = .{ .target = regID.d }, .cycles = 2 }, // DEC DE
+        InstrInfo{ .op = 0x1C, .ins = INCr8, .args = .{ .target = regID.e }, .cycles = 1 }, // INC E
+        InstrInfo{ .op = 0x1D, .ins = DECr8, .args = .{ .target = regID.e }, .cycles = 1 }, // DEC E
+        InstrInfo{ .op = 0x1E, .ins = LD8, .args = .{ .target = regID.e }, .cycles = 2 }, // LD E, d8
+        InstrInfo{ .op = 0x1F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // RRA
+        InstrInfo{ .op = 0x20, .ins = JR, .args = .{ .flagConditions = .{ .z = false } }, .cycles = 3 }, // JR NZ, r8
+        InstrInfo{ .op = 0x21, .ins = LD16, .args = .{ .target = regID.h }, .cycles = 3 }, // LD HL, d16
+        InstrInfo{ .op = 0x22, .ins = LDHLIA, .args = .{ .none = {} }, .cycles = 2 }, // LD (HL+), A
+        InstrInfo{ .op = 0x23, .ins = INCr16, .args = .{ .target = regID.h }, .cycles = 2 }, // INC HL
+        InstrInfo{ .op = 0x24, .ins = INCr8, .args = .{ .target = regID.h }, .cycles = 1 }, // INC H
+        InstrInfo{ .op = 0x25, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // DEC H
+        InstrInfo{ .op = 0x26, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD H, d8
+        InstrInfo{ .op = 0x27, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // DAA
+        InstrInfo{ .op = 0x28, .ins = JR, .args = .{ .flagConditions = .{ .z = true } }, .cycles = 3 }, // JR Z, r8
+        InstrInfo{ .op = 0x29, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADD HL, HL
+        InstrInfo{ .op = 0x2A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (HL+)
+        InstrInfo{ .op = 0x2B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // DEC HL
+        InstrInfo{ .op = 0x2C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // INC L
+        InstrInfo{ .op = 0x2D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // DEC L
+        InstrInfo{ .op = 0x2E, .ins = LD8, .args = .{ .target = regID.l }, .cycles = 2 }, // LD L, d8
+        InstrInfo{ .op = 0x2F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CPL
+        InstrInfo{ .op = 0x30, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // JR NC, r8
+        InstrInfo{ .op = 0x31, .ins = LDSP16, .args = .{ .none = {} }, .cycles = 3 }, // LD SP, d16
+        InstrInfo{ .op = 0x32, .ins = LDHLDA, .args = .{ .none = {} }, .cycles = 2 }, // LD (HL-), A
+        InstrInfo{ .op = 0x33, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // INC SP
+        InstrInfo{ .op = 0x34, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // INC (HL)
+        InstrInfo{ .op = 0x35, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // DEC (HL)
+        InstrInfo{ .op = 0x36, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // LD (HL), d8
+        InstrInfo{ .op = 0x37, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SCF
+        InstrInfo{ .op = 0x38, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // JR C, r8
+        InstrInfo{ .op = 0x39, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADD HL, SP
+        InstrInfo{ .op = 0x3A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (HL-)
+        InstrInfo{ .op = 0x3B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // DEC SP
+        InstrInfo{ .op = 0x3C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // INC A
+        InstrInfo{ .op = 0x3D, .ins = DECr8, .args = .{ .target = regID.a }, .cycles = 1 }, // DEC A
+        InstrInfo{ .op = 0x3E, .ins = LD8, .args = .{ .target = regID.a }, .cycles = 1 }, // LD A, d8
+        InstrInfo{ .op = 0x3F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CCF
+        InstrInfo{ .op = 0x40, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, B
+        InstrInfo{ .op = 0x41, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, C
+        InstrInfo{ .op = 0x42, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, D
+        InstrInfo{ .op = 0x43, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, E
+        InstrInfo{ .op = 0x44, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, H
+        InstrInfo{ .op = 0x45, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, L
+        InstrInfo{ .op = 0x46, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD B, (HL)
+        InstrInfo{ .op = 0x47, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, A
+        InstrInfo{ .op = 0x48, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, B
+        InstrInfo{ .op = 0x49, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, C
+        InstrInfo{ .op = 0x4A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, D
+        InstrInfo{ .op = 0x4B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, E
+        InstrInfo{ .op = 0x4C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, H
+        InstrInfo{ .op = 0x4D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, L
+        InstrInfo{ .op = 0x4E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD C, (HL)
+        InstrInfo{ .op = 0x4F, .ins = LDr8, .args = .{ .targets = .{ .to = regID.c, .from = regID.a } }, .cycles = 1 }, // LD C, A
+        InstrInfo{ .op = 0x50, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, B
+        InstrInfo{ .op = 0x51, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, C
+        InstrInfo{ .op = 0x52, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, D
+        InstrInfo{ .op = 0x53, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, E
+        InstrInfo{ .op = 0x54, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, H
+        InstrInfo{ .op = 0x55, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, L
+        InstrInfo{ .op = 0x56, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD D, (HL)
+        InstrInfo{ .op = 0x57, .ins = LDr8, .args = .{ .targets = .{ .to = regID.d, .from = regID.a } }, .cycles = 1 }, // LD D, A
+        InstrInfo{ .op = 0x58, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, B
+        InstrInfo{ .op = 0x59, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, C
+        InstrInfo{ .op = 0x5A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, D
+        InstrInfo{ .op = 0x5B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, E
+        InstrInfo{ .op = 0x5C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, H
+        InstrInfo{ .op = 0x5D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, L
+        InstrInfo{ .op = 0x5E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD E, (HL)
+        InstrInfo{ .op = 0x5F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, A
+        InstrInfo{ .op = 0x60, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, B
+        InstrInfo{ .op = 0x61, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, C
+        InstrInfo{ .op = 0x62, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, D
+        InstrInfo{ .op = 0x63, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, E
+        InstrInfo{ .op = 0x64, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, H
+        InstrInfo{ .op = 0x65, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, L
+        InstrInfo{ .op = 0x66, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD H, (HL)
+        InstrInfo{ .op = 0x67, .ins = LDr8, .args = .{ .targets = .{ .to = regID.h, .from = regID.a } }, .cycles = 1 }, // LD H, A
+        InstrInfo{ .op = 0x68, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, B
+        InstrInfo{ .op = 0x69, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, C
+        InstrInfo{ .op = 0x6A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, D
+        InstrInfo{ .op = 0x6B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, E
+        InstrInfo{ .op = 0x6C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, H
+        InstrInfo{ .op = 0x6D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, L
+        InstrInfo{ .op = 0x6E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD L, (HL)
+        InstrInfo{ .op = 0x6F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, A
+        InstrInfo{ .op = 0x70, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), B
+        InstrInfo{ .op = 0x71, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), C
+        InstrInfo{ .op = 0x72, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), D
+        InstrInfo{ .op = 0x73, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), E
+        InstrInfo{ .op = 0x74, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), H
+        InstrInfo{ .op = 0x75, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), L
+        InstrInfo{ .op = 0x76, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // HALT
+        InstrInfo{ .op = 0x77, .ins = LDHLR, .args = .{ .target = regID.a }, .cycles = 2 }, // LD (HL), A
+        InstrInfo{ .op = 0x78, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.b } }, .cycles = 1 }, // LD A, B
+        InstrInfo{ .op = 0x79, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.c } }, .cycles = 1 }, // LD A, C
+        InstrInfo{ .op = 0x7A, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.d } }, .cycles = 1 }, // LD A, D
+        InstrInfo{ .op = 0x7B, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.e } }, .cycles = 1 }, // LD A, E
+        InstrInfo{ .op = 0x7C, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.h } }, .cycles = 1 }, // LD A, H
+        InstrInfo{ .op = 0x7D, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.l } }, .cycles = 1 }, // LD A, L
+        InstrInfo{ .op = 0x7E, .ins = LDAHL, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (HL)
+        InstrInfo{ .op = 0x7F, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.a } }, .cycles = 1 }, // LD A, A
+        InstrInfo{ .op = 0x80, .ins = ADDAr8, .args = .{ .target = regID.b }, .cycles = 1 }, // ADD A, B
+        InstrInfo{ .op = 0x81, .ins = ADDAr8, .args = .{ .target = regID.c }, .cycles = 1 }, // ADD A, C
+        InstrInfo{ .op = 0x82, .ins = ADDAr8, .args = .{ .target = regID.d }, .cycles = 1 }, // ADD A, D
+        InstrInfo{ .op = 0x83, .ins = ADDAr8, .args = .{ .target = regID.e }, .cycles = 1 }, // ADD A, E
+        InstrInfo{ .op = 0x84, .ins = ADDAr8, .args = .{ .target = regID.h }, .cycles = 1 }, // ADD A, H
+        InstrInfo{ .op = 0x85, .ins = ADDAr8, .args = .{ .target = regID.l }, .cycles = 1 }, // ADD A, L
+        InstrInfo{ .op = 0x86, .ins = ADDAHL, .args = .{ .none = {} }, .cycles = 2 }, // ADD A, (HL)
+        InstrInfo{ .op = 0x87, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADD A, A
+        InstrInfo{ .op = 0x88, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, B
+        InstrInfo{ .op = 0x89, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, C
+        InstrInfo{ .op = 0x8A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, D
+        InstrInfo{ .op = 0x8B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, E
+        InstrInfo{ .op = 0x8C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, H
+        InstrInfo{ .op = 0x8D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, L
+        InstrInfo{ .op = 0x8E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADC A, (HL)
+        InstrInfo{ .op = 0x8F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, A
+        InstrInfo{ .op = 0x90, .ins = SUBAr8, .args = .{ .target = regID.b }, .cycles = 1 }, // SUB B
+        InstrInfo{ .op = 0x91, .ins = SUBAr8, .args = .{ .target = regID.c }, .cycles = 1 }, // SUB C
+        InstrInfo{ .op = 0x92, .ins = SUBAr8, .args = .{ .target = regID.d }, .cycles = 1 }, // SUB D
+        InstrInfo{ .op = 0x93, .ins = SUBAr8, .args = .{ .target = regID.e }, .cycles = 1 }, // SUB E
+        InstrInfo{ .op = 0x94, .ins = SUBAr8, .args = .{ .target = regID.h }, .cycles = 1 }, // SUB H
+        InstrInfo{ .op = 0x95, .ins = SUBAr8, .args = .{ .target = regID.l }, .cycles = 1 }, // SUB L
+        InstrInfo{ .op = 0x96, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SUB (HL)
+        InstrInfo{ .op = 0x97, .ins = SUBAr8, .args = .{ .target = regID.a }, .cycles = 1 }, // SUB A
+        InstrInfo{ .op = 0x98, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, B
+        InstrInfo{ .op = 0x99, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, C
+        InstrInfo{ .op = 0x9A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, D
+        InstrInfo{ .op = 0x9B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, E
+        InstrInfo{ .op = 0x9C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, H
+        InstrInfo{ .op = 0x9D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, L
+        InstrInfo{ .op = 0x9E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SBC A, (HL)
+        InstrInfo{ .op = 0x9F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, A
+        InstrInfo{ .op = 0xA0, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND B
+        InstrInfo{ .op = 0xA1, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND C
+        InstrInfo{ .op = 0xA2, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND D
+        InstrInfo{ .op = 0xA3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND E
+        InstrInfo{ .op = 0xA4, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND H
+        InstrInfo{ .op = 0xA5, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND L
+        InstrInfo{ .op = 0xA6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // AND (HL)
+        InstrInfo{ .op = 0xA7, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND A
+        InstrInfo{ .op = 0xA8, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR B
+        InstrInfo{ .op = 0xA9, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR C
+        InstrInfo{ .op = 0xAA, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR D
+        InstrInfo{ .op = 0xAB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR E
+        InstrInfo{ .op = 0xAC, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR H
+        InstrInfo{ .op = 0xAD, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR L
+        InstrInfo{ .op = 0xAE, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // XOR (HL)
+        InstrInfo{ .op = 0xAF, .ins = XORA, .args = .{ .target = regID.a }, .cycles = 1 }, // XOR A
+        InstrInfo{ .op = 0xB0, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR B
+        InstrInfo{ .op = 0xB1, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR C
+        InstrInfo{ .op = 0xB2, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR D
+        InstrInfo{ .op = 0xB3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR E
+        InstrInfo{ .op = 0xB4, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR H
+        InstrInfo{ .op = 0xB5, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR L
+        InstrInfo{ .op = 0xB6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // OR (HL)
+        InstrInfo{ .op = 0xB7, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR A
+        InstrInfo{ .op = 0xB8, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP B
+        InstrInfo{ .op = 0xB9, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP C
+        InstrInfo{ .op = 0xBA, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP D
+        InstrInfo{ .op = 0xBB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP E
+        InstrInfo{ .op = 0xBC, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP H
+        InstrInfo{ .op = 0xBD, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP L
+        InstrInfo{ .op = 0xBE, .ins = CPAHL, .args = .{ .none = {} }, .cycles = 2 }, // CP (HL)
+        InstrInfo{ .op = 0xBF, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP A
+        InstrInfo{ .op = 0xC0, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // RET NZ
+        InstrInfo{ .op = 0xC1, .ins = POP, .args = .{ .target = regID.b }, .cycles = 3 }, // POP BC
+        InstrInfo{ .op = 0xC2, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP NZ, a16
+        InstrInfo{ .op = 0xC3, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP a16
+        InstrInfo{ .op = 0xC4, .ins = undefined, .args = .{ .none = {} }, .cycles = 24 }, // CALL NZ, a16
+        InstrInfo{ .op = 0xC5, .ins = PUSH, .args = .{ .target = regID.b }, .cycles = 1 }, // PUSH BC
+        InstrInfo{ .op = 0xC6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADD A, d8
+        InstrInfo{ .op = 0xC7, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 00H
+        InstrInfo{ .op = 0xC8, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // RET Z
+        InstrInfo{ .op = 0xC9, .ins = RET, .args = .{ .flagConditions = .{ .none = true } }, .cycles = 2 }, // RET
+        InstrInfo{ .op = 0xCA, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP Z, a16
+        InstrInfo{ .op = 0xCB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // PREFIX CB
+        InstrInfo{ .op = 0xCC, .ins = undefined, .args = .{ .none = {} }, .cycles = 24 }, // CALL Z, a16
+        InstrInfo{ .op = 0xCD, .ins = CALLn16, .args = .{ .flagConditions = .{ .none = true } }, .cycles = 3 }, // CALL a16
+        InstrInfo{ .op = 0xCE, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADC A, d8
+        InstrInfo{ .op = 0xCF, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 08H
+        InstrInfo{ .op = 0xD0, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // RET NC
+        InstrInfo{ .op = 0xD1, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // POP DE
+        InstrInfo{ .op = 0xD2, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP NC, a16
+        InstrInfo{ .op = 0xD3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xD4, .ins = undefined, .args = .{ .none = {} }, .cycles = 24 }, // CALL NC, a16
+        InstrInfo{ .op = 0xD5, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // PUSH DE
+        InstrInfo{ .op = 0xD6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SUB d8
+        InstrInfo{ .op = 0xD7, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 10H
+        InstrInfo{ .op = 0xD8, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // RET C
+        InstrInfo{ .op = 0xD9, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RETI
+        InstrInfo{ .op = 0xDA, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP C, a16
+        InstrInfo{ .op = 0xDB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xDC, .ins = undefined, .args = .{ .none = {} }, .cycles = 24 }, // CALL C, a16
+        InstrInfo{ .op = 0xDD, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xDE, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SBC A, d8
+        InstrInfo{ .op = 0xDF, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 18H
+        InstrInfo{ .op = 0xE0, .ins = LDHn16A, .args = .{ .none = {} }, .cycles = 3 }, // LDH (a8), A
+        InstrInfo{ .op = 0xE1, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // POP HL
+        InstrInfo{ .op = 0xE2, .ins = LDHCA, .args = .{ .none = {} }, .cycles = 2 }, // LD (C), A
+        InstrInfo{ .op = 0xE3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xE4, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xE5, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // PUSH HL
+        InstrInfo{ .op = 0xE6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // AND d8
+        InstrInfo{ .op = 0xE7, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 20H
+        InstrInfo{ .op = 0xE8, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // ADD SP, r8
+        InstrInfo{ .op = 0xE9, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // JP (HL)
+        InstrInfo{ .op = 0xEA, .ins = LDn16A, .args = .{ .none = {} }, .cycles = 4 }, // LD (a16), A
+        InstrInfo{ .op = 0xEB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xEC, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xED, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xEE, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // XOR d8
+        InstrInfo{ .op = 0xEF, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 28H
+        InstrInfo{ .op = 0xF0, .ins = LDHAn16, .args = .{ .none = {} }, .cycles = 3 }, // LDH A, (a8)
+        InstrInfo{ .op = 0xF1, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // POP AF
+        InstrInfo{ .op = 0xF2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (C)
+        InstrInfo{ .op = 0xF3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // DI
+        InstrInfo{ .op = 0xF4, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xF5, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // PUSH AF
+        InstrInfo{ .op = 0xF6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // OR d8
+        InstrInfo{ .op = 0xF7, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 30H
+        InstrInfo{ .op = 0xF8, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // LD HL, SP+r8
+        InstrInfo{ .op = 0xF9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD SP, HL
+        InstrInfo{ .op = 0xFA, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // LD A, (a16)
+        InstrInfo{ .op = 0xFB, .ins = EI, .args = .{ .none = {} }, .cycles = 1 }, // EI
+        InstrInfo{ .op = 0xFC, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xFD, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
+        InstrInfo{ .op = 0xFE, .ins = CPAn8, .args = .{ .none = {} }, .cycles = 2 }, // CP d8
+        InstrInfo{ .op = 0xFF, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 38H
     };
 
-    const prefix_table = [_]struct { u8, InstrFn, InstrArgs, u8 }{
-        .{ 0x00, null, .{ .none = {} }, 8 }, // RLC B
-        .{ 0x01, null, .{ .none = {} }, 8 }, // RLC C
-        .{ 0x02, null, .{ .none = {} }, 8 }, // RLC D
-        .{ 0x03, null, .{ .none = {} }, 8 }, // RLC E
-        .{ 0x04, null, .{ .none = {} }, 8 }, // RLC H
-        .{ 0x05, null, .{ .none = {} }, 8 }, // RLC L
-        .{ 0x06, null, .{ .none = {} }, 16 }, // RLC (HL)
-        .{ 0x07, null, .{ .none = {} }, 8 }, // RLC A
-        .{ 0x08, null, .{ .none = {} }, 8 }, // RRC B
-        .{ 0x09, null, .{ .none = {} }, 8 }, // RRC C
-        .{ 0x0A, null, .{ .none = {} }, 8 }, // RRC D
-        .{ 0x0B, null, .{ .none = {} }, 8 }, // RRC E
-        .{ 0x0C, null, .{ .none = {} }, 8 }, // RRC H
-        .{ 0x0D, null, .{ .none = {} }, 8 }, // RRC L
-        .{ 0x0E, null, .{ .none = {} }, 16 }, // RRC (HL)
-        .{ 0x0F, null, .{ .none = {} }, 8 }, // RRC A
-        .{ 0x10, null, .{ .none = {} }, 8 }, // RL B
-        .{ 0x11, RL, .{ .target = regID.c }, 8 }, // RL C
-        .{ 0x12, null, .{ .none = {} }, 8 }, // RL D
-        .{ 0x13, null, .{ .none = {} }, 8 }, // RL E
-        .{ 0x14, null, .{ .none = {} }, 8 }, // RL H
-        .{ 0x15, null, .{ .none = {} }, 8 }, // RL L
-        .{ 0x16, null, .{ .none = {} }, 16 }, // RL (HL)
-        .{ 0x17, null, .{ .none = {} }, 8 }, // RL A
-        .{ 0x18, null, .{ .none = {} }, 8 }, // RR B
-        .{ 0x19, null, .{ .none = {} }, 8 }, // RR C
-        .{ 0x1A, null, .{ .none = {} }, 8 }, // RR D
-        .{ 0x1B, null, .{ .none = {} }, 8 }, // RR E
-        .{ 0x1C, null, .{ .none = {} }, 8 }, // RR H
-        .{ 0x1D, null, .{ .none = {} }, 8 }, // RR L
-        .{ 0x1E, null, .{ .none = {} }, 16 }, // RR (HL)
-        .{ 0x1F, null, .{ .none = {} }, 8 }, // RR A
-        .{ 0x20, null, .{ .none = {} }, 8 }, // SLA B
-        .{ 0x21, null, .{ .none = {} }, 8 }, // SLA C
-        .{ 0x22, null, .{ .none = {} }, 8 }, // SLA D
-        .{ 0x23, null, .{ .none = {} }, 8 }, // SLA E
-        .{ 0x24, null, .{ .none = {} }, 8 }, // SLA H
-        .{ 0x25, null, .{ .none = {} }, 8 }, // SLA L
-        .{ 0x26, null, .{ .none = {} }, 16 }, // SLA (HL)
-        .{ 0x27, null, .{ .none = {} }, 8 }, // SLA A
-        .{ 0x28, null, .{ .none = {} }, 8 }, // SRA B
-        .{ 0x29, null, .{ .none = {} }, 8 }, // SRA C
-        .{ 0x2A, null, .{ .none = {} }, 8 }, // SRA D
-        .{ 0x2B, null, .{ .none = {} }, 8 }, // SRA E
-        .{ 0x2C, null, .{ .none = {} }, 8 }, // SRA H
-        .{ 0x2D, null, .{ .none = {} }, 8 }, // SRA L
-        .{ 0x2E, null, .{ .none = {} }, 16 }, // SRA (HL)
-        .{ 0x2F, null, .{ .none = {} }, 8 }, // SRA A
-        .{ 0x30, null, .{ .none = {} }, 8 }, // SWAP B
-        .{ 0x31, null, .{ .none = {} }, 8 }, // SWAP C
-        .{ 0x32, null, .{ .none = {} }, 8 }, // SWAP D
-        .{ 0x33, null, .{ .none = {} }, 8 }, // SWAP E
-        .{ 0x34, null, .{ .none = {} }, 8 }, // SWAP H
-        .{ 0x35, null, .{ .none = {} }, 8 }, // SWAP L
-        .{ 0x36, null, .{ .none = {} }, 16 }, // SWAP (HL)
-        .{ 0x37, null, .{ .none = {} }, 8 }, // SWAP A
-        .{ 0x38, null, .{ .none = {} }, 8 }, // SRL B
-        .{ 0x39, null, .{ .none = {} }, 8 }, // SRL C
-        .{ 0x3A, null, .{ .none = {} }, 8 }, // SRL D
-        .{ 0x3B, null, .{ .none = {} }, 8 }, // SRL E
-        .{ 0x3C, null, .{ .none = {} }, 8 }, // SRL H
-        .{ 0x3D, null, .{ .none = {} }, 8 }, // SRL L
-        .{ 0x3E, null, .{ .none = {} }, 16 }, // SRL (HL)
-        .{ 0x3F, null, .{ .none = {} }, 8 }, // SRL A
-        .{ 0x40, null, .{ .none = {} }, 8 }, // BIT 0, B
-        .{ 0x41, null, .{ .none = {} }, 8 }, // BIT 0, C
-        .{ 0x42, null, .{ .none = {} }, 8 }, // BIT 0, D
-        .{ 0x43, null, .{ .none = {} }, 8 }, // BIT 0, E
-        .{ 0x44, null, .{ .none = {} }, 8 }, // BIT 0, H
-        .{ 0x45, null, .{ .none = {} }, 8 }, // BIT 0, L
-        .{ 0x46, null, .{ .none = {} }, 12 }, // BIT 0, (HL)
-        .{ 0x47, null, .{ .none = {} }, 8 }, // BIT 0, A
-        .{ 0x48, null, .{ .none = {} }, 8 }, // BIT 1, B
-        .{ 0x49, null, .{ .none = {} }, 8 }, // BIT 1, C
-        .{ 0x4A, null, .{ .none = {} }, 8 }, // BIT 1, D
-        .{ 0x4B, null, .{ .none = {} }, 8 }, // BIT 1, E
-        .{ 0x4C, null, .{ .none = {} }, 8 }, // BIT 1, H
-        .{ 0x4D, null, .{ .none = {} }, 8 }, // BIT 1, L
-        .{ 0x4E, null, .{ .none = {} }, 12 }, // BIT 1, (HL)
-        .{ 0x4F, null, .{ .none = {} }, 8 }, // BIT 1, A
-        .{ 0x50, null, .{ .none = {} }, 8 }, // BIT 2, B
-        .{ 0x51, null, .{ .none = {} }, 8 }, // BIT 2, C
-        .{ 0x52, null, .{ .none = {} }, 8 }, // BIT 2, D
-        .{ 0x53, null, .{ .none = {} }, 8 }, // BIT 2, E
-        .{ 0x54, null, .{ .none = {} }, 8 }, // BIT 2, H
-        .{ 0x55, null, .{ .none = {} }, 8 }, // BIT 2, L
-        .{ 0x56, null, .{ .none = {} }, 12 }, // BIT 2, (HL)
-        .{ 0x57, null, .{ .none = {} }, 8 }, // BIT 2, A
-        .{ 0x58, null, .{ .none = {} }, 8 }, // BIT 3, B
-        .{ 0x59, null, .{ .none = {} }, 8 }, // BIT 3, C
-        .{ 0x5A, null, .{ .none = {} }, 8 }, // BIT 3, D
-        .{ 0x5B, null, .{ .none = {} }, 8 }, // BIT 3, E
-        .{ 0x5C, null, .{ .none = {} }, 8 }, // BIT 3, H
-        .{ 0x5D, null, .{ .none = {} }, 8 }, // BIT 3, L
-        .{ 0x5E, null, .{ .none = {} }, 12 }, // BIT 3, (HL)
-        .{ 0x5F, null, .{ .none = {} }, 8 }, // BIT 3, A
-        .{ 0x60, null, .{ .none = {} }, 8 }, // BIT 4, B
-        .{ 0x61, null, .{ .none = {} }, 8 }, // BIT 4, C
-        .{ 0x62, null, .{ .none = {} }, 8 }, // BIT 4, D
-        .{ 0x63, null, .{ .none = {} }, 8 }, // BIT 4, E
-        .{ 0x64, null, .{ .none = {} }, 8 }, // BIT 4, H
-        .{ 0x65, null, .{ .none = {} }, 8 }, // BIT 4, L
-        .{ 0x66, null, .{ .none = {} }, 12 }, // BIT 4, (HL)
-        .{ 0x67, null, .{ .none = {} }, 8 }, // BIT 4, A
-        .{ 0x68, null, .{ .none = {} }, 8 }, // BIT 5, B
-        .{ 0x69, null, .{ .none = {} }, 8 }, // BIT 5, C
-        .{ 0x6A, null, .{ .none = {} }, 8 }, // BIT 5, D
-        .{ 0x6B, null, .{ .none = {} }, 8 }, // BIT 5, E
-        .{ 0x6C, null, .{ .none = {} }, 8 }, // BIT 5, H
-        .{ 0x6D, null, .{ .none = {} }, 8 }, // BIT 5, L
-        .{ 0x6E, null, .{ .none = {} }, 12 }, // BIT 5, (HL)
-        .{ 0x6F, null, .{ .none = {} }, 8 }, // BIT 5, A
-        .{ 0x70, null, .{ .none = {} }, 8 }, // BIT 6, B
-        .{ 0x71, null, .{ .none = {} }, 8 }, // BIT 6, C
-        .{ 0x72, null, .{ .none = {} }, 8 }, // BIT 6, D
-        .{ 0x73, null, .{ .none = {} }, 8 }, // BIT 6, E
-        .{ 0x74, null, .{ .none = {} }, 8 }, // BIT 6, H
-        .{ 0x75, null, .{ .none = {} }, 8 }, // BIT 6, L
-        .{ 0x76, null, .{ .none = {} }, 12 }, // BIT 6, (HL)
-        .{ 0x77, null, .{ .none = {} }, 8 }, // BIT 6, A
-        .{ 0x78, null, .{ .none = {} }, 8 }, // BIT 7, B
-        .{ 0x79, null, .{ .none = {} }, 8 }, // BIT 7, C
-        .{ 0x7A, null, .{ .none = {} }, 8 }, // BIT 7, D
-        .{ 0x7B, null, .{ .none = {} }, 8 }, // BIT 7, E
-        .{ 0x7C, BITTEST, .{ .bit_target = .{ .bit = 7, .target = regID.h } }, 3 }, // BIT 7, H
-        .{ 0x7D, null, .{ .none = {} }, 8 }, // BIT 7, L
-        .{ 0x7E, null, .{ .none = {} }, 12 }, // BIT 7, (HL)
-        .{ 0x7F, null, .{ .none = {} }, 8 }, // BIT 7, A
-        .{ 0x80, null, .{ .none = {} }, 8 }, // RES 0, B
-        .{ 0x81, null, .{ .none = {} }, 8 }, // RES 0, C
-        .{ 0x82, null, .{ .none = {} }, 8 }, // RES 0, D
-        .{ 0x83, null, .{ .none = {} }, 8 }, // RES 0, E
-        .{ 0x84, null, .{ .none = {} }, 8 }, // RES 0, H
-        .{ 0x85, null, .{ .none = {} }, 8 }, // RES 0, L
-        .{ 0x86, null, .{ .none = {} }, 16 }, // RES 0, (HL)
-        .{ 0x87, null, .{ .none = {} }, 8 }, // RES 0, A
-        .{ 0x88, null, .{ .none = {} }, 8 }, // RES 1, B
-        .{ 0x89, null, .{ .none = {} }, 8 }, // RES 1, C
-        .{ 0x8A, null, .{ .none = {} }, 8 }, // RES 1, D
-        .{ 0x8B, null, .{ .none = {} }, 8 }, // RES 1, E
-        .{ 0x8C, null, .{ .none = {} }, 8 }, // RES 1, H
-        .{ 0x8D, null, .{ .none = {} }, 8 }, // RES 1, L
-        .{ 0x8E, null, .{ .none = {} }, 16 }, // RES 1, (HL)
-        .{ 0x8F, null, .{ .none = {} }, 8 }, // RES 1, A
-        .{ 0x90, null, .{ .none = {} }, 8 }, // RES 2, B
-        .{ 0x91, null, .{ .none = {} }, 8 }, // RES 2, C
-        .{ 0x92, null, .{ .none = {} }, 8 }, // RES 2, D
-        .{ 0x93, null, .{ .none = {} }, 8 }, // RES 2, E
-        .{ 0x94, null, .{ .none = {} }, 8 }, // RES 2, H
-        .{ 0x95, null, .{ .none = {} }, 8 }, // RES 2, L
-        .{ 0x96, null, .{ .none = {} }, 16 }, // RES 2, (HL)
-        .{ 0x97, null, .{ .none = {} }, 8 }, // RES 2, A
-        .{ 0x98, null, .{ .none = {} }, 8 }, // RES 3, B
-        .{ 0x99, null, .{ .none = {} }, 8 }, // RES 3, C
-        .{ 0x9A, null, .{ .none = {} }, 8 }, // RES 3, D
-        .{ 0x9B, null, .{ .none = {} }, 8 }, // RES 3, E
-        .{ 0x9C, null, .{ .none = {} }, 8 }, // RES 3, H
-        .{ 0x9D, null, .{ .none = {} }, 8 }, // RES 3, L
-        .{ 0x9E, null, .{ .none = {} }, 16 }, // RES 3, (HL)
-        .{ 0x9F, null, .{ .none = {} }, 8 }, // RES 3, A
-        .{ 0xA0, null, .{ .none = {} }, 8 }, // RES 4, B
-        .{ 0xA1, null, .{ .none = {} }, 8 }, // RES 4, C
-        .{ 0xA2, null, .{ .none = {} }, 8 }, // RES 4, D
-        .{ 0xA3, null, .{ .none = {} }, 8 }, // RES 4, E
-        .{ 0xA4, null, .{ .none = {} }, 8 }, // RES 4, H
-        .{ 0xA5, null, .{ .none = {} }, 8 }, // RES 4, L
-        .{ 0xA6, null, .{ .none = {} }, 16 }, // RES 4, (HL)
-        .{ 0xA7, null, .{ .none = {} }, 8 }, // RES 4, A
-        .{ 0xA8, null, .{ .none = {} }, 8 }, // RES 5, B
-        .{ 0xA9, null, .{ .none = {} }, 8 }, // RES 5, C
-        .{ 0xAA, null, .{ .none = {} }, 8 }, // RES 5, D
-        .{ 0xAB, null, .{ .none = {} }, 8 }, // RES 5, E
-        .{ 0xAC, null, .{ .none = {} }, 8 }, // RES 5, H
-        .{ 0xAD, null, .{ .none = {} }, 8 }, // RES 5, L
-        .{ 0xAE, null, .{ .none = {} }, 16 }, // RES 5, (HL)
-        .{ 0xAF, null, .{ .none = {} }, 8 }, // RES 5, A
-        .{ 0xB0, null, .{ .none = {} }, 8 }, // RES 6, B
-        .{ 0xB1, null, .{ .none = {} }, 8 }, // RES 6, C
-        .{ 0xB2, null, .{ .none = {} }, 8 }, // RES 6, D
-        .{ 0xB3, null, .{ .none = {} }, 8 }, // RES 6, E
-        .{ 0xB4, null, .{ .none = {} }, 8 }, // RES 6, H
-        .{ 0xB5, null, .{ .none = {} }, 8 }, // RES 6, L
-        .{ 0xB6, null, .{ .none = {} }, 16 }, // RES 6, (HL)
-        .{ 0xB7, null, .{ .none = {} }, 8 }, // RES 6, A
-        .{ 0xB8, null, .{ .none = {} }, 8 }, // RES 7, B
-        .{ 0xB9, null, .{ .none = {} }, 8 }, // RES 7, C
-        .{ 0xBA, null, .{ .none = {} }, 8 }, // RES 7, D
-        .{ 0xBB, null, .{ .none = {} }, 8 }, // RES 7, E
-        .{ 0xBC, null, .{ .none = {} }, 8 }, // RES 7, H
-        .{ 0xBD, null, .{ .none = {} }, 8 }, // RES 7, L
-        .{ 0xBE, null, .{ .none = {} }, 16 }, // RES 7, (HL)
-        .{ 0xBF, null, .{ .none = {} }, 8 }, // RES 7, A
-        .{ 0xC0, null, .{ .none = {} }, 8 }, // SET 0, B
-        .{ 0xC1, null, .{ .none = {} }, 8 }, // SET 0, C
-        .{ 0xC2, null, .{ .none = {} }, 8 }, // SET 0, D
-        .{ 0xC3, null, .{ .none = {} }, 8 }, // SET 0, E
-        .{ 0xC4, null, .{ .none = {} }, 8 }, // SET 0, H
-        .{ 0xC5, null, .{ .none = {} }, 8 }, // SET 0, L
-        .{ 0xC6, null, .{ .none = {} }, 16 }, // SET 0, (HL)
-        .{ 0xC7, null, .{ .none = {} }, 8 }, // SET 0, A
-        .{ 0xC8, null, .{ .none = {} }, 8 }, // SET 1, B
-        .{ 0xC9, null, .{ .none = {} }, 8 }, // SET 1, C
-        .{ 0xCA, null, .{ .none = {} }, 8 }, // SET 1, D
-        .{ 0xCB, null, .{ .none = {} }, 8 }, // SET 1, E
-        .{ 0xCC, null, .{ .none = {} }, 8 }, // SET 1, H
-        .{ 0xCD, null, .{ .none = {} }, 8 }, // SET 1, L
-        .{ 0xCE, null, .{ .none = {} }, 16 }, // SET 1, (HL)
-        .{ 0xCF, null, .{ .none = {} }, 8 }, // SET 1, A
-        .{ 0xD0, null, .{ .none = {} }, 8 }, // SET 2, B
-        .{ 0xD1, null, .{ .none = {} }, 8 }, // SET 2, C
-        .{ 0xD2, null, .{ .none = {} }, 8 }, // SET 2, D
-        .{ 0xD3, null, .{ .none = {} }, 8 }, // SET 2, E
-        .{ 0xD4, null, .{ .none = {} }, 8 }, // SET 2, H
-        .{ 0xD5, null, .{ .none = {} }, 8 }, // SET 2, L
-        .{ 0xD6, null, .{ .none = {} }, 16 }, // SET 2, (HL)
-        .{ 0xD7, null, .{ .none = {} }, 8 }, // SET 2, A
-        .{ 0xD8, null, .{ .none = {} }, 8 }, // SET 3, B
-        .{ 0xD9, null, .{ .none = {} }, 8 }, // SET 3, C
-        .{ 0xDA, null, .{ .none = {} }, 8 }, // SET 3, D
-        .{ 0xDB, null, .{ .none = {} }, 8 }, // SET 3, E
-        .{ 0xDC, null, .{ .none = {} }, 8 }, // SET 3, H
-        .{ 0xDD, null, .{ .none = {} }, 8 }, // SET 3, L
-        .{ 0xDE, null, .{ .none = {} }, 16 }, // SET 3, (HL)
-        .{ 0xDF, null, .{ .none = {} }, 8 }, // SET 3, A
-        .{ 0xE0, null, .{ .none = {} }, 8 }, // SET 4, B
-        .{ 0xE1, null, .{ .none = {} }, 8 }, // SET 4, C
-        .{ 0xE2, null, .{ .none = {} }, 8 }, // SET 4, D
-        .{ 0xE3, null, .{ .none = {} }, 8 }, // SET 4, E
-        .{ 0xE4, null, .{ .none = {} }, 8 }, // SET 4, H
-        .{ 0xE5, null, .{ .none = {} }, 8 }, // SET 4, L
-        .{ 0xE6, null, .{ .none = {} }, 16 }, // SET 4, (HL)
-        .{ 0xE7, null, .{ .none = {} }, 8 }, // SET 4, A
-        .{ 0xE8, null, .{ .none = {} }, 8 }, // SET 5, B
-        .{ 0xE9, null, .{ .none = {} }, 8 }, // SET 5, C
-        .{ 0xEA, null, .{ .none = {} }, 8 }, // SET 5, D
-        .{ 0xEB, null, .{ .none = {} }, 8 }, // SET 5, E
-        .{ 0xEC, null, .{ .none = {} }, 8 }, // SET 5, H
-        .{ 0xED, null, .{ .none = {} }, 8 }, // SET 5, L
-        .{ 0xEE, null, .{ .none = {} }, 16 }, // SET 5, (HL)
-        .{ 0xEF, null, .{ .none = {} }, 8 }, // SET 5, A
-        .{ 0xF0, null, .{ .none = {} }, 8 }, // SET 6, B
-        .{ 0xF1, null, .{ .none = {} }, 8 }, // SET 6, C
-        .{ 0xF2, null, .{ .none = {} }, 8 }, // SET 6, D
-        .{ 0xF3, null, .{ .none = {} }, 8 }, // SET 6, E
-        .{ 0xF4, null, .{ .none = {} }, 8 }, // SET 6, H
-        .{ 0xF5, null, .{ .none = {} }, 8 }, // SET 6, L
-        .{ 0xF6, null, .{ .none = {} }, 16 }, // SET 6, (HL)
-        .{ 0xF7, null, .{ .none = {} }, 8 }, // SET 6, A
-        .{ 0xF8, null, .{ .none = {} }, 8 }, // SET 7, B
-        .{ 0xF9, null, .{ .none = {} }, 8 }, // SET 7, C
-        .{ 0xFA, null, .{ .none = {} }, 8 }, // SET 7, D
-        .{ 0xFB, null, .{ .none = {} }, 8 }, // SET 7, E
-        .{ 0xFC, null, .{ .none = {} }, 8 }, // SET 7, H
-        .{ 0xFD, null, .{ .none = {} }, 8 }, // SET 7, L
-        .{ 0xFE, null, .{ .none = {} }, 16 }, // SET 7, (HL)
-        .{ 0xFF, null, .{ .none = {} }, 8 }, // SET 7, A
+    const prefix_table = [_]InstrInfo{
+        InstrInfo{ .op = 0x00, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC B
+        InstrInfo{ .op = 0x01, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC C
+        InstrInfo{ .op = 0x02, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC D
+        InstrInfo{ .op = 0x03, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC E
+        InstrInfo{ .op = 0x04, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC H
+        InstrInfo{ .op = 0x05, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC L
+        InstrInfo{ .op = 0x06, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RLC (HL)
+        InstrInfo{ .op = 0x07, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC A
+        InstrInfo{ .op = 0x08, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC B
+        InstrInfo{ .op = 0x09, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC C
+        InstrInfo{ .op = 0x0A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC D
+        InstrInfo{ .op = 0x0B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC E
+        InstrInfo{ .op = 0x0C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC H
+        InstrInfo{ .op = 0x0D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC L
+        InstrInfo{ .op = 0x0E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RRC (HL)
+        InstrInfo{ .op = 0x0F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC A
+        InstrInfo{ .op = 0x10, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL B
+        InstrInfo{ .op = 0x11, .ins = RL, .args = .{ .target = regID.c }, .cycles = 8 }, // RL C
+        InstrInfo{ .op = 0x12, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL D
+        InstrInfo{ .op = 0x13, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL E
+        InstrInfo{ .op = 0x14, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL H
+        InstrInfo{ .op = 0x15, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL L
+        InstrInfo{ .op = 0x16, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RL (HL)
+        InstrInfo{ .op = 0x17, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL A
+        InstrInfo{ .op = 0x18, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR B
+        InstrInfo{ .op = 0x19, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR C
+        InstrInfo{ .op = 0x1A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR D
+        InstrInfo{ .op = 0x1B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR E
+        InstrInfo{ .op = 0x1C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR H
+        InstrInfo{ .op = 0x1D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR L
+        InstrInfo{ .op = 0x1E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RR (HL)
+        InstrInfo{ .op = 0x1F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR A
+        InstrInfo{ .op = 0x20, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA B
+        InstrInfo{ .op = 0x21, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA C
+        InstrInfo{ .op = 0x22, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA D
+        InstrInfo{ .op = 0x23, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA E
+        InstrInfo{ .op = 0x24, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA H
+        InstrInfo{ .op = 0x25, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA L
+        InstrInfo{ .op = 0x26, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SLA (HL)
+        InstrInfo{ .op = 0x27, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA A
+        InstrInfo{ .op = 0x28, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA B
+        InstrInfo{ .op = 0x29, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA C
+        InstrInfo{ .op = 0x2A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA D
+        InstrInfo{ .op = 0x2B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA E
+        InstrInfo{ .op = 0x2C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA H
+        InstrInfo{ .op = 0x2D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA L
+        InstrInfo{ .op = 0x2E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SRA (HL)
+        InstrInfo{ .op = 0x2F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA A
+        InstrInfo{ .op = 0x30, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP B
+        InstrInfo{ .op = 0x31, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP C
+        InstrInfo{ .op = 0x32, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP D
+        InstrInfo{ .op = 0x33, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP E
+        InstrInfo{ .op = 0x34, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP H
+        InstrInfo{ .op = 0x35, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP L
+        InstrInfo{ .op = 0x36, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SWAP (HL)
+        InstrInfo{ .op = 0x37, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP A
+        InstrInfo{ .op = 0x38, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL B
+        InstrInfo{ .op = 0x39, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL C
+        InstrInfo{ .op = 0x3A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL D
+        InstrInfo{ .op = 0x3B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL E
+        InstrInfo{ .op = 0x3C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL H
+        InstrInfo{ .op = 0x3D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL L
+        InstrInfo{ .op = 0x3E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SRL (HL)
+        InstrInfo{ .op = 0x3F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL A
+        InstrInfo{ .op = 0x40, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, B
+        InstrInfo{ .op = 0x41, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, C
+        InstrInfo{ .op = 0x42, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, D
+        InstrInfo{ .op = 0x43, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, E
+        InstrInfo{ .op = 0x44, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, H
+        InstrInfo{ .op = 0x45, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, L
+        InstrInfo{ .op = 0x46, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 0, (HL)
+        InstrInfo{ .op = 0x47, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, A
+        InstrInfo{ .op = 0x48, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, B
+        InstrInfo{ .op = 0x49, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, C
+        InstrInfo{ .op = 0x4A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, D
+        InstrInfo{ .op = 0x4B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, E
+        InstrInfo{ .op = 0x4C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, H
+        InstrInfo{ .op = 0x4D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, L
+        InstrInfo{ .op = 0x4E, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 1, (HL)
+        InstrInfo{ .op = 0x4F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, A
+        InstrInfo{ .op = 0x50, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, B
+        InstrInfo{ .op = 0x51, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, C
+        InstrInfo{ .op = 0x52, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, D
+        InstrInfo{ .op = 0x53, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, E
+        InstrInfo{ .op = 0x54, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, H
+        InstrInfo{ .op = 0x55, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, L
+        InstrInfo{ .op = 0x56, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 2, (HL)
+        InstrInfo{ .op = 0x57, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, A
+        InstrInfo{ .op = 0x58, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, B
+        InstrInfo{ .op = 0x59, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, C
+        InstrInfo{ .op = 0x5A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, D
+        InstrInfo{ .op = 0x5B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, E
+        InstrInfo{ .op = 0x5C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, H
+        InstrInfo{ .op = 0x5D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, L
+        InstrInfo{ .op = 0x5E, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 3, (HL)
+        InstrInfo{ .op = 0x5F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, A
+        InstrInfo{ .op = 0x60, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, B
+        InstrInfo{ .op = 0x61, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, C
+        InstrInfo{ .op = 0x62, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, D
+        InstrInfo{ .op = 0x63, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, E
+        InstrInfo{ .op = 0x64, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, H
+        InstrInfo{ .op = 0x65, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, L
+        InstrInfo{ .op = 0x66, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 4, (HL)
+        InstrInfo{ .op = 0x67, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, A
+        InstrInfo{ .op = 0x68, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, B
+        InstrInfo{ .op = 0x69, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, C
+        InstrInfo{ .op = 0x6A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, D
+        InstrInfo{ .op = 0x6B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, E
+        InstrInfo{ .op = 0x6C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, H
+        InstrInfo{ .op = 0x6D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, L
+        InstrInfo{ .op = 0x6E, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 5, (HL)
+        InstrInfo{ .op = 0x6F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, A
+        InstrInfo{ .op = 0x70, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, B
+        InstrInfo{ .op = 0x71, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, C
+        InstrInfo{ .op = 0x72, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, D
+        InstrInfo{ .op = 0x73, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, E
+        InstrInfo{ .op = 0x74, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, H
+        InstrInfo{ .op = 0x75, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, L
+        InstrInfo{ .op = 0x76, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 6, (HL)
+        InstrInfo{ .op = 0x77, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, A
+        InstrInfo{ .op = 0x78, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, B
+        InstrInfo{ .op = 0x79, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, C
+        InstrInfo{ .op = 0x7A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, D
+        InstrInfo{ .op = 0x7B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, E
+        InstrInfo{ .op = 0x7C, .ins = BITTEST, .args = .{ .bit_target = .{ .bit = 7, .target = regID.h } }, .cycles = 3 }, // BIT 7, H
+        InstrInfo{ .op = 0x7D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, L
+        InstrInfo{ .op = 0x7E, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 7, (HL)
+        InstrInfo{ .op = 0x7F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, A
+        InstrInfo{ .op = 0x80, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, B
+        InstrInfo{ .op = 0x81, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, C
+        InstrInfo{ .op = 0x82, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, D
+        InstrInfo{ .op = 0x83, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, E
+        InstrInfo{ .op = 0x84, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, H
+        InstrInfo{ .op = 0x85, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, L
+        InstrInfo{ .op = 0x86, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 0, (HL)
+        InstrInfo{ .op = 0x87, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, A
+        InstrInfo{ .op = 0x88, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, B
+        InstrInfo{ .op = 0x89, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, C
+        InstrInfo{ .op = 0x8A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, D
+        InstrInfo{ .op = 0x8B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, E
+        InstrInfo{ .op = 0x8C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, H
+        InstrInfo{ .op = 0x8D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, L
+        InstrInfo{ .op = 0x8E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 1, (HL)
+        InstrInfo{ .op = 0x8F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, A
+        InstrInfo{ .op = 0x90, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, B
+        InstrInfo{ .op = 0x91, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, C
+        InstrInfo{ .op = 0x92, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, D
+        InstrInfo{ .op = 0x93, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, E
+        InstrInfo{ .op = 0x94, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, H
+        InstrInfo{ .op = 0x95, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, L
+        InstrInfo{ .op = 0x96, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 2, (HL)
+        InstrInfo{ .op = 0x97, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, A
+        InstrInfo{ .op = 0x98, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, B
+        InstrInfo{ .op = 0x99, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, C
+        InstrInfo{ .op = 0x9A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, D
+        InstrInfo{ .op = 0x9B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, E
+        InstrInfo{ .op = 0x9C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, H
+        InstrInfo{ .op = 0x9D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, L
+        InstrInfo{ .op = 0x9E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 3, (HL)
+        InstrInfo{ .op = 0x9F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, A
+        InstrInfo{ .op = 0xA0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, B
+        InstrInfo{ .op = 0xA1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, C
+        InstrInfo{ .op = 0xA2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, D
+        InstrInfo{ .op = 0xA3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, E
+        InstrInfo{ .op = 0xA4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, H
+        InstrInfo{ .op = 0xA5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, L
+        InstrInfo{ .op = 0xA6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 4, (HL)
+        InstrInfo{ .op = 0xA7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, A
+        InstrInfo{ .op = 0xA8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, B
+        InstrInfo{ .op = 0xA9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, C
+        InstrInfo{ .op = 0xAA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, D
+        InstrInfo{ .op = 0xAB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, E
+        InstrInfo{ .op = 0xAC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, H
+        InstrInfo{ .op = 0xAD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, L
+        InstrInfo{ .op = 0xAE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 5, (HL)
+        InstrInfo{ .op = 0xAF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, A
+        InstrInfo{ .op = 0xB0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, B
+        InstrInfo{ .op = 0xB1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, C
+        InstrInfo{ .op = 0xB2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, D
+        InstrInfo{ .op = 0xB3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, E
+        InstrInfo{ .op = 0xB4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, H
+        InstrInfo{ .op = 0xB5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, L
+        InstrInfo{ .op = 0xB6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 6, (HL)
+        InstrInfo{ .op = 0xB7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, A
+        InstrInfo{ .op = 0xB8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, B
+        InstrInfo{ .op = 0xB9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, C
+        InstrInfo{ .op = 0xBA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, D
+        InstrInfo{ .op = 0xBB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, E
+        InstrInfo{ .op = 0xBC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, H
+        InstrInfo{ .op = 0xBD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, L
+        InstrInfo{ .op = 0xBE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 7, (HL)
+        InstrInfo{ .op = 0xBF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, A
+        InstrInfo{ .op = 0xC0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, B
+        InstrInfo{ .op = 0xC1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, C
+        InstrInfo{ .op = 0xC2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, D
+        InstrInfo{ .op = 0xC3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, E
+        InstrInfo{ .op = 0xC4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, H
+        InstrInfo{ .op = 0xC5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, L
+        InstrInfo{ .op = 0xC6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 0, (HL)
+        InstrInfo{ .op = 0xC7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, A
+        InstrInfo{ .op = 0xC8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, B
+        InstrInfo{ .op = 0xC9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, C
+        InstrInfo{ .op = 0xCA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, D
+        InstrInfo{ .op = 0xCB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, E
+        InstrInfo{ .op = 0xCC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, H
+        InstrInfo{ .op = 0xCD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, L
+        InstrInfo{ .op = 0xCE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 1, (HL)
+        InstrInfo{ .op = 0xCF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, A
+        InstrInfo{ .op = 0xD0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, B
+        InstrInfo{ .op = 0xD1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, C
+        InstrInfo{ .op = 0xD2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, D
+        InstrInfo{ .op = 0xD3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, E
+        InstrInfo{ .op = 0xD4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, H
+        InstrInfo{ .op = 0xD5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, L
+        InstrInfo{ .op = 0xD6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 2, (HL)
+        InstrInfo{ .op = 0xD7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, A
+        InstrInfo{ .op = 0xD8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, B
+        InstrInfo{ .op = 0xD9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, C
+        InstrInfo{ .op = 0xDA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, D
+        InstrInfo{ .op = 0xDB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, E
+        InstrInfo{ .op = 0xDC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, H
+        InstrInfo{ .op = 0xDD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, L
+        InstrInfo{ .op = 0xDE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 3, (HL)
+        InstrInfo{ .op = 0xDF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, A
+        InstrInfo{ .op = 0xE0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, B
+        InstrInfo{ .op = 0xE1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, C
+        InstrInfo{ .op = 0xE2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, D
+        InstrInfo{ .op = 0xE3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, E
+        InstrInfo{ .op = 0xE4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, H
+        InstrInfo{ .op = 0xE5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, L
+        InstrInfo{ .op = 0xE6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 4, (HL)
+        InstrInfo{ .op = 0xE7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, A
+        InstrInfo{ .op = 0xE8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, B
+        InstrInfo{ .op = 0xE9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, C
+        InstrInfo{ .op = 0xEA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, D
+        InstrInfo{ .op = 0xEB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, E
+        InstrInfo{ .op = 0xEC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, H
+        InstrInfo{ .op = 0xED, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, L
+        InstrInfo{ .op = 0xEE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 5, (HL)
+        InstrInfo{ .op = 0xEF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, A
+        InstrInfo{ .op = 0xF0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, B
+        InstrInfo{ .op = 0xF1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, C
+        InstrInfo{ .op = 0xF2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, D
+        InstrInfo{ .op = 0xF3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, E
+        InstrInfo{ .op = 0xF4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, H
+        InstrInfo{ .op = 0xF5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, L
+        InstrInfo{ .op = 0xF6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 6, (HL)
+        InstrInfo{ .op = 0xF7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, A
+        InstrInfo{ .op = 0xF8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, B
+        InstrInfo{ .op = 0xF9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, C
+        InstrInfo{ .op = 0xFA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, D
+        InstrInfo{ .op = 0xFB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, E
+        InstrInfo{ .op = 0xFC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, H
+        InstrInfo{ .op = 0xFD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, L
+        InstrInfo{ .op = 0xFE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 7, (HL)
+        InstrInfo{ .op = 0xFF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, A
     };
-
-    fn from_byte(byte: u8, prefixed: bool) !struct { ins: *const fn (*GB, InstrArgs) u8, args: InstrArgs, cycles: u8 } {
-        var ins: ?*const fn (*GB, InstrArgs) u8 = undefined;
-        var args: InstrArgs = undefined;
-        var cycles: u8 = undefined;
-        if ((byte >= 0 and byte < table.len)) {
-            if (prefixed) {
-                // print("prefixed\n", .{});
-                ins = prefix_table[byte][1];
-                args = prefix_table[byte][2];
-                cycles = prefix_table[byte][3];
-            } else {
-                ins = table[byte][1];
-                args = table[byte][2];
-                cycles = prefix_table[byte][3];
-            }
-            if (ins == null) return error.NullInstruction;
-            return .{ .ins = ins.?, .args = args, .cycles = cycles };
-        } else return error.IllegalByte;
-    }
 
     fn NOP(gb: *GB, _: InstrArgs) u8 { // TODO test
         // print("NOP\n", .{});
@@ -1094,6 +1075,12 @@ const InstructionSet = struct {
         gb.cpu.pc += 2;
         return 0;
     }
+    fn from_byte(byte: u8, prefixed: bool) InstrInfo {
+        return switch (prefixed) {
+            true => prefix_table[byte],
+            false => table[byte],
+        };
+    }
 };
 
 pub const regID = enum(u3) {
@@ -1139,9 +1126,6 @@ const CPU = struct {
 
     fn execute(self: *@This(), gb: *GB) !u8 {
         var byte = gb.read_byte(self.pc);
-        if (self.last_ins == byte) { // err on same instruction twice in a row
-            return error.Repeat;
-        }
         var prefixed = false;
         if (byte == 0xCB) { // prefix byte
             prefixed = true;
@@ -1149,13 +1133,12 @@ const CPU = struct {
             byte = gb.read_byte(self.pc);
         }
         // print("[pc]0x{X}\t(0x{X})\n", .{ self.pc, byte });
-        const ins_args = try InstructionSet.from_byte(byte, prefixed);
+        const ins_args = InstructionSet.from_byte(byte, prefixed);
         const extra_cycles = (ins_args.ins)(gb, ins_args.args);
         // print("\n", .{});
-        if (self.last_ins == 0xFB) { // set IME flag after previous instruction
-            // print("set IME\n", .{});
-        }
-        self.last_ins = byte;
+        // if (self.last_ins == 0xFB) { // set IME flag after previous instruction
+        //     // print("set IME\n", .{});
+        // }
         return ins_args.cycles + extra_cycles;
     }
 };
@@ -1576,6 +1559,7 @@ pub const GB = struct {
         @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
         try self.cpu.init();
         try self.gpu.init(self);
+        _ = InstructionSet.NOP(self, .{ .none = {} }); // dummy op to init cache
         self.running = true;
     }
 
@@ -1631,10 +1615,9 @@ pub const GB = struct {
     pub fn go(self: *@This()) !void {
         try self.clock.start();
         while (self.cpu.pc < 0x20 and self.running) {
-            if (self.clock.tick()) {
-                try self.getEvents();
-                try self.do();
-            }
+            try self.getEvents();
+            try self.do();
+            _ = self.clock.tick();
             //TODO: Update peripherals & timing
         }
     }
