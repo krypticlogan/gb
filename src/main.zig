@@ -1382,16 +1382,16 @@ const LCD = struct {
     const special_registers = enum(u8) {
         lcdc, // LCDC (LCD Control) Enables/disables layers, defines rendering mode
         stat, // $FF41 STAT (Status) Tracks PPU state
-        scy,  // $FF42 SCY (Scroll Y) Background vertical scroll
-        scx,  // $FF43 SCX (Scroll X) Background horizontal scroll
-        ly,   // current scanline
-        lyc,  // $FF45 LYC (Compare LY) Interrupt if LY matches LYC
-        dma,  // $FF46 DMA Transfers 160 bytes from RAM to OAM
-        bgp,  // $FF47 BGP (BG Palette) Defines colors for BG tiles
+        scy, // $FF42 SCY (Scroll Y) Background vertical scroll
+        scx, // $FF43 SCX (Scroll X) Background horizontal scroll
+        ly, // current scanline
+        lyc, // $FF45 LYC (Compare LY) Interrupt if LY matches LYC
+        dma, // $FF46 DMA Transfers 160 bytes from RAM to OAM
+        bgp, // $FF47 BGP (BG Palette) Defines colors for BG tiles
         obp0, // $FF48 OBP0 (OBJ Palette 0) Defines colors for sprite palette 0
         obp1, // $FF49 OBP1 (OBJ Palette 1) Defines colors for sprite palette 1
-        wy,   // $FF4A WY (Window Y) Window vertical position
-        wx,   // $FF4B WX (Window X) Window horizontal position
+        wy, // $FF4A WY (Window Y) Window vertical position
+        wx, // $FF4B WX (Window X) Window horizontal position
 
         const end = 0xFF4B;
         const start = 0xFF40;
@@ -1527,22 +1527,31 @@ const LCD = struct {
 };
 const Clock = struct {
     timer: std.time.Timer = undefined,
-    ticks: usize = 0,
-
+    ticks: usize = ticks_per_frame * 60,
+    ns_elapsed: usize = std.time.ns_per_s,
     fn start(self: *Clock) !void {
         self.timer = try std.time.Timer.start();
     }
+    var fps: usize = 0;
     fn tick(self: *Clock) bool {
         const ns_passed = self.timer.lap();
+        self.ns_elapsed += ns_passed;
         self.ticks += 1;
         // TODO tick at 239 ns per tick
+        if (self.ticks % ticks_per_frame == 0)
+            print("fps: {d}\n", .{self.fpsCounter()});
         print("ticked after: {d} ns\n", .{ns_passed});
         return true;
     }
+    fn fpsCounter(self: *Clock) usize {
+        return @intFromFloat(@as(f64, @floatFromInt(self.ticks / ticks_per_frame)) / (@as(f64, @floatFromInt(self.ns_elapsed)) / std.time.ns_per_s));
+    }
 
-    const ticks_per_s = 4.19 * std.math.pow(10, 6);
+    const ticks_per_s = 4.19 * @as(f64, std.math.pow(u64, 10, 6));
     const ticks_per_ns = ticks_per_s / std.time.ns_per_s;
-    const ns_per_tick =  1 / ticks_per_ns;
+    const ns_per_tick = 1 / ticks_per_ns;
+    const ticks_per_frame = 70224;
+    const frames_per_s = 1 / ticks_per_frame * ticks_per_s;
 };
 /// Gameboy Machine, defer endGB
 pub const GB = struct {
@@ -1567,7 +1576,6 @@ pub const GB = struct {
         @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
         try self.cpu.init();
         try self.gpu.init(self);
-        try self.clock.start();
         self.running = true;
     }
 
@@ -1621,7 +1629,8 @@ pub const GB = struct {
     }
 
     pub fn go(self: *@This()) !void {
-        while (self.cpu.pc < 0x100 and self.running) {
+        try self.clock.start();
+        while (self.cpu.pc < 0x20 and self.running) {
             if (self.clock.tick()) {
                 try self.getEvents();
                 try self.do();
@@ -1688,6 +1697,7 @@ pub const GB = struct {
 
 pub fn main() !void {
     var gb = GB{};
+    print("ns per tick {d}\n", .{Clock.ns_per_tick});
     gb.init() catch |err| {
         print("Couldn't inititalize GameBoy, Error: {any}\n", .{err});
         return;
