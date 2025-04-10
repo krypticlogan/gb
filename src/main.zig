@@ -1,4 +1,5 @@
 const std = @import("std");
+const tracy = @import("ztracy");
 const g = @cImport({
     @cDefine("SDL_DISABLE_OLD_NAMES", {});
     @cInclude("SDL3/SDL.h");
@@ -6,6 +7,7 @@ const g = @cImport({
     @cDefine("SDL_MAIN_HANDLED", {});
     @cInclude("SDL3/SDL_main.h");
 });
+
 var DEBUG = true; // Set to false to disable debug prints
 fn print(comptime fmt: []const u8, args: anytype) void {
     if (DEBUG) std.debug.print(fmt, args);
@@ -1515,15 +1517,14 @@ const Clock = struct {
     fn start(self: *Clock) !void {
         self.timer = try std.time.Timer.start();
     }
-    var fps: usize = 0;
     fn tick(self: *Clock) bool {
         const ns_passed = self.timer.lap();
         self.ns_elapsed += ns_passed;
         self.ticks += 1;
         // TODO tick at 239 ns per tick
-        if (self.ticks % ticks_per_frame == 0)
-            print("fps: {d}\n", .{self.fpsCounter()});
-        print("ticked after: {d} ns\n", .{ns_passed});
+        // if (self.ticks % ticks_per_frame == 0)
+        //     print("fps: {d}\n", .{self.fpsCounter()});
+        // print("ticked after: {d} ns\n", .{ns_passed});
         return true;
     }
     fn fpsCounter(self: *Clock) usize {
@@ -1531,6 +1532,10 @@ const Clock = struct {
     }
 
     const ticks_per_s = 4.19 * @as(f64, std.math.pow(u64, 10, 6));
+    const fps = 60;
+
+
+
     const ticks_per_ns = ticks_per_s / std.time.ns_per_s;
     const ns_per_tick = 1 / ticks_per_ns;
     const ticks_per_frame = 70224;
@@ -1560,6 +1565,7 @@ pub const GB = struct {
         try self.cpu.init();
         try self.gpu.init(self);
         _ = InstructionSet.NOP(self, .{ .none = {} }); // dummy op to init cache
+        self.cpu.pc -= 1;
         self.running = true;
     }
 
@@ -1614,17 +1620,17 @@ pub const GB = struct {
 
     pub fn go(self: *@This()) !void {
         try self.clock.start();
-        while (self.cpu.pc < 0x20 and self.running) {
-            try self.getEvents();
+        while (self.cpu.pc < 0x67 and self.running) {
+            // try self.getEvents();
             try self.do();
-            _ = self.clock.tick();
+            // _ = self.clock.tick();
             //TODO: Update peripherals & timing
         }
     }
     fn do(self: *@This()) !void {
-        const cycles = try self.cpu.execute(self);
-        self.cycles_spent += cycles;
-        self.gpu.tick(cycles);
+        const cycles_spent = try self.cpu.execute(self);
+        self.cycles_spent += cycles_spent;
+        self.gpu.tick(cycles_spent);
     }
     fn getEvents(self: *@This()) !void {
         var event: g.SDL_Event = undefined;
@@ -1691,5 +1697,8 @@ pub fn main() !void {
         return;
     };
     defer gb.endGB();
+    const tracy_zone = tracy.ZoneNC(@src(), "Compute Magic", 0x00_ff_00_00);
+    // tracy.
+    defer tracy_zone.End();
     try gb.go();
 }
