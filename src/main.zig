@@ -1,5 +1,5 @@
 const std = @import("std");
-const tracy = @import("ztracy");
+const tracy = @import("tracy");
 const g = @cImport({
     @cDefine("SDL_DISABLE_OLD_NAMES", {});
     @cInclude("SDL3/SDL.h");
@@ -1127,6 +1127,8 @@ const CPU = struct {
     }
 
     fn execute(self: *@This(), gb: *GB) !u8 {
+        const exe_zone = tracy.beginZone(@src(), .{.name = "Execute Ins"});
+        defer exe_zone.end();
         var byte = gb.read_byte(self.pc);
         var prefixed = false;
         if (byte == 0xCB) { // prefix byte
@@ -1518,6 +1520,9 @@ const Clock = struct {
         self.timer = try std.time.Timer.start();
     }
     fn tick(self: *Clock) bool {
+        const zone = tracy.beginZone(@src(),
+            .{.name = "Tick"});
+        defer zone.end();
         const ns_passed = self.timer.lap();
         self.ns_elapsed += ns_passed;
         self.ticks += 1;
@@ -1620,10 +1625,10 @@ pub const GB = struct {
 
     pub fn go(self: *@This()) !void {
         try self.clock.start();
-        while (self.cpu.pc < 0x67 and self.running) {
-            // try self.getEvents();
+        while (self.cpu.pc < 0x100 and self.running) {
+            try self.getEvents();
             try self.do();
-            // _ = self.clock.tick();
+            _ = self.clock.tick();
             //TODO: Update peripherals & timing
         }
     }
@@ -1685,6 +1690,8 @@ pub const GB = struct {
 };
 
 pub fn main() !void {
+    const zone = tracy.beginZone(@src(),.{.name = "Main"});
+    defer zone.end();
     var gb = GB{};
     print("ns per tick {d}\n", .{Clock.ns_per_tick});
     gb.init() catch |err| {
@@ -1697,8 +1704,8 @@ pub fn main() !void {
         return;
     };
     defer gb.endGB();
-    const tracy_zone = tracy.ZoneNC(@src(), "Compute Magic", 0x00_ff_00_00);
+
     // tracy.
-    defer tracy_zone.End();
+
     try gb.go();
 }

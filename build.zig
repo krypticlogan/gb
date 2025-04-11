@@ -14,33 +14,21 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize
     });
+    const tracy_enable =
+        b.option(bool, "tracy_enable", "Enable profiling") orelse
+            if (optimize == .Debug) true else false;
 
-    const options = .{
-        .enable_ztracy = b.option(
-            bool,
-            "enable_ztracy",
-            "Enable Tracy profile markers",
-        ) orelse false,
-        .enable_fibers = b.option(
-            bool,
-            "enable_fibers",
-            "Enable Tracy fiber support",
-        ) orelse false,
-        .on_demand = b.option(
-            bool,
-            "on_demand",
-            "Build tracy with TRACY_ON_DEMAND",
-        ) orelse false,
-    };
-
-    const ztracy = b.dependency("ztracy", .{
-        .enable_ztracy = options.enable_ztracy,
-        .enable_fibers = options.enable_fibers,
-        .on_demand = options.on_demand,
+    const tracy = b.dependency("tracy", .{
+        .target = target,
+        .optimize = optimize,
+        .tracy_enable = tracy_enable,
     });
-    exe.root_module.addImport("ztracy", ztracy.module("root"));
-    exe.root_module.linkLibrary(ztracy.artifact("tracy"));
 
+    exe.root_module.addImport("tracy", tracy.module("tracy"));
+    if (tracy_enable) {
+        exe.root_module.linkLibrary(tracy.artifact("tracy"));
+        exe.root_module.link_libcpp = true;
+    }
     const sdl_dep = b.dependency("sdl", .{
     .target = target,
     .optimize = optimize,

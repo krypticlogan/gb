@@ -27,7 +27,10 @@
             .url = "git+https://github.com/castholm/SDL.git#2bb5f57ea8b8c43eabe514f7bbd3361365ba2ff3",
             .hash = "1220f653f5b656888b522bf5be06fc3062278767cfa7764e5d00eb559056d65b616f",
         },
-        .ztracy = .{ .path = "libs/ztracy" },
+        .tracy = .{
+            .url = "git+https://github.com/tealsnow/zig-tracy.git#4f23bca3e4f59604a8d298796030858677df3f53",
+            .hash = "tracy-0.0.9-Dn49mw9SAACCtNBeyyb3EOipVIAhYuoDI9bLBi3LDJh6",
+        },
     },
     .paths = .{
         "build.zig",
