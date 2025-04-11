@@ -8,7 +8,7 @@ const g = @cImport({
     @cInclude("SDL3/SDL_main.h");
 });
 
-var DEBUG = true; // Set to false to disable debug prints
+const DEBUG = true; // Set to false to disable debug prints
 fn print(comptime fmt: []const u8, args: anytype) void {
     if (DEBUG) std.debug.print(fmt, args);
 }
@@ -87,531 +87,16 @@ const FlagRegister = struct {
 const InstructionSet = struct {
     const InstrFn = *const fn (*GB, InstrArgs) u8;
     const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: FlagRegister.Conditions, targets: struct { to: regID, from: regID } };
-    const InstrInfo = struct { op: u8, ins: InstrFn, args: InstrArgs, cycles: u8 };
-    const table = [_]InstrInfo{
-        InstrInfo{ .op = 0x00, .ins = NOP, .args = .{ .none = {} }, .cycles = 1 }, // NOP
-        InstrInfo{ .op = 0x01, .ins = LD16, .args = .{ .target = regID.b }, .cycles = 3 }, // LD BC, d16
-        InstrInfo{ .op = 0x02, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (BC), A
-        InstrInfo{ .op = 0x03, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // INC BC
-        InstrInfo{ .op = 0x04, .ins = INCr8, .args = .{ .target = regID.b }, .cycles = 1 }, // INC B
-        InstrInfo{ .op = 0x05, .ins = DECr8, .args = .{ .target = regID.b }, .cycles = 1 }, // DEC B
-        InstrInfo{ .op = 0x06, .ins = LD8, .args = .{ .target = regID.b }, .cycles = 2 }, // LD B, d8
-        InstrInfo{ .op = 0x07, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // RLCA
-        InstrInfo{ .op = 0x08, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // LD (a16), SP
-        InstrInfo{ .op = 0x09, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADD HL, BC
-        InstrInfo{ .op = 0x0A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (BC)
-        InstrInfo{ .op = 0x0B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // DEC BC
-        InstrInfo{ .op = 0x0C, .ins = INCr8, .args = .{ .target = regID.c }, .cycles = 1 }, // INC C
-        InstrInfo{ .op = 0x0D, .ins = DECr8, .args = .{ .target = regID.c }, .cycles = 1 }, // DEC C
-        InstrInfo{ .op = 0x0E, .ins = LD8, .args = .{ .target = regID.c }, .cycles = 2 }, // LD C, d8
-        InstrInfo{ .op = 0x0F, .ins = RRCA, .args = .{ .none = {} }, .cycles = 1 }, // RRCA
-        InstrInfo{ .op = 0x10, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // STOP 0
-        InstrInfo{ .op = 0x11, .ins = LD16, .args = .{ .target = regID.d }, .cycles = 3 }, // LD DE, d16
-        InstrInfo{ .op = 0x12, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (DE), A
-        InstrInfo{ .op = 0x13, .ins = INCr16, .args = .{ .target = regID.d }, .cycles = 2 }, // INC DE
-        InstrInfo{ .op = 0x14, .ins = INCr8, .args = .{ .target = regID.d }, .cycles = 1 }, // INC D
-        InstrInfo{ .op = 0x15, .ins = DECr8, .args = .{ .target = regID.d }, .cycles = 1 }, // DEC D
-        InstrInfo{ .op = 0x16, .ins = LD8, .args = .{ .target = regID.d }, .cycles = 2 }, // LD D, d8
-        InstrInfo{ .op = 0x17, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // RLA
-        InstrInfo{ .op = 0x18, .ins = JR, .args = .{ .flagConditions = .{ .none = true } }, .cycles = 2 }, // JR r8
-        InstrInfo{ .op = 0x19, .ins = ADDHLr16, .args = .{ .target = regID.d }, .cycles = 2 }, // ADD HL, DE
-        InstrInfo{ .op = 0x1A, .ins = LDAr16, .args = .{ .target = regID.d }, .cycles = 2 }, // LD A, (DE)
-        InstrInfo{ .op = 0x1B, .ins = DECr16, .args = .{ .target = regID.d }, .cycles = 2 }, // DEC DE
-        InstrInfo{ .op = 0x1C, .ins = INCr8, .args = .{ .target = regID.e }, .cycles = 1 }, // INC E
-        InstrInfo{ .op = 0x1D, .ins = DECr8, .args = .{ .target = regID.e }, .cycles = 1 }, // DEC E
-        InstrInfo{ .op = 0x1E, .ins = LD8, .args = .{ .target = regID.e }, .cycles = 2 }, // LD E, d8
-        InstrInfo{ .op = 0x1F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // RRA
-        InstrInfo{ .op = 0x20, .ins = JR, .args = .{ .flagConditions = .{ .z = false } }, .cycles = 3 }, // JR NZ, r8
-        InstrInfo{ .op = 0x21, .ins = LD16, .args = .{ .target = regID.h }, .cycles = 3 }, // LD HL, d16
-        InstrInfo{ .op = 0x22, .ins = LDHLIA, .args = .{ .none = {} }, .cycles = 2 }, // LD (HL+), A
-        InstrInfo{ .op = 0x23, .ins = INCr16, .args = .{ .target = regID.h }, .cycles = 2 }, // INC HL
-        InstrInfo{ .op = 0x24, .ins = INCr8, .args = .{ .target = regID.h }, .cycles = 1 }, // INC H
-        InstrInfo{ .op = 0x25, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // DEC H
-        InstrInfo{ .op = 0x26, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD H, d8
-        InstrInfo{ .op = 0x27, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // DAA
-        InstrInfo{ .op = 0x28, .ins = JR, .args = .{ .flagConditions = .{ .z = true } }, .cycles = 3 }, // JR Z, r8
-        InstrInfo{ .op = 0x29, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADD HL, HL
-        InstrInfo{ .op = 0x2A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (HL+)
-        InstrInfo{ .op = 0x2B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // DEC HL
-        InstrInfo{ .op = 0x2C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // INC L
-        InstrInfo{ .op = 0x2D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // DEC L
-        InstrInfo{ .op = 0x2E, .ins = LD8, .args = .{ .target = regID.l }, .cycles = 2 }, // LD L, d8
-        InstrInfo{ .op = 0x2F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CPL
-        InstrInfo{ .op = 0x30, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // JR NC, r8
-        InstrInfo{ .op = 0x31, .ins = LDSP16, .args = .{ .none = {} }, .cycles = 3 }, // LD SP, d16
-        InstrInfo{ .op = 0x32, .ins = LDHLDA, .args = .{ .none = {} }, .cycles = 2 }, // LD (HL-), A
-        InstrInfo{ .op = 0x33, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // INC SP
-        InstrInfo{ .op = 0x34, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // INC (HL)
-        InstrInfo{ .op = 0x35, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // DEC (HL)
-        InstrInfo{ .op = 0x36, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // LD (HL), d8
-        InstrInfo{ .op = 0x37, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SCF
-        InstrInfo{ .op = 0x38, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // JR C, r8
-        InstrInfo{ .op = 0x39, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADD HL, SP
-        InstrInfo{ .op = 0x3A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (HL-)
-        InstrInfo{ .op = 0x3B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // DEC SP
-        InstrInfo{ .op = 0x3C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // INC A
-        InstrInfo{ .op = 0x3D, .ins = DECr8, .args = .{ .target = regID.a }, .cycles = 1 }, // DEC A
-        InstrInfo{ .op = 0x3E, .ins = LD8, .args = .{ .target = regID.a }, .cycles = 1 }, // LD A, d8
-        InstrInfo{ .op = 0x3F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CCF
-        InstrInfo{ .op = 0x40, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, B
-        InstrInfo{ .op = 0x41, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, C
-        InstrInfo{ .op = 0x42, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, D
-        InstrInfo{ .op = 0x43, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, E
-        InstrInfo{ .op = 0x44, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, H
-        InstrInfo{ .op = 0x45, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, L
-        InstrInfo{ .op = 0x46, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD B, (HL)
-        InstrInfo{ .op = 0x47, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD B, A
-        InstrInfo{ .op = 0x48, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, B
-        InstrInfo{ .op = 0x49, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, C
-        InstrInfo{ .op = 0x4A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, D
-        InstrInfo{ .op = 0x4B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, E
-        InstrInfo{ .op = 0x4C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, H
-        InstrInfo{ .op = 0x4D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD C, L
-        InstrInfo{ .op = 0x4E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD C, (HL)
-        InstrInfo{ .op = 0x4F, .ins = LDr8, .args = .{ .targets = .{ .to = regID.c, .from = regID.a } }, .cycles = 1 }, // LD C, A
-        InstrInfo{ .op = 0x50, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, B
-        InstrInfo{ .op = 0x51, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, C
-        InstrInfo{ .op = 0x52, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, D
-        InstrInfo{ .op = 0x53, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, E
-        InstrInfo{ .op = 0x54, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, H
-        InstrInfo{ .op = 0x55, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD D, L
-        InstrInfo{ .op = 0x56, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD D, (HL)
-        InstrInfo{ .op = 0x57, .ins = LDr8, .args = .{ .targets = .{ .to = regID.d, .from = regID.a } }, .cycles = 1 }, // LD D, A
-        InstrInfo{ .op = 0x58, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, B
-        InstrInfo{ .op = 0x59, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, C
-        InstrInfo{ .op = 0x5A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, D
-        InstrInfo{ .op = 0x5B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, E
-        InstrInfo{ .op = 0x5C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, H
-        InstrInfo{ .op = 0x5D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, L
-        InstrInfo{ .op = 0x5E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD E, (HL)
-        InstrInfo{ .op = 0x5F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD E, A
-        InstrInfo{ .op = 0x60, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, B
-        InstrInfo{ .op = 0x61, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, C
-        InstrInfo{ .op = 0x62, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, D
-        InstrInfo{ .op = 0x63, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, E
-        InstrInfo{ .op = 0x64, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, H
-        InstrInfo{ .op = 0x65, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD H, L
-        InstrInfo{ .op = 0x66, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD H, (HL)
-        InstrInfo{ .op = 0x67, .ins = LDr8, .args = .{ .targets = .{ .to = regID.h, .from = regID.a } }, .cycles = 1 }, // LD H, A
-        InstrInfo{ .op = 0x68, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, B
-        InstrInfo{ .op = 0x69, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, C
-        InstrInfo{ .op = 0x6A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, D
-        InstrInfo{ .op = 0x6B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, E
-        InstrInfo{ .op = 0x6C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, H
-        InstrInfo{ .op = 0x6D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, L
-        InstrInfo{ .op = 0x6E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD L, (HL)
-        InstrInfo{ .op = 0x6F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // LD L, A
-        InstrInfo{ .op = 0x70, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), B
-        InstrInfo{ .op = 0x71, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), C
-        InstrInfo{ .op = 0x72, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), D
-        InstrInfo{ .op = 0x73, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), E
-        InstrInfo{ .op = 0x74, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), H
-        InstrInfo{ .op = 0x75, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD (HL), L
-        InstrInfo{ .op = 0x76, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // HALT
-        InstrInfo{ .op = 0x77, .ins = LDHLR, .args = .{ .target = regID.a }, .cycles = 2 }, // LD (HL), A
-        InstrInfo{ .op = 0x78, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.b } }, .cycles = 1 }, // LD A, B
-        InstrInfo{ .op = 0x79, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.c } }, .cycles = 1 }, // LD A, C
-        InstrInfo{ .op = 0x7A, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.d } }, .cycles = 1 }, // LD A, D
-        InstrInfo{ .op = 0x7B, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.e } }, .cycles = 1 }, // LD A, E
-        InstrInfo{ .op = 0x7C, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.h } }, .cycles = 1 }, // LD A, H
-        InstrInfo{ .op = 0x7D, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.l } }, .cycles = 1 }, // LD A, L
-        InstrInfo{ .op = 0x7E, .ins = LDAHL, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (HL)
-        InstrInfo{ .op = 0x7F, .ins = LDr8, .args = .{ .targets = .{ .to = regID.a, .from = regID.a } }, .cycles = 1 }, // LD A, A
-        InstrInfo{ .op = 0x80, .ins = ADDAr8, .args = .{ .target = regID.b }, .cycles = 1 }, // ADD A, B
-        InstrInfo{ .op = 0x81, .ins = ADDAr8, .args = .{ .target = regID.c }, .cycles = 1 }, // ADD A, C
-        InstrInfo{ .op = 0x82, .ins = ADDAr8, .args = .{ .target = regID.d }, .cycles = 1 }, // ADD A, D
-        InstrInfo{ .op = 0x83, .ins = ADDAr8, .args = .{ .target = regID.e }, .cycles = 1 }, // ADD A, E
-        InstrInfo{ .op = 0x84, .ins = ADDAr8, .args = .{ .target = regID.h }, .cycles = 1 }, // ADD A, H
-        InstrInfo{ .op = 0x85, .ins = ADDAr8, .args = .{ .target = regID.l }, .cycles = 1 }, // ADD A, L
-        InstrInfo{ .op = 0x86, .ins = ADDAHL, .args = .{ .none = {} }, .cycles = 2 }, // ADD A, (HL)
-        InstrInfo{ .op = 0x87, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADD A, A
-        InstrInfo{ .op = 0x88, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, B
-        InstrInfo{ .op = 0x89, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, C
-        InstrInfo{ .op = 0x8A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, D
-        InstrInfo{ .op = 0x8B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, E
-        InstrInfo{ .op = 0x8C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, H
-        InstrInfo{ .op = 0x8D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, L
-        InstrInfo{ .op = 0x8E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADC A, (HL)
-        InstrInfo{ .op = 0x8F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // ADC A, A
-        InstrInfo{ .op = 0x90, .ins = SUBAr8, .args = .{ .target = regID.b }, .cycles = 1 }, // SUB B
-        InstrInfo{ .op = 0x91, .ins = SUBAr8, .args = .{ .target = regID.c }, .cycles = 1 }, // SUB C
-        InstrInfo{ .op = 0x92, .ins = SUBAr8, .args = .{ .target = regID.d }, .cycles = 1 }, // SUB D
-        InstrInfo{ .op = 0x93, .ins = SUBAr8, .args = .{ .target = regID.e }, .cycles = 1 }, // SUB E
-        InstrInfo{ .op = 0x94, .ins = SUBAr8, .args = .{ .target = regID.h }, .cycles = 1 }, // SUB H
-        InstrInfo{ .op = 0x95, .ins = SUBAr8, .args = .{ .target = regID.l }, .cycles = 1 }, // SUB L
-        InstrInfo{ .op = 0x96, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SUB (HL)
-        InstrInfo{ .op = 0x97, .ins = SUBAr8, .args = .{ .target = regID.a }, .cycles = 1 }, // SUB A
-        InstrInfo{ .op = 0x98, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, B
-        InstrInfo{ .op = 0x99, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, C
-        InstrInfo{ .op = 0x9A, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, D
-        InstrInfo{ .op = 0x9B, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, E
-        InstrInfo{ .op = 0x9C, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, H
-        InstrInfo{ .op = 0x9D, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, L
-        InstrInfo{ .op = 0x9E, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SBC A, (HL)
-        InstrInfo{ .op = 0x9F, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // SBC A, A
-        InstrInfo{ .op = 0xA0, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND B
-        InstrInfo{ .op = 0xA1, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND C
-        InstrInfo{ .op = 0xA2, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND D
-        InstrInfo{ .op = 0xA3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND E
-        InstrInfo{ .op = 0xA4, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND H
-        InstrInfo{ .op = 0xA5, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND L
-        InstrInfo{ .op = 0xA6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // AND (HL)
-        InstrInfo{ .op = 0xA7, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // AND A
-        InstrInfo{ .op = 0xA8, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR B
-        InstrInfo{ .op = 0xA9, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR C
-        InstrInfo{ .op = 0xAA, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR D
-        InstrInfo{ .op = 0xAB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR E
-        InstrInfo{ .op = 0xAC, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR H
-        InstrInfo{ .op = 0xAD, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // XOR L
-        InstrInfo{ .op = 0xAE, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // XOR (HL)
-        InstrInfo{ .op = 0xAF, .ins = XORA, .args = .{ .target = regID.a }, .cycles = 1 }, // XOR A
-        InstrInfo{ .op = 0xB0, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR B
-        InstrInfo{ .op = 0xB1, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR C
-        InstrInfo{ .op = 0xB2, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR D
-        InstrInfo{ .op = 0xB3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR E
-        InstrInfo{ .op = 0xB4, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR H
-        InstrInfo{ .op = 0xB5, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR L
-        InstrInfo{ .op = 0xB6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // OR (HL)
-        InstrInfo{ .op = 0xB7, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // OR A
-        InstrInfo{ .op = 0xB8, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP B
-        InstrInfo{ .op = 0xB9, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP C
-        InstrInfo{ .op = 0xBA, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP D
-        InstrInfo{ .op = 0xBB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP E
-        InstrInfo{ .op = 0xBC, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP H
-        InstrInfo{ .op = 0xBD, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP L
-        InstrInfo{ .op = 0xBE, .ins = CPAHL, .args = .{ .none = {} }, .cycles = 2 }, // CP (HL)
-        InstrInfo{ .op = 0xBF, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // CP A
-        InstrInfo{ .op = 0xC0, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // RET NZ
-        InstrInfo{ .op = 0xC1, .ins = POP, .args = .{ .target = regID.b }, .cycles = 3 }, // POP BC
-        InstrInfo{ .op = 0xC2, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP NZ, a16
-        InstrInfo{ .op = 0xC3, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP a16
-        InstrInfo{ .op = 0xC4, .ins = undefined, .args = .{ .none = {} }, .cycles = 24 }, // CALL NZ, a16
-        InstrInfo{ .op = 0xC5, .ins = PUSH, .args = .{ .target = regID.b }, .cycles = 1 }, // PUSH BC
-        InstrInfo{ .op = 0xC6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADD A, d8
-        InstrInfo{ .op = 0xC7, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 00H
-        InstrInfo{ .op = 0xC8, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // RET Z
-        InstrInfo{ .op = 0xC9, .ins = RET, .args = .{ .flagConditions = .{ .none = true } }, .cycles = 2 }, // RET
-        InstrInfo{ .op = 0xCA, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP Z, a16
-        InstrInfo{ .op = 0xCB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // PREFIX CB
-        InstrInfo{ .op = 0xCC, .ins = undefined, .args = .{ .none = {} }, .cycles = 24 }, // CALL Z, a16
-        InstrInfo{ .op = 0xCD, .ins = CALLn16, .args = .{ .flagConditions = .{ .none = true } }, .cycles = 3 }, // CALL a16
-        InstrInfo{ .op = 0xCE, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // ADC A, d8
-        InstrInfo{ .op = 0xCF, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 08H
-        InstrInfo{ .op = 0xD0, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // RET NC
-        InstrInfo{ .op = 0xD1, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // POP DE
-        InstrInfo{ .op = 0xD2, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP NC, a16
-        InstrInfo{ .op = 0xD3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xD4, .ins = undefined, .args = .{ .none = {} }, .cycles = 24 }, // CALL NC, a16
-        InstrInfo{ .op = 0xD5, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // PUSH DE
-        InstrInfo{ .op = 0xD6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SUB d8
-        InstrInfo{ .op = 0xD7, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 10H
-        InstrInfo{ .op = 0xD8, .ins = undefined, .args = .{ .none = {} }, .cycles = 20 }, // RET C
-        InstrInfo{ .op = 0xD9, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RETI
-        InstrInfo{ .op = 0xDA, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // JP C, a16
-        InstrInfo{ .op = 0xDB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xDC, .ins = undefined, .args = .{ .none = {} }, .cycles = 24 }, // CALL C, a16
-        InstrInfo{ .op = 0xDD, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xDE, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SBC A, d8
-        InstrInfo{ .op = 0xDF, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 18H
-        InstrInfo{ .op = 0xE0, .ins = LDHn16A, .args = .{ .none = {} }, .cycles = 3 }, // LDH (a8), A
-        InstrInfo{ .op = 0xE1, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // POP HL
-        InstrInfo{ .op = 0xE2, .ins = LDHCA, .args = .{ .none = {} }, .cycles = 2 }, // LD (C), A
-        InstrInfo{ .op = 0xE3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xE4, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xE5, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // PUSH HL
-        InstrInfo{ .op = 0xE6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // AND d8
-        InstrInfo{ .op = 0xE7, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 20H
-        InstrInfo{ .op = 0xE8, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // ADD SP, r8
-        InstrInfo{ .op = 0xE9, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // JP (HL)
-        InstrInfo{ .op = 0xEA, .ins = LDn16A, .args = .{ .none = {} }, .cycles = 4 }, // LD (a16), A
-        InstrInfo{ .op = 0xEB, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xEC, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xED, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xEE, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // XOR d8
-        InstrInfo{ .op = 0xEF, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 28H
-        InstrInfo{ .op = 0xF0, .ins = LDHAn16, .args = .{ .none = {} }, .cycles = 3 }, // LDH A, (a8)
-        InstrInfo{ .op = 0xF1, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // POP AF
-        InstrInfo{ .op = 0xF2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD A, (C)
-        InstrInfo{ .op = 0xF3, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // DI
-        InstrInfo{ .op = 0xF4, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xF5, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // PUSH AF
-        InstrInfo{ .op = 0xF6, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // OR d8
-        InstrInfo{ .op = 0xF7, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 30H
-        InstrInfo{ .op = 0xF8, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // LD HL, SP+r8
-        InstrInfo{ .op = 0xF9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // LD SP, HL
-        InstrInfo{ .op = 0xFA, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // LD A, (a16)
-        InstrInfo{ .op = 0xFB, .ins = EI, .args = .{ .none = {} }, .cycles = 1 }, // EI
-        InstrInfo{ .op = 0xFC, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xFD, .ins = undefined, .args = .{ .none = {} }, .cycles = 4 }, // NOP
-        InstrInfo{ .op = 0xFE, .ins = CPAn8, .args = .{ .none = {} }, .cycles = 2 }, // CP d8
-        InstrInfo{ .op = 0xFF, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RST 38H
-    };
-
-    const prefix_table = [_]InstrInfo{
-        InstrInfo{ .op = 0x00, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC B
-        InstrInfo{ .op = 0x01, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC C
-        InstrInfo{ .op = 0x02, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC D
-        InstrInfo{ .op = 0x03, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC E
-        InstrInfo{ .op = 0x04, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC H
-        InstrInfo{ .op = 0x05, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC L
-        InstrInfo{ .op = 0x06, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RLC (HL)
-        InstrInfo{ .op = 0x07, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RLC A
-        InstrInfo{ .op = 0x08, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC B
-        InstrInfo{ .op = 0x09, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC C
-        InstrInfo{ .op = 0x0A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC D
-        InstrInfo{ .op = 0x0B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC E
-        InstrInfo{ .op = 0x0C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC H
-        InstrInfo{ .op = 0x0D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC L
-        InstrInfo{ .op = 0x0E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RRC (HL)
-        InstrInfo{ .op = 0x0F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RRC A
-        InstrInfo{ .op = 0x10, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL B
-        InstrInfo{ .op = 0x11, .ins = RL, .args = .{ .target = regID.c }, .cycles = 8 }, // RL C
-        InstrInfo{ .op = 0x12, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL D
-        InstrInfo{ .op = 0x13, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL E
-        InstrInfo{ .op = 0x14, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL H
-        InstrInfo{ .op = 0x15, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL L
-        InstrInfo{ .op = 0x16, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RL (HL)
-        InstrInfo{ .op = 0x17, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RL A
-        InstrInfo{ .op = 0x18, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR B
-        InstrInfo{ .op = 0x19, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR C
-        InstrInfo{ .op = 0x1A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR D
-        InstrInfo{ .op = 0x1B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR E
-        InstrInfo{ .op = 0x1C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR H
-        InstrInfo{ .op = 0x1D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR L
-        InstrInfo{ .op = 0x1E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RR (HL)
-        InstrInfo{ .op = 0x1F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RR A
-        InstrInfo{ .op = 0x20, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA B
-        InstrInfo{ .op = 0x21, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA C
-        InstrInfo{ .op = 0x22, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA D
-        InstrInfo{ .op = 0x23, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA E
-        InstrInfo{ .op = 0x24, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA H
-        InstrInfo{ .op = 0x25, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA L
-        InstrInfo{ .op = 0x26, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SLA (HL)
-        InstrInfo{ .op = 0x27, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SLA A
-        InstrInfo{ .op = 0x28, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA B
-        InstrInfo{ .op = 0x29, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA C
-        InstrInfo{ .op = 0x2A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA D
-        InstrInfo{ .op = 0x2B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA E
-        InstrInfo{ .op = 0x2C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA H
-        InstrInfo{ .op = 0x2D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA L
-        InstrInfo{ .op = 0x2E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SRA (HL)
-        InstrInfo{ .op = 0x2F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRA A
-        InstrInfo{ .op = 0x30, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP B
-        InstrInfo{ .op = 0x31, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP C
-        InstrInfo{ .op = 0x32, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP D
-        InstrInfo{ .op = 0x33, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP E
-        InstrInfo{ .op = 0x34, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP H
-        InstrInfo{ .op = 0x35, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP L
-        InstrInfo{ .op = 0x36, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SWAP (HL)
-        InstrInfo{ .op = 0x37, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SWAP A
-        InstrInfo{ .op = 0x38, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL B
-        InstrInfo{ .op = 0x39, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL C
-        InstrInfo{ .op = 0x3A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL D
-        InstrInfo{ .op = 0x3B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL E
-        InstrInfo{ .op = 0x3C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL H
-        InstrInfo{ .op = 0x3D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL L
-        InstrInfo{ .op = 0x3E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SRL (HL)
-        InstrInfo{ .op = 0x3F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SRL A
-        InstrInfo{ .op = 0x40, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, B
-        InstrInfo{ .op = 0x41, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, C
-        InstrInfo{ .op = 0x42, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, D
-        InstrInfo{ .op = 0x43, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, E
-        InstrInfo{ .op = 0x44, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, H
-        InstrInfo{ .op = 0x45, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, L
-        InstrInfo{ .op = 0x46, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 0, (HL)
-        InstrInfo{ .op = 0x47, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 0, A
-        InstrInfo{ .op = 0x48, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, B
-        InstrInfo{ .op = 0x49, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, C
-        InstrInfo{ .op = 0x4A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, D
-        InstrInfo{ .op = 0x4B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, E
-        InstrInfo{ .op = 0x4C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, H
-        InstrInfo{ .op = 0x4D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, L
-        InstrInfo{ .op = 0x4E, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 1, (HL)
-        InstrInfo{ .op = 0x4F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 1, A
-        InstrInfo{ .op = 0x50, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, B
-        InstrInfo{ .op = 0x51, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, C
-        InstrInfo{ .op = 0x52, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, D
-        InstrInfo{ .op = 0x53, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, E
-        InstrInfo{ .op = 0x54, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, H
-        InstrInfo{ .op = 0x55, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, L
-        InstrInfo{ .op = 0x56, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 2, (HL)
-        InstrInfo{ .op = 0x57, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 2, A
-        InstrInfo{ .op = 0x58, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, B
-        InstrInfo{ .op = 0x59, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, C
-        InstrInfo{ .op = 0x5A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, D
-        InstrInfo{ .op = 0x5B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, E
-        InstrInfo{ .op = 0x5C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, H
-        InstrInfo{ .op = 0x5D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, L
-        InstrInfo{ .op = 0x5E, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 3, (HL)
-        InstrInfo{ .op = 0x5F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 3, A
-        InstrInfo{ .op = 0x60, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, B
-        InstrInfo{ .op = 0x61, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, C
-        InstrInfo{ .op = 0x62, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, D
-        InstrInfo{ .op = 0x63, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, E
-        InstrInfo{ .op = 0x64, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, H
-        InstrInfo{ .op = 0x65, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, L
-        InstrInfo{ .op = 0x66, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 4, (HL)
-        InstrInfo{ .op = 0x67, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 4, A
-        InstrInfo{ .op = 0x68, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, B
-        InstrInfo{ .op = 0x69, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, C
-        InstrInfo{ .op = 0x6A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, D
-        InstrInfo{ .op = 0x6B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, E
-        InstrInfo{ .op = 0x6C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, H
-        InstrInfo{ .op = 0x6D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, L
-        InstrInfo{ .op = 0x6E, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 5, (HL)
-        InstrInfo{ .op = 0x6F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 5, A
-        InstrInfo{ .op = 0x70, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, B
-        InstrInfo{ .op = 0x71, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, C
-        InstrInfo{ .op = 0x72, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, D
-        InstrInfo{ .op = 0x73, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, E
-        InstrInfo{ .op = 0x74, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, H
-        InstrInfo{ .op = 0x75, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, L
-        InstrInfo{ .op = 0x76, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 6, (HL)
-        InstrInfo{ .op = 0x77, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 6, A
-        InstrInfo{ .op = 0x78, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, B
-        InstrInfo{ .op = 0x79, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, C
-        InstrInfo{ .op = 0x7A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, D
-        InstrInfo{ .op = 0x7B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, E
-        InstrInfo{ .op = 0x7C, .ins = BITTEST, .args = .{ .bit_target = .{ .bit = 7, .target = regID.h } }, .cycles = 3 }, // BIT 7, H
-        InstrInfo{ .op = 0x7D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, L
-        InstrInfo{ .op = 0x7E, .ins = undefined, .args = .{ .none = {} }, .cycles = 12 }, // BIT 7, (HL)
-        InstrInfo{ .op = 0x7F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // BIT 7, A
-        InstrInfo{ .op = 0x80, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, B
-        InstrInfo{ .op = 0x81, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, C
-        InstrInfo{ .op = 0x82, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, D
-        InstrInfo{ .op = 0x83, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, E
-        InstrInfo{ .op = 0x84, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, H
-        InstrInfo{ .op = 0x85, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, L
-        InstrInfo{ .op = 0x86, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 0, (HL)
-        InstrInfo{ .op = 0x87, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 0, A
-        InstrInfo{ .op = 0x88, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, B
-        InstrInfo{ .op = 0x89, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, C
-        InstrInfo{ .op = 0x8A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, D
-        InstrInfo{ .op = 0x8B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, E
-        InstrInfo{ .op = 0x8C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, H
-        InstrInfo{ .op = 0x8D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, L
-        InstrInfo{ .op = 0x8E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 1, (HL)
-        InstrInfo{ .op = 0x8F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 1, A
-        InstrInfo{ .op = 0x90, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, B
-        InstrInfo{ .op = 0x91, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, C
-        InstrInfo{ .op = 0x92, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, D
-        InstrInfo{ .op = 0x93, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, E
-        InstrInfo{ .op = 0x94, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, H
-        InstrInfo{ .op = 0x95, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, L
-        InstrInfo{ .op = 0x96, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 2, (HL)
-        InstrInfo{ .op = 0x97, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 2, A
-        InstrInfo{ .op = 0x98, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, B
-        InstrInfo{ .op = 0x99, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, C
-        InstrInfo{ .op = 0x9A, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, D
-        InstrInfo{ .op = 0x9B, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, E
-        InstrInfo{ .op = 0x9C, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, H
-        InstrInfo{ .op = 0x9D, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, L
-        InstrInfo{ .op = 0x9E, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 3, (HL)
-        InstrInfo{ .op = 0x9F, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 3, A
-        InstrInfo{ .op = 0xA0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, B
-        InstrInfo{ .op = 0xA1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, C
-        InstrInfo{ .op = 0xA2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, D
-        InstrInfo{ .op = 0xA3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, E
-        InstrInfo{ .op = 0xA4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, H
-        InstrInfo{ .op = 0xA5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, L
-        InstrInfo{ .op = 0xA6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 4, (HL)
-        InstrInfo{ .op = 0xA7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 4, A
-        InstrInfo{ .op = 0xA8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, B
-        InstrInfo{ .op = 0xA9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, C
-        InstrInfo{ .op = 0xAA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, D
-        InstrInfo{ .op = 0xAB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, E
-        InstrInfo{ .op = 0xAC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, H
-        InstrInfo{ .op = 0xAD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, L
-        InstrInfo{ .op = 0xAE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 5, (HL)
-        InstrInfo{ .op = 0xAF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 5, A
-        InstrInfo{ .op = 0xB0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, B
-        InstrInfo{ .op = 0xB1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, C
-        InstrInfo{ .op = 0xB2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, D
-        InstrInfo{ .op = 0xB3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, E
-        InstrInfo{ .op = 0xB4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, H
-        InstrInfo{ .op = 0xB5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, L
-        InstrInfo{ .op = 0xB6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 6, (HL)
-        InstrInfo{ .op = 0xB7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 6, A
-        InstrInfo{ .op = 0xB8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, B
-        InstrInfo{ .op = 0xB9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, C
-        InstrInfo{ .op = 0xBA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, D
-        InstrInfo{ .op = 0xBB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, E
-        InstrInfo{ .op = 0xBC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, H
-        InstrInfo{ .op = 0xBD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, L
-        InstrInfo{ .op = 0xBE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // RES 7, (HL)
-        InstrInfo{ .op = 0xBF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // RES 7, A
-        InstrInfo{ .op = 0xC0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, B
-        InstrInfo{ .op = 0xC1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, C
-        InstrInfo{ .op = 0xC2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, D
-        InstrInfo{ .op = 0xC3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, E
-        InstrInfo{ .op = 0xC4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, H
-        InstrInfo{ .op = 0xC5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, L
-        InstrInfo{ .op = 0xC6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 0, (HL)
-        InstrInfo{ .op = 0xC7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 0, A
-        InstrInfo{ .op = 0xC8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, B
-        InstrInfo{ .op = 0xC9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, C
-        InstrInfo{ .op = 0xCA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, D
-        InstrInfo{ .op = 0xCB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, E
-        InstrInfo{ .op = 0xCC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, H
-        InstrInfo{ .op = 0xCD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, L
-        InstrInfo{ .op = 0xCE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 1, (HL)
-        InstrInfo{ .op = 0xCF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 1, A
-        InstrInfo{ .op = 0xD0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, B
-        InstrInfo{ .op = 0xD1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, C
-        InstrInfo{ .op = 0xD2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, D
-        InstrInfo{ .op = 0xD3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, E
-        InstrInfo{ .op = 0xD4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, H
-        InstrInfo{ .op = 0xD5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, L
-        InstrInfo{ .op = 0xD6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 2, (HL)
-        InstrInfo{ .op = 0xD7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 2, A
-        InstrInfo{ .op = 0xD8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, B
-        InstrInfo{ .op = 0xD9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, C
-        InstrInfo{ .op = 0xDA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, D
-        InstrInfo{ .op = 0xDB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, E
-        InstrInfo{ .op = 0xDC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, H
-        InstrInfo{ .op = 0xDD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, L
-        InstrInfo{ .op = 0xDE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 3, (HL)
-        InstrInfo{ .op = 0xDF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 3, A
-        InstrInfo{ .op = 0xE0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, B
-        InstrInfo{ .op = 0xE1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, C
-        InstrInfo{ .op = 0xE2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, D
-        InstrInfo{ .op = 0xE3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, E
-        InstrInfo{ .op = 0xE4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, H
-        InstrInfo{ .op = 0xE5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, L
-        InstrInfo{ .op = 0xE6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 4, (HL)
-        InstrInfo{ .op = 0xE7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 4, A
-        InstrInfo{ .op = 0xE8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, B
-        InstrInfo{ .op = 0xE9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, C
-        InstrInfo{ .op = 0xEA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, D
-        InstrInfo{ .op = 0xEB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, E
-        InstrInfo{ .op = 0xEC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, H
-        InstrInfo{ .op = 0xED, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, L
-        InstrInfo{ .op = 0xEE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 5, (HL)
-        InstrInfo{ .op = 0xEF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 5, A
-        InstrInfo{ .op = 0xF0, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, B
-        InstrInfo{ .op = 0xF1, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, C
-        InstrInfo{ .op = 0xF2, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, D
-        InstrInfo{ .op = 0xF3, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, E
-        InstrInfo{ .op = 0xF4, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, H
-        InstrInfo{ .op = 0xF5, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, L
-        InstrInfo{ .op = 0xF6, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 6, (HL)
-        InstrInfo{ .op = 0xF7, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 6, A
-        InstrInfo{ .op = 0xF8, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, B
-        InstrInfo{ .op = 0xF9, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, C
-        InstrInfo{ .op = 0xFA, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, D
-        InstrInfo{ .op = 0xFB, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, E
-        InstrInfo{ .op = 0xFC, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, H
-        InstrInfo{ .op = 0xFD, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, L
-        InstrInfo{ .op = 0xFE, .ins = undefined, .args = .{ .none = {} }, .cycles = 16 }, // SET 7, (HL)
-        InstrInfo{ .op = 0xFF, .ins = undefined, .args = .{ .none = {} }, .cycles = 8 }, // SET 7, A
-    };
-
     fn NOP(gb: *GB, _: InstrArgs) u8 { // TODO test
+        const zone = tracy.beginZone(@src(), .{ .name = "NOP" });
+        defer zone.end();
         // print("NOP\n", .{});
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn INCr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "INCr8" });
+        defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("INCr8, target: {any}\n", .{args.target});
         gb.cpu.set_byte(args.target, @addWithOverflow(value, 1)[0]);
@@ -620,17 +105,21 @@ const InstructionSet = struct {
         gb.cpu.f.s = false;
         gb.cpu.f.write();
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn INCr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "INCr16" });
+        defer zone.end();
         const value = gb.cpu.get_word(args.target);
         const res = @addWithOverflow(value, 1)[0];
         // print("INCr16, target: {any}\n 0x{X} + 1 = 0x{X}", .{ args.target, value, res });
         gb.cpu.set_word(args.target, res);
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn DECr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST -- overflow? r16 too
+        const zone = tracy.beginZone(@src(), .{ .name = "DECr8" });
+        defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("DECr8, target: {any} ({d} -= 1)\n", .{ args.target, gb.cpu.get_byte(args.target) });
         const res = @subWithOverflow(value, 1)[0];
@@ -640,49 +129,61 @@ const InstructionSet = struct {
         gb.cpu.f.h = (value & 0xF) & 0x10 == 0x10; // half carry conditions
         gb.cpu.f.write();
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn DECr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "DECr16" });
+        defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("DECr16, target: {any}\n", .{args.target});
         gb.cpu.set_word(args.target, @subWithOverflow(value, 1)[0]);
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn LD8(gb: *GB, args: InstrArgs) u8 { // LD r8, n8 TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "LD8" });
+        defer zone.end();
         const n: u8 = gb.read_byte(gb.cpu.pc + 1);
         // print("LD8, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
         // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_byte(args.target, n);
         gb.cpu.pc += 2;
-        return 0;
+        return 2;
     }
     fn LD16(gb: *GB, args: InstrArgs) u8 { // LD r16, n16 TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "LD16" });
+        defer zone.end();
         const n: u16 = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         // print("LD16, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
         // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
         // print("n b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_word(args.target, n);
         gb.cpu.pc += 3;
-        return 0;
+        return 3;
     }
     fn LDr8(gb: *GB, args: InstrArgs) u8 { // LD r8, r8 TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "LDr8" });
+        defer zone.end();
         // print("LDr8, targets: from {any} --> to {any}\n", .{ args.targets.from, args.targets.to });
         // print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(args.targets.to), gb.cpu.get_byte(args.targets.from) });
         gb.cpu.set_byte(args.targets.to, gb.cpu.get_byte(args.targets.from));
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn LDAHL(gb: *GB, _: InstrArgs) u8 { // LD r8, r8 TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "LDAHL" });
+        defer zone.end();
         const mem_place = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         // print("LDHL, mem@hl:0x{X} --> to A\n", .{mem_place});
         // print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(regID.a), gb.read_byte(mem_place) });
         gb.writeByte(mem_place, value);
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn LDSP16(gb: *GB, _: InstrArgs) u8 { // LD r16, n16, 0x31
+        const zone = tracy.beginZone(@src(), .{ .name = "LDSP16" });
+        defer zone.end();
         // print("LD16SP\n", .{});
         const n: u16 = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
@@ -690,27 +191,33 @@ const InstructionSet = struct {
         gb.cpu.sp = n;
         // print("after op: sp: {d}\n", .{gb.cpu.sp});
         gb.cpu.pc += 3;
-        return 0;
+        return 3;
     }
     fn LDHL8(gb: *GB, _: InstrArgs) u8 { // LD[HL], n8
+        const zone = tracy.beginZone(@src(), .{ .name = "LDHL8" });
+        defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.read_byte(gb.cpu.pc + 1);
         // print("LDHLDA\thl:0x{X}\tvalue:0x{x}\nmem@hl: 0x{x}\n", .{ hl, value, gb.read_byte(hl) });
         gb.writeByte(hl, value);
         // print("after op: mem@hl: 0x{X}\thl:{d}\n", .{ hl, gb.read_byte(hl), hl });
         gb.cpu.pc += 2;
-        return 0;
+        return 3;
     }
     fn LDHLR(gb: *GB, args: InstrArgs) u8 { // LD[HL],r8
+        const zone = tracy.beginZone(@src(), .{ .name = "LDHLR" });
+        defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(args.target);
         // print("LDHLR, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
         gb.writeByte(hl, value);
         // print("after op: mem@0x{X}: 0x{X}\n", .{ hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn LDHLIA(gb: *GB, _: InstrArgs) u8 { // LD [HLI],A
+        const zone = tracy.beginZone(@src(), .{ .name = "LDHLIA" });
+        defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         // print("LDHLIA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
@@ -718,9 +225,11 @@ const InstructionSet = struct {
         gb.cpu.set_word(regID.h, hl + 1);
         // print("after op: hl+1= 0x{X}\t mem@0x{X}: 0x{X}\n", .{ gb.cpu.get_word(regID.h), hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn LDHLDA(gb: *GB, _: InstrArgs) u8 { // LD [HLD],A
+        const zone = tracy.beginZone(@src(), .{ .name = "LDHLDA" });
+        defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         // print("LDHLDA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
@@ -728,27 +237,33 @@ const InstructionSet = struct {
         gb.cpu.set_word(regID.h, hl - 1);
         // print("after op: mem@0x{X}: 0x{X}\n", .{ hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn LDHCA(gb: *GB, _: InstrArgs) u8 {
+        const zone = tracy.beginZone(@src(), .{ .name = "LDHCA" });
+        defer zone.end();
         const c = gb.cpu.get_byte(regID.c);
         const a = gb.cpu.get_byte(regID.a);
         const mem_place = 0xFF00 + @as(u16, c);
         // print("LDHCA, memplace@0x{X} --> 0x{X}\n", .{ mem_place, a });
         gb.writeByte(mem_place, a);
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn LDHAC(gb: *GB, _: InstrArgs) u8 { // Load value in register A from the byte at address $FF00+c
-        const a = gb.cpu.get_byte(regID.a);
+        const zone = tracy.beginZone(@src(), .{ .name = "LDHAC" });
+        defer zone.end();
+        // const a = gb.cpu.get_byte(regID.a);
         const c = gb.cpu.get_byte(regID.c);
         const byte = gb.read_byte(0xFF00 + @as(u16, c));
         // print("LDHAC byte: 0x{X} --> A\n", .{byte});
-        gb.cpu.set_byte(a, byte);
+        gb.cpu.set_byte(regID.a, byte);
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn LDAn16(gb: *GB, _: InstrArgs) u8 { // TODO TEST Load value in register A from the byte at address n16.
+        const zone = tracy.beginZone(@src(), .{ .name = "LDAn16" });
+        defer zone.end();
         const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         const n = gb.read_byte(memory_place);
         // print("LDAn16, n: Ox{X} --> A\n", .{n});
@@ -756,9 +271,11 @@ const InstructionSet = struct {
         // print("memplace b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 3;
-        return 0;
+        return 4;
     }
     fn LDHAn16(gb: *GB, _: InstrArgs) u8 { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
+        const zone = tracy.beginZone(@src(), .{ .name = "LDHAn16" });
+        defer zone.end();
         const memory_place = 0xFF00 + @as(u16, gb.read_byte(gb.cpu.pc + 1));
         // print("LDHAn16, \n", .{});
         // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
@@ -769,9 +286,11 @@ const InstructionSet = struct {
             gb.cpu.set_byte(regID.a, n);
         }
         gb.cpu.pc += 2;
-        return 0;
+        return 3;
     }
     fn LDn16A(gb: *GB, _: InstrArgs) u8 { // TODO TEST Store value in register A into the byte at address n16.
+        const zone = tracy.beginZone(@src(), .{ .name = "LDn16A" });
+        defer zone.end();
         const memory_place = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
@@ -779,9 +298,11 @@ const InstructionSet = struct {
         // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
         // print("memplace b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         gb.cpu.pc += 3;
-        return 0;
+        return 4;
     }
     fn LDHn16A(gb: *GB, _: InstrArgs) u8 { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
+        const zone = tracy.beginZone(@src(), .{ .name = "LDHn16A" });
+        defer zone.end();
         // print("LDHn16A\n", .{});
         const memory_place = 0xFF00 + @as(u16, gb.read_byte(gb.cpu.pc + 1));
         // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
@@ -792,26 +313,32 @@ const InstructionSet = struct {
             // print("n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
         }
         gb.cpu.pc += 2;
-        return 0;
+        return 3;
     }
     fn LDAr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST Load value in register A from the byte pointed to by register r16.
+        const zone = tracy.beginZone(@src(), .{ .name = "LDAr16" });
+        defer zone.end();
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.read_byte(memory_place);
         // print("LDAr16, n: 0x{X} --> A\n", .{n});
         gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn LDr16A(gb: *GB, args: InstrArgs) u8 { // TODO TEST Store value in register A into the byte pointed to by register r16.
+        const zone = tracy.beginZone(@src(), .{ .name = "LDr16A" });
+        defer zone.end();
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
         // print("LDr16A, n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
 
     fn XORA(gb: *GB, args: InstrArgs) u8 {
+        const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
+        defer zone.end();
         // print("XORA, target {any}\n", .{args.target});
         gb.cpu.registers[@intFromEnum(regID.a)] ^= gb.cpu.registers[@intFromEnum(args.target)];
         if (gb.cpu.registers[@intFromEnum(regID.a)] == 0) {
@@ -819,9 +346,11 @@ const InstructionSet = struct {
             gb.cpu.f.write();
         }
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn ADDAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
+        const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
+        defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("ADDAr8 target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
@@ -833,9 +362,11 @@ const InstructionSet = struct {
         gb.cpu.f.write();
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn SUBAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
+        const zone = tracy.beginZone(@src(), .{ .name = "SUBAr8" });
+        defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("SUBA target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
@@ -847,9 +378,11 @@ const InstructionSet = struct {
         gb.cpu.f.write();
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn ADDAHL(gb: *GB, _: InstrArgs) u8 { // TODO Add the byte pointed to by HL to A.
+        const zone = tracy.beginZone(@src(), .{ .name = "ADDAHL" });
+        defer zone.end();
         const mem_place = gb.cpu.get_word(regID.h);
         const value = gb.read_byte(mem_place);
         // print("ADDAHL:A + mem@0x{X}: value: {d} \n", .{ mem_place, value });
@@ -862,9 +395,11 @@ const InstructionSet = struct {
         gb.cpu.f.write();
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn ADDHLr16(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
+        const zone = tracy.beginZone(@src(), .{ .name = "ADDHLr16" });
+        defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_word(args.target);
         // print("ADDHL {any} + hl, {d} + {d} \n", .{ args.target, value, hl });
@@ -875,23 +410,29 @@ const InstructionSet = struct {
         gb.cpu.f.write();
         gb.cpu.set_word(regID.h, res);
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
     fn EI(gb: *GB, _: InstrArgs) u8 { // TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "EI" });
+        defer zone.end();
         // print("EI\n", .{});
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn RRCA(gb: *GB, _: InstrArgs) u8 { // TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "RRCA" });
+        defer zone.end();
         const a = gb.cpu.get_byte(regID.a);
         // print("RRCA\n", .{});
         gb.cpu.set_byte(regID.a, a << 7 | a >> 1);
         gb.cpu.f.c = (@as(u1, @truncate(a)) == 1);
         gb.cpu.f.write();
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn PUSH(gb: *GB, args: InstrArgs) u8 {
+        const zone = tracy.beginZone(@src(), .{ .name = "PUSH" });
+        defer zone.end();
         var high: u8 = undefined;
         var low: u8 = undefined;
         if (args.target == regID.a) {
@@ -910,9 +451,11 @@ const InstructionSet = struct {
         gb.cpu.sp -= 1;
         gb.writeByte(gb.cpu.sp, low);
         gb.cpu.pc += 1;
-        return 0;
+        return 4;
     }
     fn POP(gb: *GB, args: InstrArgs) u8 {
+        const zone = tracy.beginZone(@src(), .{ .name = "POP" });
+        defer zone.end();
         const low = gb.read_byte(gb.cpu.sp);
         gb.cpu.sp += 1;
         const high = gb.read_byte(gb.cpu.sp);
@@ -925,22 +468,26 @@ const InstructionSet = struct {
             gb.cpu.f.update();
         } else gb.cpu.set_word(args.target, value);
         gb.cpu.pc += 1;
-        return 0;
+        return 3;
     }
     fn JP(gb: *GB, args: InstrArgs) u8 { // TODO ONLY 3 CYCLES IF NOT TAKEN OTHERWISE 4
+        const zone = tracy.beginZone(@src(), .{ .name = "JP" });
+        defer zone.end();
         // print("JP", .{});
         const jump = gb.cpu.f.check(args.flagConditions);
         if (jump) {
             const n = @as(u16, gb.read_byte(gb.cpu.pc + 2)) << 8 | gb.read_byte(gb.cpu.pc + 1);
             // print("to 0x{X}\n", .{n});
             gb.cpu.pc = n;
-            return 1; // Extra cycle when taken
+            return 4; // 4 cycles when taken
         } else {
             gb.cpu.pc += 3;
-            return 0; // No extra cycles when not taken
+            return 3; // 3 cycles when not taken
         }
     }
     fn JR(gb: *GB, args: InstrArgs) u8 { // TODO ONLY 2 CYCLES IF NOT TAKEN OTHERWISE 3
+        const zone = tracy.beginZone(@src(), .{ .name = "JR" });
+        defer zone.end();
         // print("JR, \tcondition:", .{});
         const dist: i8 = @bitCast(gb.read_byte(gb.cpu.pc + 1));
         const jump = gb.cpu.f.check(args.flagConditions);
@@ -951,19 +498,23 @@ const InstructionSet = struct {
             const new_mem: i17 = @as(i17, @intCast(gb.cpu.pc + 2)) + dist;
             gb.cpu.pc = @as(u8, @intCast(new_mem));
             // print("to pc:0x{X}\n", .{gb.cpu.pc});
-            return 1; // Extra cycle when taken
+            return 3; // 3 cycles when taken
         } else { // next instruction, condition failed
             // print("skipped jump, failed condition\n", .{});
             gb.cpu.pc += 2;
-            return 0; // No extra cycles needed
+            return 2; // 2 cycles when not taken
         }
     }
     fn JPHL(gb: *GB, _: InstrArgs) u8 {
+        const zone = tracy.beginZone(@src(), .{ .name = "JPHL" });
+        defer zone.end();
         // print("JPHL\n", .{});
         gb.cpu.pc = gb.cpu.get_word(regID.h);
-        return 0;
+        return 1;
     }
     fn CALLn16(gb: *GB, args: InstrArgs) u8 { //
+        const zone = tracy.beginZone(@src(), .{ .name = "CALLn16" });
+        defer zone.end();
         const call = gb.cpu.f.check(args.flagConditions);
         // const byte = gb.read_byte(gb.cpu.pc);
 
@@ -976,14 +527,16 @@ const InstructionSet = struct {
             gb.cpu.sp -= 1;
             gb.writeByte(gb.cpu.sp, @truncate(ret));
             gb.cpu.pc = n;
-            return 3;
+            return 6; // 6 cycles when taken
         } else { // next instruction, condition failed
             // print("skipped jump, failed condition\n", .{});
             gb.cpu.pc += 3;
-            return 0; // No extra cycles needed
+            return 3; // 3 cycles when not taken
         }
     }
     fn RET(gb: *GB, args: InstrArgs) u8 { // TODO TEST, UPDATE cycles 5 if condition met, 2 if not met, 4 if no condition
+        const zone = tracy.beginZone(@src(), .{ .name = "RET" });
+        defer zone.end();
         // print("RET, condition:{any}", .{args.flagConditions});
         const ret = gb.cpu.f.check(args.flagConditions);
         // const byte = gb.read_byte(gb.cpu.pc);
@@ -994,13 +547,15 @@ const InstructionSet = struct {
             const high = gb.read_byte(gb.cpu.sp);
             gb.cpu.sp += 1;
             gb.cpu.pc = @as(u16, high) << 8 | low;
-            return 3; // 3 cycles if condition met
+            return 5; // 5 cycles if condition met
         } else {
             gb.cpu.pc += 1;
-            return 0; // No extra cycles when not taken
+            return 2; // 2 cycles when not taken
         }
     }
     fn CPAn8(gb: *GB, _: InstrArgs) u8 { // TODO TEST;
+        const zone = tracy.beginZone(@src(), .{ .name = "CPAn8" });
+        defer zone.end();
         // print("CPAn8, \n", .{});
         const n = gb.read_byte(gb.cpu.pc + 1);
         const reg = gb.cpu.get_byte(regID.a);
@@ -1012,9 +567,11 @@ const InstructionSet = struct {
         gb.cpu.f.c = res[1] == 1;
         gb.cpu.f.write();
         gb.cpu.pc += 2;
-        return 0;
+        return 2;
     }
     fn CPAr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST;
+        const zone = tracy.beginZone(@src(), .{ .name = "CPAr8" });
+        defer zone.end();
         const n = gb.cpu.get_byte(args.target);
         // print("CPAr8, target = {any}\n", .{args.target});
         const reg = gb.cpu.get_byte(regID.a);
@@ -1025,9 +582,11 @@ const InstructionSet = struct {
         gb.cpu.f.c = res[1] == 1;
         gb.cpu.f.write();
         gb.cpu.pc += 1;
-        return 0;
+        return 1;
     }
     fn CPAHL(gb: *GB, _: InstrArgs) u8 { // TODO TEST;
+        const zone = tracy.beginZone(@src(), .{ .name = "CPAHL" });
+        defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const reg = gb.cpu.get_byte(regID.a);
         // print("CPAHL, compare mem_place: 0x{X} ({d}) to A:{d}\n", .{ hl, gb.read_byte(hl), reg });
@@ -1038,11 +597,13 @@ const InstructionSet = struct {
         gb.cpu.f.c = res[1] == 1;
         gb.cpu.f.write();
         gb.cpu.pc += 1;
-        return 0;
+        return 2;
     }
 
     // PREFIX INSTRUCTIONS
     fn BITTEST(gb: *GB, args: InstrArgs) u8 { // TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "BITTEST" });
+        defer zone.end();
         const bit: u3 = args.bit_target.bit;
         const target = gb.cpu.get_byte(args.bit_target.target);
         // print("BITTEST, target: {any}, bit: {any}, reg_bin: 0b{b}", .{ args.bit_target.target, args.bit_target.bit, target });
@@ -1051,9 +612,11 @@ const InstructionSet = struct {
         gb.cpu.f.h = true; // set half carry
         gb.cpu.f.write();
         gb.cpu.pc += 2;
-        return 0;
+        return 2;
     }
     fn BITTESTHL(gb: *GB, args: InstrArgs) u8 { // TODO TEST
+        const zone = tracy.beginZone(@src(), .{ .name = "BITTESTHL" });
+        defer zone.end();
         const bit: u3 = args.bit_target.bit;
         // print("BITTESTHL, target: {any}, bit: {any}\n", .{ args.bit_target.target, args.bit_target.bit });
         const hl = gb.cpu.get_word(args.target);
@@ -1062,9 +625,11 @@ const InstructionSet = struct {
         gb.cpu.f.h = true;
         gb.cpu.f.write();
         gb.cpu.pc += 2;
-        return 0;
+        return 3;
     }
     fn RL(gb: *GB, args: InstrArgs) u8 { // TODO TEST Rotate bits in register r8 left through carry.
+        const zone = tracy.beginZone(@src(), .{ .name = "RL" });
+        defer zone.end();
         const carried = gb.cpu.f.c;
         const reg = gb.cpu.get_byte(args.target);
         // print("RL, target: {any}, prior: 0b{b}, carried = {d}\n", .{ args.target, reg, @intFromBool(carried) });
@@ -1075,12 +640,530 @@ const InstructionSet = struct {
         gb.cpu.set_byte(args.target, rotated);
         // print("after: 0b{b}\n", .{gb.cpu.get_byte(args.target)});
         gb.cpu.pc += 2;
-        return 0;
+        return 2;
     }
-    fn from_byte(byte: u8, prefixed: bool) InstrInfo {
+    fn UNDEF(_: *GB, _: InstrArgs) u8 {
+        print("CRIT UNDEF INSTRUCTION\n", .{});
+        return 255;
+    }
+    inline fn exe_from_byte(gb: *GB, byte: u8, prefixed: bool) u8 {
         return switch (prefixed) {
-            true => prefix_table[byte],
-            false => table[byte],
+            false => switch (byte) {
+                0x00 => NOP(gb, .{ .none = {} }),
+                0x01 => LD16(gb, .{ .target = regID.b }),
+                0x02 => UNDEF(gb, .{ .none = {} }),
+                0x03 => UNDEF(gb, .{ .none = {} }),
+                0x04 => INCr8(gb, .{ .target = regID.b }),
+                0x05 => DECr8(gb, .{ .target = regID.b }),
+                0x06 => LD8(gb, .{ .target = regID.b }),
+                0x07 => UNDEF(gb, .{ .none = {} }),
+                0x08 => UNDEF(gb, .{ .none = {} }),
+                0x09 => UNDEF(gb, .{ .none = {} }),
+                0x0A => UNDEF(gb, .{ .none = {} }),
+                0x0B => UNDEF(gb, .{ .none = {} }),
+                0x0C => INCr8(gb, .{ .target = regID.c }),
+                0x0D => DECr8(gb, .{ .target = regID.c }),
+                0x0E => LD8(gb, .{ .target = regID.c }),
+                0x0F => RRCA(gb, .{ .none = {} }),
+                0x10 => UNDEF(gb, .{ .none = {} }),
+                0x11 => LD16(gb, .{ .target = regID.d }),
+                0x12 => UNDEF(gb, .{ .none = {} }),
+                0x13 => INCr16(gb, .{ .target = regID.d }),
+                0x14 => INCr8(gb, .{ .target = regID.d }),
+                0x15 => DECr8(gb, .{ .target = regID.d }),
+                0x16 => LD8(gb, .{ .target = regID.d }),
+                0x17 => UNDEF(gb, .{ .none = {} }),
+                0x18 => JR(gb, .{ .flagConditions = .{ .none = true } }),
+                0x19 => ADDHLr16(gb, .{ .target = regID.d }),
+                0x1A => LDAr16(gb, .{ .target = regID.d }),
+                0x1B => DECr16(gb, .{ .target = regID.d }),
+                0x1C => INCr8(gb, .{ .target = regID.e }),
+                0x1D => DECr8(gb, .{ .target = regID.e }),
+                0x1E => LD8(gb, .{ .target = regID.e }),
+                0x1F => UNDEF(gb, .{ .none = {} }),
+                0x20 => JR(gb, .{ .flagConditions = .{ .z = false } }),
+                0x21 => LD16(gb, .{ .target = regID.h }),
+                0x22 => LDHLIA(gb, .{ .none = {} }),
+                0x23 => INCr16(gb, .{ .target = regID.h }),
+                0x24 => INCr8(gb, .{ .target = regID.h }),
+                0x25 => UNDEF(gb, .{ .none = {} }),
+                0x26 => UNDEF(gb, .{ .none = {} }),
+                0x27 => UNDEF(gb, .{ .none = {} }),
+                0x28 => JR(gb, .{ .flagConditions = .{ .z = true } }),
+                0x29 => UNDEF(gb, .{ .none = {} }),
+                0x2A => UNDEF(gb, .{ .none = {} }),
+                0x2B => UNDEF(gb, .{ .none = {} }),
+                0x2C => UNDEF(gb, .{ .none = {} }),
+                0x2D => UNDEF(gb, .{ .none = {} }),
+                0x2E => LD8(gb, .{ .target = regID.l }),
+                0x2F => UNDEF(gb, .{ .none = {} }),
+                0x30 => UNDEF(gb, .{ .none = {} }),
+                0x31 => LDSP16(gb, .{ .none = {} }),
+                0x32 => LDHLDA(gb, .{ .none = {} }),
+                0x33 => UNDEF(gb, .{ .none = {} }),
+                0x34 => UNDEF(gb, .{ .none = {} }),
+                0x35 => UNDEF(gb, .{ .none = {} }),
+                0x36 => UNDEF(gb, .{ .none = {} }),
+                0x37 => UNDEF(gb, .{ .none = {} }),
+                0x38 => UNDEF(gb, .{ .none = {} }),
+                0x39 => UNDEF(gb, .{ .none = {} }),
+                0x3A => UNDEF(gb, .{ .none = {} }),
+                0x3B => UNDEF(gb, .{ .none = {} }),
+                0x3C => UNDEF(gb, .{ .none = {} }),
+                0x3D => DECr8(gb, .{ .target = regID.a }),
+                0x3E => LD8(gb, .{ .target = regID.a }),
+                0x3F => UNDEF(gb, .{ .none = {} }),
+                0x40 => UNDEF(gb, .{ .none = {} }),
+                0x41 => UNDEF(gb, .{ .none = {} }),
+                0x42 => UNDEF(gb, .{ .none = {} }),
+                0x43 => UNDEF(gb, .{ .none = {} }),
+                0x44 => UNDEF(gb, .{ .none = {} }),
+                0x45 => UNDEF(gb, .{ .none = {} }),
+                0x46 => UNDEF(gb, .{ .none = {} }),
+                0x47 => UNDEF(gb, .{ .none = {} }),
+                0x48 => UNDEF(gb, .{ .none = {} }),
+                0x49 => UNDEF(gb, .{ .none = {} }),
+                0x4A => UNDEF(gb, .{ .none = {} }),
+                0x4B => UNDEF(gb, .{ .none = {} }),
+                0x4C => UNDEF(gb, .{ .none = {} }),
+                0x4D => UNDEF(gb, .{ .none = {} }),
+                0x4E => UNDEF(gb, .{ .none = {} }),
+                0x4F => LDr8(gb, .{ .targets = .{ .to = regID.c, .from = regID.a } }),
+                0x50 => UNDEF(gb, .{ .none = {} }),
+                0x51 => UNDEF(gb, .{ .none = {} }),
+                0x52 => UNDEF(gb, .{ .none = {} }),
+                0x53 => UNDEF(gb, .{ .none = {} }),
+                0x54 => UNDEF(gb, .{ .none = {} }),
+                0x55 => UNDEF(gb, .{ .none = {} }),
+                0x56 => UNDEF(gb, .{ .none = {} }),
+                0x57 => LDr8(gb, .{ .targets = .{ .to = regID.d, .from = regID.a } }),
+                0x58 => UNDEF(gb, .{ .none = {} }),
+                0x59 => UNDEF(gb, .{ .none = {} }),
+                0x5A => UNDEF(gb, .{ .none = {} }),
+                0x5B => UNDEF(gb, .{ .none = {} }),
+                0x5C => UNDEF(gb, .{ .none = {} }),
+                0x5D => UNDEF(gb, .{ .none = {} }),
+                0x5E => UNDEF(gb, .{ .none = {} }),
+                0x5F => UNDEF(gb, .{ .none = {} }),
+                0x60 => UNDEF(gb, .{ .none = {} }),
+                0x61 => UNDEF(gb, .{ .none = {} }),
+                0x62 => UNDEF(gb, .{ .none = {} }),
+                0x63 => UNDEF(gb, .{ .none = {} }),
+                0x64 => UNDEF(gb, .{ .none = {} }),
+                0x65 => UNDEF(gb, .{ .none = {} }),
+                0x66 => UNDEF(gb, .{ .none = {} }),
+                0x67 => LDr8(gb, .{ .targets = .{ .to = regID.h, .from = regID.a } }),
+                0x68 => UNDEF(gb, .{ .none = {} }),
+                0x69 => UNDEF(gb, .{ .none = {} }),
+                0x6A => UNDEF(gb, .{ .none = {} }),
+                0x6B => UNDEF(gb, .{ .none = {} }),
+                0x6C => UNDEF(gb, .{ .none = {} }),
+                0x6D => UNDEF(gb, .{ .none = {} }),
+                0x6E => UNDEF(gb, .{ .none = {} }),
+                0x6F => UNDEF(gb, .{ .none = {} }),
+                0x70 => UNDEF(gb, .{ .none = {} }),
+                0x71 => UNDEF(gb, .{ .none = {} }),
+                0x72 => UNDEF(gb, .{ .none = {} }),
+                0x73 => UNDEF(gb, .{ .none = {} }),
+                0x74 => UNDEF(gb, .{ .none = {} }),
+                0x75 => UNDEF(gb, .{ .none = {} }),
+                0x76 => UNDEF(gb, .{ .none = {} }),
+                0x77 => LDHLR(gb, .{ .target = regID.a }),
+                0x78 => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.b } }),
+                0x79 => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.c } }),
+                0x7A => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.d } }),
+                0x7B => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.e } }),
+                0x7C => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.h } }),
+                0x7D => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.l } }),
+                0x7E => LDAHL(gb, .{ .none = {} }),
+                0x7F => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.a } }),
+                0x80 => ADDAr8(gb, .{ .target = regID.b }),
+                0x81 => ADDAr8(gb, .{ .target = regID.c }),
+                0x82 => ADDAr8(gb, .{ .target = regID.d }),
+                0x83 => ADDAr8(gb, .{ .target = regID.e }),
+                0x84 => ADDAr8(gb, .{ .target = regID.h }),
+                0x85 => ADDAr8(gb, .{ .target = regID.l }),
+                0x86 => ADDAHL(gb, .{ .none = {} }),
+                0x87 => UNDEF(gb, .{ .none = {} }),
+                0x88 => UNDEF(gb, .{ .none = {} }),
+                0x89 => UNDEF(gb, .{ .none = {} }),
+                0x8A => UNDEF(gb, .{ .none = {} }),
+                0x8B => UNDEF(gb, .{ .none = {} }),
+                0x8C => UNDEF(gb, .{ .none = {} }),
+                0x8D => UNDEF(gb, .{ .none = {} }),
+                0x8E => UNDEF(gb, .{ .none = {} }),
+                0x8F => UNDEF(gb, .{ .none = {} }),
+                0x90 => SUBAr8(gb, .{ .target = regID.b }),
+                0x91 => SUBAr8(gb, .{ .target = regID.c }),
+                0x92 => SUBAr8(gb, .{ .target = regID.d }),
+                0x93 => SUBAr8(gb, .{ .target = regID.e }),
+                0x94 => SUBAr8(gb, .{ .target = regID.h }),
+                0x95 => SUBAr8(gb, .{ .target = regID.l }),
+                0x96 => UNDEF(gb, .{ .none = {} }),
+                0x97 => SUBAr8(gb, .{ .target = regID.a }),
+                0x98 => UNDEF(gb, .{ .none = {} }),
+                0x99 => UNDEF(gb, .{ .none = {} }),
+                0x9A => UNDEF(gb, .{ .none = {} }),
+                0x9B => UNDEF(gb, .{ .none = {} }),
+                0x9C => UNDEF(gb, .{ .none = {} }),
+                0x9D => UNDEF(gb, .{ .none = {} }),
+                0x9E => UNDEF(gb, .{ .none = {} }),
+                0x9F => UNDEF(gb, .{ .none = {} }),
+                0xA0 => UNDEF(gb, .{ .none = {} }),
+                0xA1 => UNDEF(gb, .{ .none = {} }),
+                0xA2 => UNDEF(gb, .{ .none = {} }),
+                0xA3 => UNDEF(gb, .{ .none = {} }),
+                0xA4 => UNDEF(gb, .{ .none = {} }),
+                0xA5 => UNDEF(gb, .{ .none = {} }),
+                0xA6 => UNDEF(gb, .{ .none = {} }),
+                0xA7 => UNDEF(gb, .{ .none = {} }),
+                0xA8 => UNDEF(gb, .{ .none = {} }),
+                0xA9 => UNDEF(gb, .{ .none = {} }),
+                0xAA => UNDEF(gb, .{ .none = {} }),
+                0xAB => UNDEF(gb, .{ .none = {} }),
+                0xAC => UNDEF(gb, .{ .none = {} }),
+                0xAD => UNDEF(gb, .{ .none = {} }),
+                0xAE => UNDEF(gb, .{ .none = {} }),
+                0xAF => XORA(gb, .{ .target = regID.a }),
+                0xB0 => UNDEF(gb, .{ .none = {} }),
+                0xB1 => UNDEF(gb, .{ .none = {} }),
+                0xB2 => UNDEF(gb, .{ .none = {} }),
+                0xB3 => UNDEF(gb, .{ .none = {} }),
+                0xB4 => UNDEF(gb, .{ .none = {} }),
+                0xB5 => UNDEF(gb, .{ .none = {} }),
+                0xB6 => UNDEF(gb, .{ .none = {} }),
+                0xB7 => UNDEF(gb, .{ .none = {} }),
+                0xB8 => UNDEF(gb, .{ .none = {} }),
+                0xB9 => UNDEF(gb, .{ .none = {} }),
+                0xBA => UNDEF(gb, .{ .none = {} }),
+                0xBB => UNDEF(gb, .{ .none = {} }),
+                0xBC => UNDEF(gb, .{ .none = {} }),
+                0xBD => UNDEF(gb, .{ .none = {} }),
+                0xBE => CPAHL(gb, .{ .none = {} }),
+                0xBF => UNDEF(gb, .{ .none = {} }),
+                0xC0 => UNDEF(gb, .{ .none = {} }),
+                0xC1 => POP(gb, .{ .target = regID.b }),
+                0xC2 => UNDEF(gb, .{ .none = {} }),
+                0xC3 => JP(gb, .{ .flagConditions = .{ .none = true } }),
+                0xC4 => UNDEF(gb, .{ .none = {} }),
+                0xC5 => PUSH(gb, .{ .target = regID.b }),
+                0xC6 => UNDEF(gb, .{ .none = {} }),
+                0xC7 => UNDEF(gb, .{ .none = {} }),
+                0xC8 => UNDEF(gb, .{ .none = {} }),
+                0xC9 => RET(gb, .{ .flagConditions = .{ .none = true } }),
+                0xCA => UNDEF(gb, .{ .none = {} }),
+                0xCB => UNDEF(gb, .{ .none = {} }),
+                0xCC => UNDEF(gb, .{ .none = {} }),
+                0xCD => CALLn16(gb, .{ .flagConditions = .{ .none = true } }),
+                0xCE => UNDEF(gb, .{ .none = {} }),
+                0xCF => UNDEF(gb, .{ .none = {} }),
+                0xD0 => UNDEF(gb, .{ .none = {} }),
+                0xD1 => UNDEF(gb, .{ .none = {} }),
+                0xD2 => UNDEF(gb, .{ .none = {} }),
+                0xD3 => UNDEF(gb, .{ .none = {} }),
+                0xD4 => UNDEF(gb, .{ .none = {} }),
+                0xD5 => UNDEF(gb, .{ .none = {} }),
+                0xD6 => UNDEF(gb, .{ .none = {} }),
+                0xD7 => UNDEF(gb, .{ .none = {} }),
+                0xD8 => UNDEF(gb, .{ .none = {} }),
+                0xD9 => UNDEF(gb, .{ .none = {} }),
+                0xDA => UNDEF(gb, .{ .none = {} }),
+                0xDB => UNDEF(gb, .{ .none = {} }),
+                0xDC => UNDEF(gb, .{ .none = {} }),
+                0xDD => UNDEF(gb, .{ .none = {} }),
+                0xDE => UNDEF(gb, .{ .none = {} }),
+                0xDF => UNDEF(gb, .{ .none = {} }),
+                0xE0 => LDHn16A(gb, .{ .none = {} }),
+                0xE1 => UNDEF(gb, .{ .none = {} }),
+                0xE2 => LDHCA(gb, .{ .none = {} }),
+                0xE3 => UNDEF(gb, .{ .none = {} }),
+                0xE4 => UNDEF(gb, .{ .none = {} }),
+                0xE5 => UNDEF(gb, .{ .none = {} }),
+                0xE6 => UNDEF(gb, .{ .none = {} }),
+                0xE7 => UNDEF(gb, .{ .none = {} }),
+                0xE8 => UNDEF(gb, .{ .none = {} }),
+                0xE9 => JPHL(gb, .{ .none = {} }),
+                0xEA => LDn16A(gb, .{ .none = {} }),
+                0xEB => UNDEF(gb, .{ .none = {} }),
+                0xEC => UNDEF(gb, .{ .none = {} }),
+                0xED => UNDEF(gb, .{ .none = {} }),
+                0xEE => UNDEF(gb, .{ .none = {} }),
+                0xEF => UNDEF(gb, .{ .none = {} }),
+                0xF0 => LDHAn16(gb, .{ .none = {} }),
+                0xF1 => UNDEF(gb, .{ .none = {} }),
+                0xF2 => LDHAC(gb, .{ .none = {} }),
+                0xF3 => UNDEF(gb, .{ .none = {} }),
+                0xF4 => UNDEF(gb, .{ .none = {} }),
+                0xF5 => UNDEF(gb, .{ .none = {} }),
+                0xF6 => UNDEF(gb, .{ .none = {} }),
+                0xF7 => UNDEF(gb, .{ .none = {} }),
+                0xF8 => UNDEF(gb, .{ .none = {} }),
+                0xF9 => UNDEF(gb, .{ .none = {} }),
+                0xFA => LDAn16(gb, .{ .none = {} }),
+                0xFB => EI(gb, .{ .none = {} }),
+                0xFC => UNDEF(gb, .{ .none = {} }),
+                0xFD => UNDEF(gb, .{ .none = {} }),
+                0xFE => CPAn8(gb, .{ .none = {} }),
+                0xFF => UNDEF(gb, .{ .none = {} }),
+            },
+            true => switch (byte) {
+                0x00 => UNDEF(gb, .{ .none = {} }),
+                0x01 => UNDEF(gb, .{ .none = {} }),
+                0x02 => UNDEF(gb, .{ .none = {} }),
+                0x03 => UNDEF(gb, .{ .none = {} }),
+                0x04 => UNDEF(gb, .{ .none = {} }),
+                0x05 => UNDEF(gb, .{ .none = {} }),
+                0x06 => UNDEF(gb, .{ .none = {} }),
+                0x07 => UNDEF(gb, .{ .none = {} }),
+                0x08 => UNDEF(gb, .{ .none = {} }),
+                0x09 => UNDEF(gb, .{ .none = {} }),
+                0x0A => UNDEF(gb, .{ .none = {} }),
+                0x0B => UNDEF(gb, .{ .none = {} }),
+                0x0C => UNDEF(gb, .{ .none = {} }),
+                0x0D => UNDEF(gb, .{ .none = {} }),
+                0x0E => UNDEF(gb, .{ .none = {} }),
+                0x0F => UNDEF(gb, .{ .none = {} }),
+                0x10 => UNDEF(gb, .{ .none = {} }),
+                0x11 => RL(gb, .{ .target = regID.c }),
+                0x12 => UNDEF(gb, .{ .none = {} }),
+                0x13 => UNDEF(gb, .{ .none = {} }),
+                0x14 => UNDEF(gb, .{ .none = {} }),
+                0x15 => UNDEF(gb, .{ .none = {} }),
+                0x16 => UNDEF(gb, .{ .none = {} }),
+                0x17 => UNDEF(gb, .{ .none = {} }),
+                0x18 => UNDEF(gb, .{ .none = {} }),
+                0x19 => UNDEF(gb, .{ .none = {} }),
+                0x1A => UNDEF(gb, .{ .none = {} }),
+                0x1B => UNDEF(gb, .{ .none = {} }),
+                0x1C => UNDEF(gb, .{ .none = {} }),
+                0x1D => UNDEF(gb, .{ .none = {} }),
+                0x1E => UNDEF(gb, .{ .none = {} }),
+                0x1F => UNDEF(gb, .{ .none = {} }),
+                0x20 => UNDEF(gb, .{ .none = {} }),
+                0x21 => UNDEF(gb, .{ .none = {} }),
+                0x22 => UNDEF(gb, .{ .none = {} }),
+                0x23 => UNDEF(gb, .{ .none = {} }),
+                0x24 => UNDEF(gb, .{ .none = {} }),
+                0x25 => UNDEF(gb, .{ .none = {} }),
+                0x26 => UNDEF(gb, .{ .none = {} }),
+                0x27 => UNDEF(gb, .{ .none = {} }),
+                0x28 => UNDEF(gb, .{ .none = {} }),
+                0x29 => UNDEF(gb, .{ .none = {} }),
+                0x2A => UNDEF(gb, .{ .none = {} }),
+                0x2B => UNDEF(gb, .{ .none = {} }),
+                0x2C => UNDEF(gb, .{ .none = {} }),
+                0x2D => UNDEF(gb, .{ .none = {} }),
+                0x2E => UNDEF(gb, .{ .none = {} }),
+                0x2F => UNDEF(gb, .{ .none = {} }),
+                0x30 => UNDEF(gb, .{ .none = {} }),
+                0x31 => UNDEF(gb, .{ .none = {} }),
+                0x32 => UNDEF(gb, .{ .none = {} }),
+                0x33 => UNDEF(gb, .{ .none = {} }),
+                0x34 => UNDEF(gb, .{ .none = {} }),
+                0x35 => UNDEF(gb, .{ .none = {} }),
+                0x36 => UNDEF(gb, .{ .none = {} }),
+                0x37 => UNDEF(gb, .{ .none = {} }),
+                0x38 => UNDEF(gb, .{ .none = {} }),
+                0x39 => UNDEF(gb, .{ .none = {} }),
+                0x3A => UNDEF(gb, .{ .none = {} }),
+                0x3B => UNDEF(gb, .{ .none = {} }),
+                0x3C => UNDEF(gb, .{ .none = {} }),
+                0x3D => UNDEF(gb, .{ .none = {} }),
+                0x3E => UNDEF(gb, .{ .none = {} }),
+                0x3F => UNDEF(gb, .{ .none = {} }),
+                0x40 => UNDEF(gb, .{ .none = {} }),
+                0x41 => UNDEF(gb, .{ .none = {} }),
+                0x42 => UNDEF(gb, .{ .none = {} }),
+                0x43 => UNDEF(gb, .{ .none = {} }),
+                0x44 => UNDEF(gb, .{ .none = {} }),
+                0x45 => UNDEF(gb, .{ .none = {} }),
+                0x46 => UNDEF(gb, .{ .none = {} }),
+                0x47 => UNDEF(gb, .{ .none = {} }),
+                0x48 => UNDEF(gb, .{ .none = {} }),
+                0x49 => UNDEF(gb, .{ .none = {} }),
+                0x4A => UNDEF(gb, .{ .none = {} }),
+                0x4B => UNDEF(gb, .{ .none = {} }),
+                0x4C => UNDEF(gb, .{ .none = {} }),
+                0x4D => UNDEF(gb, .{ .none = {} }),
+                0x4E => UNDEF(gb, .{ .none = {} }),
+                0x4F => UNDEF(gb, .{ .none = {} }),
+                0x50 => UNDEF(gb, .{ .none = {} }),
+                0x51 => UNDEF(gb, .{ .none = {} }),
+                0x52 => UNDEF(gb, .{ .none = {} }),
+                0x53 => UNDEF(gb, .{ .none = {} }),
+                0x54 => UNDEF(gb, .{ .none = {} }),
+                0x55 => UNDEF(gb, .{ .none = {} }),
+                0x56 => UNDEF(gb, .{ .none = {} }),
+                0x57 => UNDEF(gb, .{ .none = {} }),
+                0x58 => UNDEF(gb, .{ .none = {} }),
+                0x59 => UNDEF(gb, .{ .none = {} }),
+                0x5A => UNDEF(gb, .{ .none = {} }),
+                0x5B => UNDEF(gb, .{ .none = {} }),
+                0x5C => UNDEF(gb, .{ .none = {} }),
+                0x5D => UNDEF(gb, .{ .none = {} }),
+                0x5E => UNDEF(gb, .{ .none = {} }),
+                0x5F => UNDEF(gb, .{ .none = {} }),
+                0x60 => UNDEF(gb, .{ .none = {} }),
+                0x61 => UNDEF(gb, .{ .none = {} }),
+                0x62 => UNDEF(gb, .{ .none = {} }),
+                0x63 => UNDEF(gb, .{ .none = {} }),
+                0x64 => UNDEF(gb, .{ .none = {} }),
+                0x65 => UNDEF(gb, .{ .none = {} }),
+                0x66 => UNDEF(gb, .{ .none = {} }),
+                0x67 => UNDEF(gb, .{ .none = {} }),
+                0x68 => UNDEF(gb, .{ .none = {} }),
+                0x69 => UNDEF(gb, .{ .none = {} }),
+                0x6A => UNDEF(gb, .{ .none = {} }),
+                0x6B => UNDEF(gb, .{ .none = {} }),
+                0x6C => UNDEF(gb, .{ .none = {} }),
+                0x6D => UNDEF(gb, .{ .none = {} }),
+                0x6E => UNDEF(gb, .{ .none = {} }),
+                0x6F => UNDEF(gb, .{ .none = {} }),
+                0x70 => UNDEF(gb, .{ .none = {} }),
+                0x71 => UNDEF(gb, .{ .none = {} }),
+                0x72 => UNDEF(gb, .{ .none = {} }),
+                0x73 => UNDEF(gb, .{ .none = {} }),
+                0x74 => UNDEF(gb, .{ .none = {} }),
+                0x75 => UNDEF(gb, .{ .none = {} }),
+                0x76 => UNDEF(gb, .{ .none = {} }),
+                0x77 => UNDEF(gb, .{ .none = {} }),
+                0x78 => UNDEF(gb, .{ .none = {} }),
+                0x79 => UNDEF(gb, .{ .none = {} }),
+                0x7A => UNDEF(gb, .{ .none = {} }),
+                0x7B => UNDEF(gb, .{ .none = {} }),
+                0x7C => BITTEST(gb, .{ .bit_target = .{ .bit = 7, .target = regID.h } }),
+                0x7D => UNDEF(gb, .{ .none = {} }),
+                0x7E => UNDEF(gb, .{ .none = {} }),
+                0x7F => UNDEF(gb, .{ .none = {} }),
+                0x80 => UNDEF(gb, .{ .none = {} }),
+                0x81 => UNDEF(gb, .{ .none = {} }),
+                0x82 => UNDEF(gb, .{ .none = {} }),
+                0x83 => UNDEF(gb, .{ .none = {} }),
+                0x84 => UNDEF(gb, .{ .none = {} }),
+                0x85 => UNDEF(gb, .{ .none = {} }),
+                0x86 => UNDEF(gb, .{ .none = {} }),
+                0x87 => UNDEF(gb, .{ .none = {} }),
+                0x88 => UNDEF(gb, .{ .none = {} }),
+                0x89 => UNDEF(gb, .{ .none = {} }),
+                0x8A => UNDEF(gb, .{ .none = {} }),
+                0x8B => UNDEF(gb, .{ .none = {} }),
+                0x8C => UNDEF(gb, .{ .none = {} }),
+                0x8D => UNDEF(gb, .{ .none = {} }),
+                0x8E => UNDEF(gb, .{ .none = {} }),
+                0x8F => UNDEF(gb, .{ .none = {} }),
+                0x90 => UNDEF(gb, .{ .none = {} }),
+                0x91 => UNDEF(gb, .{ .none = {} }),
+                0x92 => UNDEF(gb, .{ .none = {} }),
+                0x93 => UNDEF(gb, .{ .none = {} }),
+                0x94 => UNDEF(gb, .{ .none = {} }),
+                0x95 => UNDEF(gb, .{ .none = {} }),
+                0x96 => UNDEF(gb, .{ .none = {} }),
+                0x97 => UNDEF(gb, .{ .none = {} }),
+                0x98 => UNDEF(gb, .{ .none = {} }),
+                0x99 => UNDEF(gb, .{ .none = {} }),
+                0x9A => UNDEF(gb, .{ .none = {} }),
+                0x9B => UNDEF(gb, .{ .none = {} }),
+                0x9C => UNDEF(gb, .{ .none = {} }),
+                0x9D => UNDEF(gb, .{ .none = {} }),
+                0x9E => UNDEF(gb, .{ .none = {} }),
+                0x9F => UNDEF(gb, .{ .none = {} }),
+                0xA0 => UNDEF(gb, .{ .none = {} }),
+                0xA1 => UNDEF(gb, .{ .none = {} }),
+                0xA2 => UNDEF(gb, .{ .none = {} }),
+                0xA3 => UNDEF(gb, .{ .none = {} }),
+                0xA4 => UNDEF(gb, .{ .none = {} }),
+                0xA5 => UNDEF(gb, .{ .none = {} }),
+                0xA6 => UNDEF(gb, .{ .none = {} }),
+                0xA7 => UNDEF(gb, .{ .none = {} }),
+                0xA8 => UNDEF(gb, .{ .none = {} }),
+                0xA9 => UNDEF(gb, .{ .none = {} }),
+                0xAA => UNDEF(gb, .{ .none = {} }),
+                0xAB => UNDEF(gb, .{ .none = {} }),
+                0xAC => UNDEF(gb, .{ .none = {} }),
+                0xAD => UNDEF(gb, .{ .none = {} }),
+                0xAE => UNDEF(gb, .{ .none = {} }),
+                0xAF => UNDEF(gb, .{ .none = {} }),
+                0xB0 => UNDEF(gb, .{ .none = {} }),
+                0xB1 => UNDEF(gb, .{ .none = {} }),
+                0xB2 => UNDEF(gb, .{ .none = {} }),
+                0xB3 => UNDEF(gb, .{ .none = {} }),
+                0xB4 => UNDEF(gb, .{ .none = {} }),
+                0xB5 => UNDEF(gb, .{ .none = {} }),
+                0xB6 => UNDEF(gb, .{ .none = {} }),
+                0xB7 => UNDEF(gb, .{ .none = {} }),
+                0xB8 => UNDEF(gb, .{ .none = {} }),
+                0xB9 => UNDEF(gb, .{ .none = {} }),
+                0xBA => UNDEF(gb, .{ .none = {} }),
+                0xBB => UNDEF(gb, .{ .none = {} }),
+                0xBC => UNDEF(gb, .{ .none = {} }),
+                0xBD => UNDEF(gb, .{ .none = {} }),
+                0xBE => UNDEF(gb, .{ .none = {} }),
+                0xBF => UNDEF(gb, .{ .none = {} }),
+                0xC0 => UNDEF(gb, .{ .none = {} }),
+                0xC1 => UNDEF(gb, .{ .none = {} }),
+                0xC2 => UNDEF(gb, .{ .none = {} }),
+                0xC3 => UNDEF(gb, .{ .none = {} }),
+                0xC4 => UNDEF(gb, .{ .none = {} }),
+                0xC5 => UNDEF(gb, .{ .none = {} }),
+                0xC6 => UNDEF(gb, .{ .none = {} }),
+                0xC7 => UNDEF(gb, .{ .none = {} }),
+                0xC8 => UNDEF(gb, .{ .none = {} }),
+                0xC9 => UNDEF(gb, .{ .none = {} }),
+                0xCA => UNDEF(gb, .{ .none = {} }),
+                0xCB => UNDEF(gb, .{ .none = {} }),
+                0xCC => UNDEF(gb, .{ .none = {} }),
+                0xCD => UNDEF(gb, .{ .none = {} }),
+                0xCE => UNDEF(gb, .{ .none = {} }),
+                0xCF => UNDEF(gb, .{ .none = {} }),
+                0xD0 => UNDEF(gb, .{ .none = {} }),
+                0xD1 => UNDEF(gb, .{ .none = {} }),
+                0xD2 => UNDEF(gb, .{ .none = {} }),
+                0xD3 => UNDEF(gb, .{ .none = {} }),
+                0xD4 => UNDEF(gb, .{ .none = {} }),
+                0xD5 => UNDEF(gb, .{ .none = {} }),
+                0xD6 => UNDEF(gb, .{ .none = {} }),
+                0xD7 => UNDEF(gb, .{ .none = {} }),
+                0xD8 => UNDEF(gb, .{ .none = {} }),
+                0xD9 => UNDEF(gb, .{ .none = {} }),
+                0xDA => UNDEF(gb, .{ .none = {} }),
+                0xDB => UNDEF(gb, .{ .none = {} }),
+                0xDC => UNDEF(gb, .{ .none = {} }),
+                0xDD => UNDEF(gb, .{ .none = {} }),
+                0xDE => UNDEF(gb, .{ .none = {} }),
+                0xDF => UNDEF(gb, .{ .none = {} }),
+                0xE0 => UNDEF(gb, .{ .none = {} }),
+                0xE1 => UNDEF(gb, .{ .none = {} }),
+                0xE2 => UNDEF(gb, .{ .none = {} }),
+                0xE3 => UNDEF(gb, .{ .none = {} }),
+                0xE4 => UNDEF(gb, .{ .none = {} }),
+                0xE5 => UNDEF(gb, .{ .none = {} }),
+                0xE6 => UNDEF(gb, .{ .none = {} }),
+                0xE7 => UNDEF(gb, .{ .none = {} }),
+                0xE8 => UNDEF(gb, .{ .none = {} }),
+                0xE9 => UNDEF(gb, .{ .none = {} }),
+                0xEA => UNDEF(gb, .{ .none = {} }),
+                0xEB => UNDEF(gb, .{ .none = {} }),
+                0xEC => UNDEF(gb, .{ .none = {} }),
+                0xED => UNDEF(gb, .{ .none = {} }),
+                0xEE => UNDEF(gb, .{ .none = {} }),
+                0xEF => UNDEF(gb, .{ .none = {} }),
+                0xF0 => UNDEF(gb, .{ .none = {} }),
+                0xF1 => UNDEF(gb, .{ .none = {} }),
+                0xF2 => UNDEF(gb, .{ .none = {} }),
+                0xF3 => UNDEF(gb, .{ .none = {} }),
+                0xF4 => UNDEF(gb, .{ .none = {} }),
+                0xF5 => UNDEF(gb, .{ .none = {} }),
+                0xF6 => UNDEF(gb, .{ .none = {} }),
+                0xF7 => UNDEF(gb, .{ .none = {} }),
+                0xF8 => UNDEF(gb, .{ .none = {} }),
+                0xF9 => UNDEF(gb, .{ .none = {} }),
+                0xFA => UNDEF(gb, .{ .none = {} }),
+                0xFB => UNDEF(gb, .{ .none = {} }),
+                0xFC => UNDEF(gb, .{ .none = {} }),
+                0xFD => UNDEF(gb, .{ .none = {} }),
+                0xFE => UNDEF(gb, .{ .none = {} }),
+                0xFF => UNDEF(gb, .{ .none = {} }),
+            },
         };
     }
 };
@@ -1127,7 +1210,7 @@ const CPU = struct {
     }
 
     fn execute(self: *@This(), gb: *GB) !u8 {
-        const exe_zone = tracy.beginZone(@src(), .{.name = "Execute Ins"});
+        const exe_zone = tracy.beginZone(@src(), .{ .name = "Execute Ins" });
         defer exe_zone.end();
         var byte = gb.read_byte(self.pc);
         var prefixed = false;
@@ -1137,13 +1220,13 @@ const CPU = struct {
             byte = gb.read_byte(self.pc);
         }
         // print("[pc]0x{X}\t(0x{X})\n", .{ self.pc, byte });
-        const ins_args = InstructionSet.from_byte(byte, prefixed);
-        const extra_cycles = (ins_args.ins)(gb, ins_args.args);
+        const cycles_spent = InstructionSet.exe_from_byte(gb, byte, prefixed);
+        if (cycles_spent == 255) return error.UNDEF_INSTRUCTION;
         // print("\n", .{});
         // if (self.last_ins == 0xFB) { // set IME flag after previous instruction
         //     // print("set IME\n", .{});
         // }
-        return ins_args.cycles + extra_cycles;
+        return cycles_spent;
     }
 };
 
@@ -1183,7 +1266,8 @@ const GPU = struct {
 
     scanline: [LCD.screenWidthPx]Color = undefined,
     mode_cycles_left: u16 = 456,
-    frames_cycled: u16 = 0,
+    // frame_cycles: usize = 0,
+    frames_cycled: usize = 0,
 
     const Mode = enum { // modes specifying number of cycles per scanline
         HBLANK,
@@ -1210,7 +1294,7 @@ const GPU = struct {
         self.special_registers = gb.memory[LCD.special_registers.start .. LCD.special_registers.end + 1];
         self.mode = .SCAN;
         self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
-        try self.lcd.init();
+        // try self.lcd.init();
         @memset(&self.tile_set, empty_tile(self));
     }
 
@@ -1221,24 +1305,31 @@ const GPU = struct {
         return self.special_registers[@intFromEnum(register)];
     }
     fn switchMode(self: *@This()) void {
+        const zone = tracy.beginZone(@src(), .{ .name = "Mode switch" });
+        defer zone.end();
         switch (self.mode) {
             .SCAN => {
+                const scan_zone = tracy.beginZone(@src(), .{ .name = "SCAN" });
+                defer scan_zone.end();
                 self.mode = .RENDER;
                 self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.RENDER)];
             },
             .RENDER => {
                 // print("render!! \n\n\n\n\n", .{});
+                const render_zone = tracy.beginZone(@src(), .{ .name = "RENDER" });
+                defer render_zone.end();
                 self.lcd.pushScanline(self.scanline, self.getSpecialRegister(.ly));
                 self.mode = .HBLANK;
                 self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.HBLANK)];
             },
             .HBLANK => {
                 // Increment LY register
+                const hblank_zone = tracy.beginZone(@src(), .{ .name = "HBLANK" });
+                defer hblank_zone.end();
                 const ly = self.getSpecialRegister(.ly);
                 self.setSpecialRegister(.ly, ly + 1);
-
-                if (self.getSpecialRegister(.ly) == 144) {
-                    self.lcd.renderScreen(self.lcd.screen.len); // render at the last scanline
+                if (ly + 1 == 144) {
+                    // self.lcd.renderScreen(self.lcd.screen.len); // render at the last scanline
                     self.mode = .VBLANK;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)]; // per scanline
                 } else {
@@ -1248,6 +1339,8 @@ const GPU = struct {
                 // TODO INTERRUPT
             },
             .VBLANK => {
+                const vblank_zone = tracy.beginZone(@src(), .{ .name = "VBLANK" });
+                defer vblank_zone.end();
                 const new_ly = self.getSpecialRegister(.ly) + 1;
                 // self.setSpecialRegister(.ly, ly + 1);
                 if (new_ly > 153) { // 153 is the end of VBLANK
@@ -1255,6 +1348,8 @@ const GPU = struct {
                     self.mode = .SCAN;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
                     self.frames_cycled += 1;
+                    // print("fps: {d}\n", .{ @as(f64, @floatFromInt(self.frame_cycles)) / 70224});
+                    // self.frame_cycles = 0;
                 } else {
                     self.setSpecialRegister(.ly, new_ly);
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)];
@@ -1269,6 +1364,8 @@ const GPU = struct {
 
     fn do(self: *@This()) void {
         // Operate GPU here
+        const zone = tracy.beginZone(@src(), .{ .name = "DO GPU CYCLES" });
+        defer zone.end();
         switch (self.mode) {
             .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
                 // print("scanning\n", .{});
@@ -1289,10 +1386,12 @@ const GPU = struct {
         // TODO the gpu should tick/cycle just as many
         // times as the cpu did, while being able to
         // process interrupts and continue on as well as changing modes midscanline when needed
-
+        const zone = tracy.beginZone(@src(), .{ .name = "GPU TICK" });
+        defer zone.end();
         var cycles_left = cycles; // amt of cycles spent by cpu
         while (cycles_left > 0) {
             const cycles_to_process: u16 = @min(cycles_left, self.mode_cycles_left);
+            // self.frame_cycles += cycles_to_process;
             self.do();
 
             self.mode_cycles_left -= cycles_to_process;
@@ -1322,11 +1421,10 @@ const GPU = struct {
     }
 
     fn writeVram(self: *@This(), address: usize, value: u8) void {
-        if (self.mode == .RENDER) {
-            return;
+        if (self.mode != .RENDER) {
+            const fixed_address: u12 = @intCast(address - VRAM_BEGIN);
+            self.vram[fixed_address] = value;
         }
-        const fixed_address: u12 = @intCast(address - VRAM_BEGIN);
-        self.vram[fixed_address] = value;
     }
 
     fn vram_dump(self: *@This()) void {
@@ -1398,7 +1496,7 @@ const LCD = struct {
             }
             // @memset(//row, color);
         }
-        // try self.startAndCreateRenderer(); // set window and renderer
+        try self.startAndCreateRenderer(); // set window and renderer
     }
 
     fn setRect(self: *@This(), rect: *g.SDL_FRect, x: anytype, y: anytype, w: anytype, h: anytype) void {
@@ -1514,14 +1612,13 @@ const LCD = struct {
 };
 const Clock = struct {
     timer: std.time.Timer = undefined,
-    ticks: usize = ticks_per_frame * 60,
-    ns_elapsed: usize = std.time.ns_per_s,
+    ticks: usize = 0,
+    ns_elapsed: usize = 0,
     fn start(self: *Clock) !void {
         self.timer = try std.time.Timer.start();
     }
     fn tick(self: *Clock) bool {
-        const zone = tracy.beginZone(@src(),
-            .{.name = "Tick"});
+        const zone = tracy.beginZone(@src(), .{ .name = "Tick" });
         defer zone.end();
         const ns_passed = self.timer.lap();
         self.ns_elapsed += ns_passed;
@@ -1538,8 +1635,6 @@ const Clock = struct {
 
     const ticks_per_s = 4.19 * @as(f64, std.math.pow(u64, 10, 6));
     const fps = 60;
-
-
 
     const ticks_per_ns = ticks_per_s / std.time.ns_per_s;
     const ns_per_tick = 1 / ticks_per_ns;
@@ -1563,23 +1658,31 @@ pub const GB = struct {
 
     const freqMHz = @as(f64, 1) / 4.19;
     const cycle_time_ns = @round(freqMHz * std.math.pow(u16, 10, 3)); // tick at 4.19 MHz
+    //
+    fn fpsCounter(self: *GB) f64 {
+        return (@as(f64, @floatFromInt(self.gpu.frames_cycled))) / (@as(f64, @floatFromInt(self.clock.ns_elapsed)) / std.time.ns_per_s);
+    }
 
     pub fn init(self: *@This()) !void {
         @memset(&self.memory, 0);
         @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
         try self.cpu.init();
         try self.gpu.init(self);
-        _ = InstructionSet.NOP(self, .{ .none = {} }); // dummy op to init cache
+        _ = InstructionSet.exe_from_byte(self, 0, false); // dummy op to init cache
         self.cpu.pc -= 1;
         self.running = true;
     }
 
     pub fn read_byte(self: *@This(), address: usize) u8 {
+        const zone = tracy.beginZone(@src(), .{ .name = "read mem byte" });
+        defer zone.end();
         // TODO: implement memory mapping based on address
         return self.memory[address];
     }
 
     pub fn writeByte(self: *@This(), address: usize, value: u8) void {
+        const zone = tracy.beginZone(@src(), .{ .name = "write mem byte" });
+        defer zone.end();
         switch (address) {
             GPU.VRAM_BEGIN...GPU.VRAM_END + 1 => {
                 // println("mem before: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
@@ -1591,9 +1694,9 @@ pub const GB = struct {
                 const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
                 @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
             },
-            0xFF50 => { // Disable bootrom register
-                // Unmap and replace the bootrom with cartridge data
-            },
+            // 0xFF50 => { // Disable bootrom register
+            //     // Unmap and replace the bootrom with cartridge data
+            // },
             else => {
                 self.memory[address] = value;
             },
@@ -1626,16 +1729,19 @@ pub const GB = struct {
     pub fn go(self: *@This()) !void {
         try self.clock.start();
         while (self.cpu.pc < 0x100 and self.running) {
-            try self.getEvents();
-            try self.do();
+            // try self.getEvents()
             _ = self.clock.tick();
+            try self.do();
             //TODO: Update peripherals & timing
         }
     }
     fn do(self: *@This()) !void {
         const cycles_spent = try self.cpu.execute(self);
+        const ly = self.gpu.getSpecialRegister(.ly);
+        if (ly == 0) print("fps: {d}\n", .{self.fpsCounter()});
+        // print("ly: {d}", .{ly});
         self.cycles_spent += cycles_spent;
-        self.gpu.tick(cycles_spent);
+        self.gpu.tick(cycles_spent * 4);
     }
     fn getEvents(self: *@This()) !void {
         var event: g.SDL_Event = undefined;
@@ -1690,7 +1796,7 @@ pub const GB = struct {
 };
 
 pub fn main() !void {
-    const zone = tracy.beginZone(@src(),.{.name = "Main"});
+    const zone = tracy.beginZone(@src(), .{ .name = "Main" });
     defer zone.end();
     var gb = GB{};
     print("ns per tick {d}\n", .{Clock.ns_per_tick});
