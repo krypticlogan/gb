@@ -10,83 +10,45 @@ const g = @cImport({
 
 const DEBUG = true; // Set to false to disable debug prints
 fn print(comptime fmt: []const u8, args: anytype) void {
-    if (DEBUG) std.debug.print(fmt, args);
+    std.debug.print(fmt, args);
 }
 const allocator = std.heap.page_allocator;
 
+const Condition = union(enum) { none, z, c, nz, nc };
 const FlagRegister = struct {
     value: u8 = 0,
-    z: bool = false,
-    s: bool = false,
-    h: bool = false,
-    c: bool = false,
-    const Conditions = union(enum) { z: bool, c: bool, s: bool, h: bool, none: bool };
-
-    fn update(self: *@This()) void {
-        self.z = (self.value >> 7) & 0b1 == 1;
-        self.s = (self.value >> 6) & 0b1 == 1;
-        self.h = (self.value >> 5) & 0b1 == 1;
-        self.c = (self.value >> 4) & 0b1 == 1;
+    inline fn cFlag(self: *FlagRegister) bool {
+        return self.value & (1 << 4) != 0;
     }
-    fn write(self: *@This()) void {
-        self.value =
-            @as(u8, @intFromBool(self.z)) << 7 |
-            @as(u8, @intFromBool(self.s)) << 6 |
-            @as(u8, @intFromBool(self.h)) << 5 |
-            @as(u8, @intFromBool(self.c)) << 4;
-        self.update();
-        // print("new flags: z: {any}, c: {any}, s: {any}, h: {any}\n", .{ self.z, self.c, self.s, self.h });
+    inline fn zFlag(self: *FlagRegister) bool {
+        return self.value & (1 << 7) != 0;
     }
-    fn check(self: *@This(), condition: Conditions) bool {
-        var ret = true;
-        switch (condition) {
-            .h => |*h| {
-                if (h.*) {
-                    // print("h, flag:{any}\n", .{self.h});
-                    if (!self.h) ret = false;
-                } else {
-                    // print("not h flag:{any}\n", .{self.h});
-                    if (self.h) ret = false;
-                }
-            },
-            .z => |*z| {
-                if (z.*) {
-                    // print("z flag:{any}\n", .{self.z});
-                    if (!self.z) ret = false;
-                } else {
-                    // print("not z flag:{any}\n", .{self.z});
-                    if (self.z) ret = false;
-                }
-            },
-            .c => |*c| {
-                if (c.*) {
-                    // print("c flag:{any}\n", .{self.c});
-                    if (!self.c) ret = false;
-                } else {
-                    // print("not c flag:{any}\n", .{self.c});
-                    if (self.c) ret = false;
-                }
-            },
-            .s => |*s| {
-                if (s.*) {
-                    // print("s flag:{any}\n", .{self.s});
-                    if (!self.s) ret = false;
-                } else {
-                    // print("not s flag:{any}\n", .{self.s});
-                    if (self.s) ret = false;
-                }
-            },
-            .none => {
-                // print("no condition, just jump\n", .{}),
-            },
-        }
-        return ret;
+    inline fn hFlag(self: *FlagRegister) bool {
+        return self.value & (1 << 5) != 0;
+    }
+    inline fn sFlag(self: *FlagRegister) bool {
+        return self.value & (1 << 6) != 0;
+    }
+    inline fn write(self: *FlagRegister, z: bool, c: bool, h: bool, s:bool) void {
+       self.value = (@as(u8, @intFromBool(z)) << 7) | // Z
+                    (@as(u8, @intFromBool(s)) << 6) | // N always set
+                    (@as(u8, @intFromBool(h)) << 5) |
+                    (@as(u8, @intFromBool(c)) << 4);
+    }
+    inline fn check(self: *FlagRegister, cond: Condition) bool {
+        return switch (cond) {
+            .none => true,
+            .z  => self.zFlag(), // Z
+            .nz => !self.zFlag(),
+            .c  => self.cFlag(), // C
+            .nc => !self.cFlag(),
+        };
     }
 };
 
 const InstructionSet = struct {
     const InstrFn = *const fn (*GB, InstrArgs) u8;
-    const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: FlagRegister.Conditions, targets: struct { to: regID, from: regID } };
+    const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: Condition, targets: struct { to: regID, from: regID } };
     fn NOP(gb: *GB, _: InstrArgs) u8 { // TODO test
         const zone = tracy.beginZone(@src(), .{ .name = "NOP" });
         defer zone.end();
@@ -100,10 +62,11 @@ const InstructionSet = struct {
         const value = gb.cpu.get_byte(args.target);
         // print("INCr8, target: {any}\n", .{args.target});
         gb.cpu.set_byte(args.target, @addWithOverflow(value, 1)[0]);
-        gb.cpu.f.h = (value & 0xF + 1) & 0x10 == 0x10; // half carry conditions
-        gb.cpu.f.z = gb.cpu.get_byte(args.target) == 0;
-        gb.cpu.f.s = false;
-        gb.cpu.f.write();
+        const h = (value & 0xF + 1) & 0x10 == 0x10; // half carry conditions
+        const z = gb.cpu.get_byte(args.target) == 0;
+        const s = false;
+        const c = gb.cpu.f.cFlag();
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.pc += 1;
         return 1;
     }
@@ -124,10 +87,11 @@ const InstructionSet = struct {
         // print("DECr8, target: {any} ({d} -= 1)\n", .{ args.target, gb.cpu.get_byte(args.target) });
         const res = @subWithOverflow(value, 1)[0];
         gb.cpu.set_byte(args.target, res);
-        gb.cpu.f.z = res == 0;
-        gb.cpu.f.s = true;
-        gb.cpu.f.h = (value & 0xF) & 0x10 == 0x10; // half carry conditions
-        gb.cpu.f.write();
+        const h = (value & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res == 0;
+        const s = true;
+        const c = gb.cpu.f.cFlag();
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.pc += 1;
         return 1;
     }
@@ -280,11 +244,9 @@ const InstructionSet = struct {
         // print("LDHAn16, \n", .{});
         // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
         // print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
-        if (memory_place >= 0xFF00 and memory_place <= 0xFFFF) {
-            const n = gb.read_byte(memory_place);
-            // print("n: 0x{X} --> A\n", .{n});
-            gb.cpu.set_byte(regID.a, n);
-        }
+        const n = gb.read_byte(memory_place);
+        // print("n: 0x{X} --> A\n", .{n});
+        gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 2;
         return 3;
     }
@@ -342,8 +304,8 @@ const InstructionSet = struct {
         // print("XORA, target {any}\n", .{args.target});
         gb.cpu.registers[@intFromEnum(regID.a)] ^= gb.cpu.registers[@intFromEnum(args.target)];
         if (gb.cpu.registers[@intFromEnum(regID.a)] == 0) {
-            gb.cpu.f.z = true;
-            gb.cpu.f.write();
+            // const z = true;
+            gb.cpu.f.write(true, gb.cpu.f.cFlag(),  gb.cpu.f.hFlag(), gb.cpu.f.sFlag());
         }
         gb.cpu.pc += 1;
         return 1;
@@ -355,11 +317,11 @@ const InstructionSet = struct {
         // print("ADDAr8 target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
         const res: struct { u8, u1 } = @addWithOverflow(a, value);
-        gb.cpu.f.s = false;
-        gb.cpu.f.c = res[1] == 1;
-        gb.cpu.f.h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
-        gb.cpu.f.z = res[0] == 0;
-        gb.cpu.f.write();
+        const s = false;
+        const c = res[1] == 1;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
         return 1;
@@ -371,11 +333,11 @@ const InstructionSet = struct {
         // print("SUBA target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
         const res: struct { u8, u1 } = @subWithOverflow(a, value);
-        gb.cpu.f.c = value > a;
-        gb.cpu.f.s = true;
-        gb.cpu.f.h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
-        gb.cpu.f.z = res[0] == 0;
-        gb.cpu.f.write();
+        const c = value > a;
+        const s = true;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
         return 1;
@@ -388,11 +350,11 @@ const InstructionSet = struct {
         // print("ADDAHL:A + mem@0x{X}: value: {d} \n", .{ mem_place, value });
         const a = gb.cpu.get_byte(regID.a);
         const res: struct { u8, u1 } = @addWithOverflow(a, value);
-        gb.cpu.f.s = false;
-        gb.cpu.f.c = res[1] == 1;
-        gb.cpu.f.h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
-        gb.cpu.f.z = res[0] == 0;
-        gb.cpu.f.write();
+        const s = false;
+        const c = res[1] == 1;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
         return 2;
@@ -404,10 +366,11 @@ const InstructionSet = struct {
         const value = gb.cpu.get_word(args.target);
         // print("ADDHL {any} + hl, {d} + {d} \n", .{ args.target, value, hl });
         const res: u16 = @addWithOverflow(hl, value)[0];
-        gb.cpu.f.s = false;
-        gb.cpu.f.h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
-        gb.cpu.f.c = (((hl + value) >> 12) & 0xF) & 0x10 == 0x10;
-        gb.cpu.f.write();
+        const s = false;
+        const h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
+        const c = (((hl + value) >> 12) & 0xF) & 0x10 == 0x10;
+        const z = gb.cpu.f.zFlag();
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.set_word(regID.h, res);
         gb.cpu.pc += 1;
         return 2;
@@ -425,8 +388,11 @@ const InstructionSet = struct {
         const a = gb.cpu.get_byte(regID.a);
         // print("RRCA\n", .{});
         gb.cpu.set_byte(regID.a, a << 7 | a >> 1);
-        gb.cpu.f.c = (@as(u1, @truncate(a)) == 1);
-        gb.cpu.f.write();
+        const c = (@as(u1, @truncate(a)) == 1);
+        const s = gb.cpu.f.sFlag();
+        const h = gb.cpu.f.hFlag();
+        const z = gb.cpu.f.zFlag();
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.pc += 1;
         return 1;
     }
@@ -465,7 +431,7 @@ const InstructionSet = struct {
         if (args.target == regID.a) {
             gb.cpu.set_byte(regID.a, high);
             gb.cpu.f.value = low;
-            gb.cpu.f.update();
+            // gb.cpu.f.update();
         } else gb.cpu.set_word(args.target, value);
         gb.cpu.pc += 1;
         return 3;
@@ -486,7 +452,7 @@ const InstructionSet = struct {
         }
     }
     fn JR(gb: *GB, args: InstrArgs) u8 { // TODO ONLY 2 CYCLES IF NOT TAKEN OTHERWISE 3
-        const zone = tracy.beginZone(@src(), .{ .name = "JR" });
+        const zone = tracy.beginZone(@src(), .{ .name = "JR", .color = 0x00FF00 });
         defer zone.end();
         // print("JR, \tcondition:", .{});
         const dist: i8 = @bitCast(gb.read_byte(gb.cpu.pc + 1));
@@ -554,48 +520,48 @@ const InstructionSet = struct {
         }
     }
     fn CPAn8(gb: *GB, _: InstrArgs) u8 { // TODO TEST;
-        const zone = tracy.beginZone(@src(), .{ .name = "CPAn8" });
+        const zone = tracy.beginZone(@src(), .{ .name = "CPAn8",  .color = 0x00FF00});
         defer zone.end();
         // print("CPAn8, \n", .{});
         const n = gb.read_byte(gb.cpu.pc + 1);
         const reg = gb.cpu.get_byte(regID.a);
         // print("n b1: [pc]0x{X} \t(0x{X}), A: 0x{X}\n", .{ gb.cpu.pc + 1, n, gb.cpu.get_byte(regID.a) });
-        const res = @subWithOverflow(reg, n);
-        gb.cpu.f.z = res[0] == 0;
-        gb.cpu.f.s = true;
-        gb.cpu.f.h = (reg & 0xF) < (res[0] & 0xF); // half carry conditions
-        gb.cpu.f.c = res[1] == 1;
-        gb.cpu.f.write();
+        // const res = @subWithOverflow(reg, n);
+        const z = reg == n;
+        const s = true;
+        const h = (reg & 0xF) < (n & 0xF); // half carry conditions
+        const c = reg < n;
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.pc += 2;
         return 2;
     }
     fn CPAr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST;
-        const zone = tracy.beginZone(@src(), .{ .name = "CPAr8" });
+        const zone = tracy.beginZone(@src(), .{ .name = "CPAr8",  .color = 0x00FF00 });
         defer zone.end();
         const n = gb.cpu.get_byte(args.target);
         // print("CPAr8, target = {any}\n", .{args.target});
         const reg = gb.cpu.get_byte(regID.a);
-        const res = @subWithOverflow(reg, n);
-        gb.cpu.f.z = res[0] == 0;
-        gb.cpu.f.s = true;
-        gb.cpu.f.h = (reg & 0xF) < (res[0] & 0xF); // half carry conditions
-        gb.cpu.f.c = res[1] == 1;
-        gb.cpu.f.write();
+        // const res = @subWithOverflow(reg, n);
+        const z = reg == n;
+        const s = true;
+        const h = (reg & 0xF) < (n & 0xF); // half carry conditions
+        const c = reg < n;
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.pc += 1;
         return 1;
     }
     fn CPAHL(gb: *GB, _: InstrArgs) u8 { // TODO TEST;
-        const zone = tracy.beginZone(@src(), .{ .name = "CPAHL" });
+        const zone = tracy.beginZone(@src(), .{ .name = "CPAHL",  .color = 0x00FF00 });
         defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const reg = gb.cpu.get_byte(regID.a);
         // print("CPAHL, compare mem_place: 0x{X} ({d}) to A:{d}\n", .{ hl, gb.read_byte(hl), reg });
-        const res = @subWithOverflow(reg, hl);
-        gb.cpu.f.z = res[0] == 0;
-        gb.cpu.f.s = true;
-        gb.cpu.f.h = (reg & 0xF) < (res[0] & 0xF); // half carry conditions
-        gb.cpu.f.c = res[1] == 1;
-        gb.cpu.f.write();
+        // const res = @subWithOverflow(reg, hl);
+        const z = reg == hl;
+        const s = true;
+        const h = (reg & 0xF) < (hl & 0xF); // half carry conditions
+        const c = reg < hl;
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.pc += 1;
         return 2;
     }
@@ -608,9 +574,11 @@ const InstructionSet = struct {
         const target = gb.cpu.get_byte(args.bit_target.target);
         // print("BITTEST, target: {any}, bit: {any}, reg_bin: 0b{b}", .{ args.bit_target.target, args.bit_target.bit, target });
         // print("                                             ^", .{});
-        gb.cpu.f.z = @as(u1, @truncate(target >> bit)) == 0; // set zero flag if the target bit is not set
-        gb.cpu.f.h = true; // set half carry
-        gb.cpu.f.write();
+        const z = @as(u1, @truncate(target >> bit)) == 0; // set zero flag if the target bit is not set
+        const h = true; // set half carry
+        const s = gb.cpu.f.sFlag();
+        const c = gb.cpu.f.cFlag();
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.pc += 2;
         return 2;
     }
@@ -621,22 +589,26 @@ const InstructionSet = struct {
         // print("BITTESTHL, target: {any}, bit: {any}\n", .{ args.bit_target.target, args.bit_target.bit });
         const hl = gb.cpu.get_word(args.target);
         const byte = gb.read_byte(hl);
-        gb.cpu.f.z = @as(u1, @truncate(byte >> bit)) == 0;
-        gb.cpu.f.h = true;
-        gb.cpu.f.write();
+        const z = @as(u1, @truncate(byte >> bit)) == 0;
+        const h = true;
+        const c = gb.cpu.f.cFlag();
+        const s = gb.cpu.f.sFlag();
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.pc += 2;
         return 3;
     }
     fn RL(gb: *GB, args: InstrArgs) u8 { // TODO TEST Rotate bits in register r8 left through carry.
         const zone = tracy.beginZone(@src(), .{ .name = "RL" });
         defer zone.end();
-        const carried = gb.cpu.f.c;
+        const carried = gb.cpu.f.cFlag();
         const reg = gb.cpu.get_byte(args.target);
         // print("RL, target: {any}, prior: 0b{b}, carried = {d}\n", .{ args.target, reg, @intFromBool(carried) });
-        gb.cpu.f.c = @as(u1, @truncate(reg >> 7)) == 1;
+        const c = @as(u1, @truncate(reg >> 7)) == 1;
         const rotated: u8 = reg << 1 | @intFromBool(carried);
-        gb.cpu.f.z = rotated == 0;
-        gb.cpu.f.write();
+        const z = rotated == 0;
+        const h = true;
+        const s = gb.cpu.f.sFlag();
+        gb.cpu.f.write(z, c, h, s);
         gb.cpu.set_byte(args.target, rotated);
         // print("after: 0b{b}\n", .{gb.cpu.get_byte(args.target)});
         gb.cpu.pc += 2;
@@ -673,7 +645,7 @@ const InstructionSet = struct {
                 0x15 => DECr8(gb, .{ .target = regID.d }),
                 0x16 => LD8(gb, .{ .target = regID.d }),
                 0x17 => UNDEF(gb, .{ .none = {} }),
-                0x18 => JR(gb, .{ .flagConditions = .{ .none = true } }),
+                0x18 => JR(gb, .{ .flagConditions = .none }),
                 0x19 => ADDHLr16(gb, .{ .target = regID.d }),
                 0x1A => LDAr16(gb, .{ .target = regID.d }),
                 0x1B => DECr16(gb, .{ .target = regID.d }),
@@ -681,7 +653,7 @@ const InstructionSet = struct {
                 0x1D => DECr8(gb, .{ .target = regID.e }),
                 0x1E => LD8(gb, .{ .target = regID.e }),
                 0x1F => UNDEF(gb, .{ .none = {} }),
-                0x20 => JR(gb, .{ .flagConditions = .{ .z = false } }),
+                0x20 => JR(gb, .{ .flagConditions = .nz }),
                 0x21 => LD16(gb, .{ .target = regID.h }),
                 0x22 => LDHLIA(gb, .{ .none = {} }),
                 0x23 => INCr16(gb, .{ .target = regID.h }),
@@ -689,7 +661,7 @@ const InstructionSet = struct {
                 0x25 => UNDEF(gb, .{ .none = {} }),
                 0x26 => UNDEF(gb, .{ .none = {} }),
                 0x27 => UNDEF(gb, .{ .none = {} }),
-                0x28 => JR(gb, .{ .flagConditions = .{ .z = true } }),
+                0x28 => JR(gb, .{ .flagConditions = .z }),
                 0x29 => UNDEF(gb, .{ .none = {} }),
                 0x2A => UNDEF(gb, .{ .none = {} }),
                 0x2B => UNDEF(gb, .{ .none = {} }),
@@ -844,17 +816,17 @@ const InstructionSet = struct {
                 0xC0 => UNDEF(gb, .{ .none = {} }),
                 0xC1 => POP(gb, .{ .target = regID.b }),
                 0xC2 => UNDEF(gb, .{ .none = {} }),
-                0xC3 => JP(gb, .{ .flagConditions = .{ .none = true } }),
+                0xC3 => JP(gb, .{ .flagConditions = .none }),
                 0xC4 => UNDEF(gb, .{ .none = {} }),
                 0xC5 => PUSH(gb, .{ .target = regID.b }),
                 0xC6 => UNDEF(gb, .{ .none = {} }),
                 0xC7 => UNDEF(gb, .{ .none = {} }),
                 0xC8 => UNDEF(gb, .{ .none = {} }),
-                0xC9 => RET(gb, .{ .flagConditions = .{ .none = true } }),
+                0xC9 => RET(gb, .{ .flagConditions =  .none }),
                 0xCA => UNDEF(gb, .{ .none = {} }),
                 0xCB => UNDEF(gb, .{ .none = {} }),
                 0xCC => UNDEF(gb, .{ .none = {} }),
-                0xCD => CALLn16(gb, .{ .flagConditions = .{ .none = true } }),
+                0xCD => CALLn16(gb, .{ .flagConditions = .none }),
                 0xCE => UNDEF(gb, .{ .none = {} }),
                 0xCF => UNDEF(gb, .{ .none = {} }),
                 0xD0 => UNDEF(gb, .{ .none = {} }),
@@ -1219,7 +1191,8 @@ const CPU = struct {
             self.pc += 1;
             byte = gb.read_byte(self.pc);
         }
-        // print("[pc]0x{X}\t(0x{X})\n", .{ self.pc, byte });
+        // print("[pc]0x{X}\t(0x{X})\nly: {d}\n", .{ self.pc, byte, gb.gpu.getSpecialRegister(.ly) });
+        
         const cycles_spent = InstructionSet.exe_from_byte(gb, byte, prefixed);
         if (cycles_spent == 255) return error.UNDEF_INSTRUCTION;
         // print("\n", .{});
@@ -1348,7 +1321,7 @@ const GPU = struct {
                     self.mode = .SCAN;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
                     self.frames_cycled += 1;
-                    // print("fps: {d}\n", .{ @as(f64, @floatFromInt(self.frame_cycles)) / 70224});
+                    // print("frames: {d}", .{self.frames_cycled});
                     // self.frame_cycles = 0;
                 } else {
                     self.setSpecialRegister(.ly, new_ly);
@@ -1376,7 +1349,7 @@ const GPU = struct {
                 // - Background tiles at the current scroll position
                 // - Window tiles if enabled and visible on this line
                 // - Sprites that were found during OAM scan
-                @memset(&self.scanline, Color.white);
+                // @memset(&self.scanline, Color.white);
             },
             else => {}, // no action for hblank or vblank
         }
@@ -1386,17 +1359,16 @@ const GPU = struct {
         // TODO the gpu should tick/cycle just as many
         // times as the cpu did, while being able to
         // process interrupts and continue on as well as changing modes midscanline when needed
-        const zone = tracy.beginZone(@src(), .{ .name = "GPU TICK" });
+        const zone = tracy.beginZone(@src(),
+            .{ .name = "GPU TICK" });
         defer zone.end();
         var cycles_left = cycles; // amt of cycles spent by cpu
         while (cycles_left > 0) {
             const cycles_to_process: u16 = @min(cycles_left, self.mode_cycles_left);
             // self.frame_cycles += cycles_to_process;
             self.do();
-
             self.mode_cycles_left -= cycles_to_process;
             cycles_left -= cycles_to_process;
-
             if (self.mode_cycles_left == 0) {
                 self.switchMode(); // handles drawing the screen, updating ly
                 // print("Mode switch: {any}, LY: {d}, stat: {d}\n", .{ self.mode, self.getSpecialRegister(.ly), self.getSpecialRegister(.stat) });
@@ -1611,28 +1583,23 @@ const LCD = struct {
     }
 };
 const Clock = struct {
-    timer: std.time.Timer = undefined,
-    ticks: usize = 0,
-    ns_elapsed: usize = 0,
-    fn start(self: *Clock) !void {
-        self.timer = try std.time.Timer.start();
+    start: i128 = undefined,
+    ns_elapsed: isize = 0,
+    last_frame_time: i128 = undefined,
+    fn Start(self: *Clock) !void {
+        self.start = Now();
+        self.last_frame_time = self.start;
     }
-    fn tick(self: *Clock) bool {
-        const zone = tracy.beginZone(@src(), .{ .name = "Tick" });
+    const Now = std.time.nanoTimestamp;
+    fn update(self: *Clock) void {
+        const zone = tracy.beginZone(@src(), .{ .name = "update clock" });
         defer zone.end();
-        const ns_passed = self.timer.lap();
-        self.ns_elapsed += ns_passed;
-        self.ticks += 1;
+        const now = Now();
+        const frame_time = now - self.last_frame_time;
+        self.last_frame_time = now;
+        self.ns_elapsed += @intCast(frame_time);
         // TODO tick at 239 ns per tick
-        // if (self.ticks % ticks_per_frame == 0)
-        //     print("fps: {d}\n", .{self.fpsCounter()});
-        // print("ticked after: {d} ns\n", .{ns_passed});
-        return true;
     }
-    fn fpsCounter(self: *Clock) usize {
-        return @intFromFloat(@as(f64, @floatFromInt(self.ticks / ticks_per_frame)) / (@as(f64, @floatFromInt(self.ns_elapsed)) / std.time.ns_per_s));
-    }
-
     const ticks_per_s = 4.19 * @as(f64, std.math.pow(u64, 10, 6));
     const fps = 60;
 
@@ -1660,7 +1627,7 @@ pub const GB = struct {
     const cycle_time_ns = @round(freqMHz * std.math.pow(u16, 10, 3)); // tick at 4.19 MHz
     //
     fn fpsCounter(self: *GB) f64 {
-        return (@as(f64, @floatFromInt(self.gpu.frames_cycled))) / (@as(f64, @floatFromInt(self.clock.ns_elapsed)) / std.time.ns_per_s);
+        return @as(f64, @floatFromInt(self.gpu.frames_cycled)) / (@as(f64, @floatFromInt(self.clock.ns_elapsed)) / std.time.ns_per_s);
     }
 
     pub fn init(self: *@This()) !void {
@@ -1673,26 +1640,46 @@ pub const GB = struct {
         self.running = true;
     }
 
-    pub fn read_byte(self: *@This(), address: usize) u8 {
+    pub fn read_byte(self: *@This(), address: u16) u8 {
         const zone = tracy.beginZone(@src(), .{ .name = "read mem byte" });
         defer zone.end();
         // TODO: implement memory mapping based on address
-        return self.memory[address];
+        @setRuntimeSafety(false);
+        return switch (address) {
+            GPU.VRAM_BEGIN...GPU.VRAM_END + 1 =>
+                // println("mem before: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
+                self.gpu.readVram(address)
+                // println("mem after: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
+            ,
+            else =>  self.memory[address]
+        };
+
     }
 
-    pub fn writeByte(self: *@This(), address: usize, value: u8) void {
+    pub fn writeByte(self: *@This(), address: u16, value: u8) void {
         const zone = tracy.beginZone(@src(), .{ .name = "write mem byte" });
         defer zone.end();
+        @setRuntimeSafety(false);
+        var sr_index: u16 = undefined;
         switch (address) {
             GPU.VRAM_BEGIN...GPU.VRAM_END + 1 => {
                 // println("mem before: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
                 self.gpu.writeVram(address, value);
                 // println("mem after: mem@0x{X} = 0x{X}", .{ address, self.read_byte(address) });
             },
-            @intFromEnum(LCD.special_registers.dma) => {
-                const prefix = address / 0x100;
-                const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
-                @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
+            LCD.special_registers.start ... LCD.special_registers.end + 1=> {
+                sr_index = address - LCD.special_registers.start;
+                switch (@as(LCD.special_registers, @enumFromInt(sr_index))) {
+                    LCD.special_registers.dma => {
+                        const prefix = address / 0x100;
+                        const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
+                        @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
+                    },
+                    LCD.special_registers.scy => {
+                        self.gpu.setSpecialRegister(.scy, value);
+                    },
+                    else => {}
+                }
             },
             // 0xFF50 => { // Disable bootrom register
             //     // Unmap and replace the bootrom with cartridge data
@@ -1727,20 +1714,31 @@ pub const GB = struct {
     }
 
     pub fn go(self: *@This()) !void {
-        try self.clock.start();
+        try self.clock.Start();
         while (self.cpu.pc < 0x100 and self.running) {
             // try self.getEvents()
-            _ = self.clock.tick();
+            // _ = self.clock.update();
             try self.do();
             //TODO: Update peripherals & timing
         }
     }
     fn do(self: *@This()) !void {
         const cycles_spent = try self.cpu.execute(self);
-        const ly = self.gpu.getSpecialRegister(.ly);
-        if (ly == 0) print("fps: {d}\n", .{self.fpsCounter()});
-        // print("ly: {d}", .{ly});
+        // const ly = self.gpu.getSpecialRegister(.ly);
         self.cycles_spent += cycles_spent;
+        if (self.cycles_spent >= 70224) {
+            self.clock.update();
+            self.cycles_spent = 0;
+        }
+        if (self.clock.ns_elapsed >= 1_000_000_000) {
+            std.debug.print("fps: {d}\n", .{@as(u32, @intFromFloat(self.fpsCounter()))});
+            // print("scy: {d}\n", .{ self.gpu.getSpecialRegister(.scy) });
+            self.gpu.frames_cycled = 0;
+            self.clock.ns_elapsed = 0;
+        }
+
+        // if (ly == 0)
+        // print("ly: {d}", .{ly});
         self.gpu.tick(cycles_spent * 4);
     }
     fn getEvents(self: *@This()) !void {
@@ -1810,8 +1808,5 @@ pub fn main() !void {
         return;
     };
     defer gb.endGB();
-
-    // tracy.
-
     try gb.go();
 }
