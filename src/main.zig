@@ -1629,27 +1629,43 @@ const Clock = struct {
     last_frame_time: i128 = undefined,
     last_fps: f64 = 0,
     current_fps: f64 = 0,
+    slept: u64 = 0,
     fn Start(self: *Clock) !void {
         self.start = Now();
         self.last_frame_time = self.start;
     }
     const Now = std.time.nanoTimestamp;
 
-    fn targetCycles(self: *Clock) usize {
+    fn targetCycles(self: *Clock) u64 {
         const total_elapsed_ns: u64 = @intCast(Now() - self.start);
-        return total_elapsed_ns * @as(u64, @intFromFloat(ticks_per_s)) / std.time.ns_per_s;
+        return total_elapsed_ns / @as(u64, @intFromFloat(ns_per_tick));
     }
-
+    fn tick(self: *Clock) void {
+        const now = Now();
+        const ns_passed = now - self.last_frame_time;
+        if (ns_passed < ns_per_frame) {
+            const wait_time_ns: u64 = @intCast(ns_per_frame - ns_passed);
+            if (wait_time_ns > 5000) {
+                std.time.sleep(wait_time_ns - 5000); // sleep when necessary
+                // print("slept {d}\n", .{wait_time_ns});
+            } else {
+                const wait_start = Now();
+                while (Now() - wait_start < wait_time_ns) {} // spin max 5000 ns
+                print("spun {d}\n", .{wait_time_ns});
+            }
+        }
+    }
     fn update(self: *Clock) void {
         const now = Now();
         const frame_time = now - self.last_frame_time;
+        self.last_frame_time = now;
         self.ns_elapsed += @intCast(frame_time);
         const fps_estimate = std.time.ns_per_s / @as(f64, @floatFromInt(frame_time));
         const smoothing = 0.8;
         self.current_fps = smoothing*self.last_fps + (1.0 - smoothing)*fps_estimate;
-        self.last_frame_time = now;
         if (self.ns_elapsed >= std.time.ns_per_s) {
-            std.debug.print("fps: {d}\n", .{@as(u64, @intFromFloat(self.current_fps))});
+            // std.debug.print("frame time: {d}\n", .{fps_estimate});
+           print("{d} fps\n", .{@as(u16, @intFromFloat(self.current_fps))});
             self.ns_elapsed = 0;
         }
         self.last_fps = self.current_fps;
@@ -1657,6 +1673,7 @@ const Clock = struct {
     const ticks_per_s = 4.194304 * @as(f64, std.math.pow(u64, 10, 6));
     const ticks_per_ns = ticks_per_s / std.time.ns_per_s;
     const ns_per_tick = 1 / ticks_per_ns;
+    const ns_per_frame: u64 = @intFromFloat(@round(1_000_000_000.0 / 59.744));
 };
 
 /// Gameboy Machine, defer endGB
@@ -1674,13 +1691,10 @@ pub const GB = struct {
     // startup
     var prng: std.Random.Xoshiro256 = undefined;
     pub fn init(self: *@This()) !void {
-        // init random here
-        var seed: u64 = undefined;
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        GB.prng = std.Random.DefaultPrng.init(seed);
         @memset(&self.memory, 0);
         @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
         self.init_header_checksum(); // from loaded cartidge
+        try initRandom(); // init random before gpu init
         try self.gpu.init(self);
         try self.cpu.init();
         _ = InstructionSet.exe_from_byte(self, 0, false); // dummy op to init cache
@@ -1738,12 +1752,17 @@ pub const GB = struct {
         print("GO!\n", .{});
         try self.clock.Start();
         while (self.cpu.pc < 0x100 and self.running) {
-            try self.do();
-            if (self.gpu.frame_cycles_spent >= 70224) {
-                try self.getEvents(); // poll events once per frame
-                self.clock.update(); // calculates average fps
-                self.gpu.lcd.renderAll(); // render at the last scanline
-                self.gpu.frame_cycles_spent = 0;
+            const target_cycles = self.clock.targetCycles();
+            while(self.cycles_spent <= target_cycles) {
+                try self.do();
+                if (self.gpu.frame_cycles_spent >= 70224) {
+                    try self.getEvents(); // poll events once per frame
+                    if (self.gpu.frames_cycled == 0) self.clock.last_frame_time = Clock.Now();
+                    self.clock.tick();
+                    self.clock.update(); // calculates average fps
+                    self.gpu.lcd.renderAll(); // render at the last scanline
+                    self.gpu.frame_cycles_spent = 0;
+                }
             }
         }
     }
@@ -1751,6 +1770,12 @@ pub const GB = struct {
         const cycles_spent = try self.cpu.execute(self);
         self.cycles_spent += cycles_spent;
         self.gpu.tick(cycles_spent * 4);
+    }
+    // helper
+    fn initRandom() !void {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        GB.prng = std.Random.DefaultPrng.init(seed);
     }
     // universal callers
     pub fn readByte(self: *@This(), address: u16) u8 {
@@ -1836,6 +1861,7 @@ pub const GB = struct {
 };
 
 pub fn main() !void {
+    // print("ns per frame: {d}", .{Clock.ns_per_frame});
     var gb = GB{};
     gb.init() catch |err| {
         print("Couldn't inititalize GameBoy, Error: {any}\n", .{err});
