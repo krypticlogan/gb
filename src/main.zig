@@ -14,43 +14,10 @@ fn print(comptime fmt: []const u8, args: anytype) void {
 }
 const allocator = std.heap.page_allocator;
 
-const Condition = union(enum) { none, z, c, nz, nc };
-const FlagRegister = struct {
-    value: u8 = 0,
-    inline fn cFlag(self: *FlagRegister) bool {
-        return self.value & (1 << 4) != 0;
-    }
-    inline fn zFlag(self: *FlagRegister) bool {
-        return self.value & (1 << 7) != 0;
-    }
-    inline fn hFlag(self: *FlagRegister) bool {
-        return self.value & (1 << 5) != 0;
-    }
-    inline fn sFlag(self: *FlagRegister) bool {
-        return self.value & (1 << 6) != 0;
-    }
-    inline fn write(self: *FlagRegister, z: bool, c: bool, h: bool, s: bool) void {
-        // const zone = tracy.beginZone(@src(), .{.name = "write flag", .color = 0xFF0000});
-        // defer zone.end();
-        self.value = (@as(u8, @intFromBool(z)) << 7) | // Z
-            (@as(u8, @intFromBool(s)) << 6) | // N always set
-            (@as(u8, @intFromBool(h)) << 5) |
-            (@as(u8, @intFromBool(c)) << 4);
-    }
-    inline fn check(self: *FlagRegister, cond: Condition) bool {
-        return switch (cond) {
-            .z => self.zFlag(), // Z
-            .nz => !self.zFlag(),
-            .c => self.cFlag(), // C
-            .nc => !self.cFlag(),
-            .none => true
-        };
-    }
-};
-
 const InstructionSet = struct {
     const InstrFn = *const fn (*GB, InstrArgs) u8;
     const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: Condition, targets: struct { to: regID, from: regID } };
+    const Condition = union(enum) { none, z, c, nz, nc };
     fn NOP(gb: *GB, _: InstrArgs) u8 { // TODO test
         const zone = tracy.beginZone(@src(), .{ .name = "NOP" });
         defer zone.end();
@@ -1137,7 +1104,6 @@ const InstructionSet = struct {
         };
     }
 };
-
 pub const regID = enum(u3) {
     a,
     b,
@@ -1155,33 +1121,13 @@ const CPU = struct {
     pc: u16 = undefined,
     sp: u16 = undefined,
     last_ins: u16 = 0x0,
-
-    const WRAM_START = 0xC000;
-    const WRAM_END = 0xDFFF;
-    fn init(self: *@This()) !void {
+    pub fn init(self: *@This()) !void {
         @memset(&self.registers, 0);
         self.pc = 0; //TODO: program start value
         self.sp = 0;
     }
-
-    pub fn set_byte(self: *@This(), reg1: regID, value: u8) void {
-        self.registers[@intFromEnum(reg1)] = value;
-    }
-
-    pub fn get_byte(self: *@This(), reg1: regID) u8 {
-        return self.registers[@intFromEnum(reg1)];
-    }
-
-    pub fn set_word(self: *@This(), reg1: regID, value: u16) void {
-        self.registers[@intFromEnum(reg1)] = @truncate((value & 0xFF00) >> 8);
-        self.registers[@intFromEnum(reg1) + 1] = @truncate(value & 0x00FF);
-    }
-
-    pub fn get_word(self: *@This(), reg1: regID) u16 {
-        return (@as(u16, self.registers[@intFromEnum(reg1)]) << 8) | self.registers[@intFromEnum(reg1) + 1];
-    }
-
-    fn execute(self: *@This(), gb: *GB) !u8 {
+    // cpu execution
+    pub fn execute(self: *@This(), gb: *GB) !u8 {
         const exe_zone = tracy.beginZone(@src(), .{ .name = "Execute Ins" });
         defer exe_zone.end();
         var byte = gb.readByte(self.pc);
@@ -1191,8 +1137,7 @@ const CPU = struct {
             self.pc += 1;
             byte = gb.readByte(self.pc);
         }
-        // print("[pc]0x{X}\t(0x{X})\nly: {d}\n", .{ self.pc, byte, gb.gpu.getSpecialRegister(.ly) });
-
+        // print("[pc]0x{X}\t(0x{X})\n", .{ self.pc, byte});
         const cycles_spent = InstructionSet.exe_from_byte(gb, byte, prefixed);
         if (cycles_spent == 255) return error.UNDEF_INSTRUCTION;
         // print("\n", .{});
@@ -1201,28 +1146,72 @@ const CPU = struct {
         // }
         return cycles_spent;
     }
+    // memory ops
+    pub fn set_byte(self: *@This(), reg1: regID, value: u8) void {
+        self.registers[@intFromEnum(reg1)] = value;
+    }
+    pub fn get_byte(self: *@This(), reg1: regID) u8 {
+        return self.registers[@intFromEnum(reg1)];
+    }
+    pub fn set_word(self: *@This(), reg1: regID, value: u16) void {
+        self.registers[@intFromEnum(reg1)] = @truncate((value & 0xFF00) >> 8);
+        self.registers[@intFromEnum(reg1) + 1] = @truncate(value & 0x00FF);
+    }
+    pub fn get_word(self: *@This(), reg1: regID) u16 {
+        return (@as(u16, self.registers[@intFromEnum(reg1)]) << 8) | self.registers[@intFromEnum(reg1) + 1];
+    }
+    // types & context
+    const FlagRegister = struct {
+        value: u8 = 0,
+        inline fn cFlag(self: *FlagRegister) bool {
+            return self.value & (1 << 4) != 0;
+        }
+        inline fn zFlag(self: *FlagRegister) bool {
+            return self.value & (1 << 7) != 0;
+        }
+        inline fn hFlag(self: *FlagRegister) bool {
+            return self.value & (1 << 5) != 0;
+        }
+        inline fn sFlag(self: *FlagRegister) bool {
+            return self.value & (1 << 6) != 0;
+        }
+        inline fn write(self: *FlagRegister, z: bool, c: bool, h: bool, s: bool) void {
+            // const zone = tracy.beginZone(@src(), .{.name = "write flag", .color = 0xFF0000});
+            // defer zone.end();
+        self.value = (@as(u8, @intFromBool(z)) << 7) | // Z
+            (@as(u8, @intFromBool(s)) << 6) | // N always set
+            (@as(u8, @intFromBool(h)) << 5) |
+                (@as(u8, @intFromBool(c)) << 4);
+        }
+        inline fn check(self: *FlagRegister, cond: InstructionSet.Condition) bool {
+            return switch (cond) {
+                .z => self.zFlag(), // Z
+            .nz => !self.zFlag(),
+                .c => self.cFlag(), // C
+            .nc => !self.cFlag(),
+                .none => true
+            };
+        }
+    };
+    const WRAM_START = 0xC000;
+    const WRAM_END = 0xDFFF;
 };
 
 const APU = struct {
     // TODO: implement sound
-
+    // startup
     fn init(self: *@This()) !void {
         _ = self;
         return;
     }
+    // apu execution
+    // mem ops
+    // types & context
 };
 
 /// Defines a gameboy GPU(PPU)
 /// - Handles writiing to vram and processing pixels from memory to the screen
 const GPU = struct {
-    const VRAM_BEGIN = 0x8000;
-    const VRAM_END = 0x97FF;
-    const VRAM_SIZE = VRAM_END - VRAM_BEGIN + 1;
-
-    const OAM_BEGIN = 0xFE00;
-    const OAM_END = 0xFE9F;
-    const OAM_SIZE = OAM_END - OAM_BEGIN + 1;
-
     vram: *[VRAM_SIZE]u8 = undefined,
     oam: *[OAM_SIZE]u8 = undefined,
     // Stores sprite attributes (position, tile index, attributes).
@@ -1236,22 +1225,13 @@ const GPU = struct {
     stat_reg: u8 = undefined,
     mode: Mode = undefined,
     lcd: LCD = undefined,
-
     scanline: [LCD.screenWidthPx]Color = undefined,
+    scanline_progress: u8 = 0,
     mode_cycles_left: u16 = 456,
-    // frame_cycles: usize = 0,
     frames_cycled: usize = 0,
+    frame_cycles_spent: u64 = 0,
+    // rand: std.Random = undefined,
 
-    const Mode = enum { // modes specifying number of cycles per scanline
-        HBLANK,
-        VBLANK,
-        SCAN,
-        RENDER,
-        const cycles: [4]u16 = .{ 204, 456, 80, 172 };
-    };
-
-    const Color = enum(u2) { black, dgray, lgray, white };
-    const Tile = [8][8]Color;
     fn empty_tile(self: *@This()) Tile {
         _ = self;
         var tile: Tile = undefined;
@@ -1260,7 +1240,7 @@ const GPU = struct {
         }
         return tile;
     }
-
+    // startup
     fn init(self: *@This(), gb: *GB) !void {
         self.vram = gb.memory[VRAM_BEGIN .. VRAM_END + 1];
         self.oam = gb.memory[OAM_BEGIN .. OAM_END + 1];
@@ -1270,35 +1250,71 @@ const GPU = struct {
         try self.lcd.init();
         @memset(&self.tile_set, empty_tile(self));
     }
-
-    fn setSpecialRegister(self: *@This(), register: LCD.special_registers, value: u8) void {
-        self.special_registers[@intFromEnum(register)] = value;
+    // gpu execution
+    fn tick(self: *@This(), cycles: u16) void {
+        // TODO the gpu should tick/cycle just as many
+        // times as the cpu did, while being able to
+        // process interrupts and continue on as well as changing modes midscanline when needed
+        // const zone = tracy.beginZone(@src(), .{ .name = "GPU TICK" });
+        // defer zone.end();
+        var cycles_left = cycles; // amt of cycles spent by cpu
+        self.frame_cycles_spent += cycles_left;
+        while (cycles_left > 0) {
+            const cycles_to_process: u8 = @intCast(@min(cycles_left, self.mode_cycles_left));
+            // self.frame_cycles += cycles_to_process;
+            self.do(cycles_to_process);
+            self.mode_cycles_left -= cycles_to_process;
+            cycles_left -= cycles_to_process;
+            if (self.mode_cycles_left == 0) {
+                self.switchMode(); // handles drawing the screen, updating ly
+                // print("Mode switch: {any}, LY: {d}, stat: {d}\n", .{ self.mode, self.getSpecialRegister(.ly), self.getSpecialRegister(.stat) });
+                // TODO LYC CHECK
+            }
+        }
     }
-    fn getSpecialRegister(self: *@This(), register: LCD.special_registers) u8 {
-        return self.special_registers[@intFromEnum(register)];
+    fn do(self: *@This(), cycles: u8) void {
+        // Operate GPU here
+        // const zone = tracy.beginZone(@src(), .{ .name = "DO GPU CYCLES" });
+        // defer zone.end();
+        var cycles_to_spend: f16 = @floatFromInt(cycles);
+        switch (self.mode) {
+            .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
+                // print("scanning\n", .{});
+                return;
+            },
+            .RENDER => { // 3 transfers pixels to the LCD, one scanline at a time, duration variable
+                // TODO: Generate the actual pixels for this scanline based on:
+                // - Background tiles at the current scroll position
+                // - Window tiles if enabled and visible on this line
+                // - Sprites that were found during OAM scan
+                const bg_cpp = 1.0075; // cycles per pixel
+                for (self.scanline_progress..self.scanline.len) |x| {
+                    const color: Color = GB.prng.random().enumValue(Color);
+                    self.scanline[x] = color;
+                    cycles_to_spend -= bg_cpp;
+                    self.scanline_progress+=1;
+                    if (cycles_to_spend <= 0) return;
+                }
+                return;
+            },
+            else => return, // no action for hblank or vblank
+        }
     }
     fn switchMode(self: *@This()) void {
-        const zone = tracy.beginZone(@src(), .{ .name = "Mode switch" });
-        defer zone.end();
         switch (self.mode) {
             .SCAN => {
-                const scan_zone = tracy.beginZone(@src(), .{ .name = "SCAN" });
-                defer scan_zone.end();
                 self.mode = .RENDER;
                 self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.RENDER)];
             },
             .RENDER => {
-                // print("render!! \n\n\n\n\n", .{});
-                const render_zone = tracy.beginZone(@src(), .{ .name = "RENDER" });
-                defer render_zone.end();
-                // self.lcd.pushScanline(self.scanline, self.getSpecialRegister(.ly));
+                const ly = self.getSpecialRegister(.ly);
+                self.lcd.pushScanline(self.scanline, ly);
                 self.mode = .HBLANK;
                 self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.HBLANK)];
+                self.scanline_progress = 0;
             },
             .HBLANK => {
                 // Increment LY register
-                const hblank_zone = tracy.beginZone(@src(), .{ .name = "HBLANK" });
-                defer hblank_zone.end();
                 const ly = self.getSpecialRegister(.ly);
                 self.setSpecialRegister(.ly, ly + 1);
                 if (ly + 1 == 144) {
@@ -1313,8 +1329,6 @@ const GPU = struct {
                 // TODO INTERRUPT
             },
             .VBLANK => {
-                const vblank_zone = tracy.beginZone(@src(), .{ .name = "VBLANK" });
-                defer vblank_zone.end();
                 const new_ly = self.getSpecialRegister(.ly) + 1;
                 // self.setSpecialRegister(.ly, ly + 1);
                 if (new_ly > 153) { // 153 is the end of VBLANK
@@ -1322,7 +1336,7 @@ const GPU = struct {
                     self.mode = .SCAN;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
                     self.frames_cycled += 1;
-                    // print("frames: {d}", .{self.frames_cycled});
+                    // print("frames: {d}\n", .{self.frames_cycled});
                     // self.frame_cycles = 0;
                 } else {
                     self.setSpecialRegister(.ly, new_ly);
@@ -1330,57 +1344,31 @@ const GPU = struct {
                 }
             },
         }
-        // update STAT register
-        var stat_reg = self.getSpecialRegister(.stat);
+        var stat_reg = self.getSpecialRegister(.stat); // update STAT register vv
         stat_reg = (stat_reg & 0b1111_1100) | @intFromEnum(self.mode);
         self.setSpecialRegister(.stat, stat_reg);
     }
 
-    fn do(self: *@This()) void {
-        // Operate GPU here
-        const zone = tracy.beginZone(@src(), .{ .name = "DO GPU CYCLES" });
-        defer zone.end();
-        switch (self.mode) {
-            .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
-                // print("scanning\n", .{});
-                return;
-            },
-            .RENDER => { // 3 transfers pixels to the LCD, one scanline at a time, duration variable
-                // var scanline: [LCD.screenWidthPx]Color = undefined;
-                // TODO: Generate the actual pixels for this scanline based on:
-                // - Background tiles at the current scroll position
-                // - Window tiles if enabled and visible on this line
-                // - Sprites that were found during OAM scan
-                // @memset(&self.scanline, Color.white);
-                return;
-            },
-            else => return, // no action for hblank or vblank
+    // memory ops
+    fn readVram(self: *@This(), address: usize) u8 {
+        if (self.mode != .RENDER) {
+            const fixed_address: u12 = @intCast(address - VRAM_BEGIN);
+            return self.vram[fixed_address];
+        }
+        return 0;
+    }
+    fn writeVram(self: *@This(), address: usize, value: u8) void {
+        if (self.mode != .RENDER) {
+            const fixed_address: u12 = @intCast(address - VRAM_BEGIN);
+            self.vram[fixed_address] = value;
         }
     }
-
-    fn tick(self: *@This(), cycles: u16) void {
-        // TODO the gpu should tick/cycle just as many
-        // times as the cpu did, while being able to
-        // process interrupts and continue on as well as changing modes midscanline when needed
-        const zone = tracy.beginZone(@src(), .{ .name = "GPU TICK" });
-        defer zone.end();
-        var cycles_left = cycles; // amt of cycles spent by cpu
-        while (cycles_left > 0) {
-            const cycles_to_process: u16 = @min(cycles_left, self.mode_cycles_left);
-            // self.frame_cycles += cycles_to_process;
-            self.do();
-            self.mode_cycles_left -= cycles_to_process;
-            cycles_left -= cycles_to_process;
-            if (self.mode_cycles_left == 0) {
-                self.switchMode(); // handles drawing the screen, updating ly
-                // print("Mode switch: {any}, LY: {d}, stat: {d}\n", .{ self.mode, self.getSpecialRegister(.ly), self.getSpecialRegister(.stat) });
-                // TODO LYC CHECK
-            }
-        }
+    fn setSpecialRegister(self: *@This(), register: LCD.special_registers, value: u8) void {
+        self.special_registers[@intFromEnum(register)] = value;
     }
-
-    /// DMA Transfer from RAM to OAM mem
-    /// - addresses (0xXX00 - 0xXX9F) are written to OAM
+    fn getSpecialRegister(self: *@This(), register: LCD.special_registers) u8 {
+        return self.special_registers[@intFromEnum(register)];
+    }
     fn writeOAM(self: *@This(), address: usize, value: u8) !void {
         if (self.mode == .RENDER or self.mode == .SCAN) {
             print("cannot access oam now\n", .{});
@@ -1390,17 +1378,7 @@ const GPU = struct {
         self.oam[address] = value;
     }
 
-    fn readVram(self: *@This(), address: usize) u8 {
-        return self.vram[address];
-    }
-
-    fn writeVram(self: *@This(), address: usize, value: u8) void {
-        if (self.mode != .RENDER) {
-            const fixed_address: u12 = @intCast(address - VRAM_BEGIN);
-            self.vram[fixed_address] = value;
-        }
-    }
-
+    // mem dump
     fn vram_dump(self: *@This()) void {
         print("VRAM dump: \n", .{});
         for (self.vram, 0..VRAM_SIZE) |value, i| {
@@ -1409,28 +1387,29 @@ const GPU = struct {
         }
         print("\n", .{});
     }
+
+    // context & types
+    const Mode = enum { // modes specifying number of cycles per scanline
+        HBLANK,
+        VBLANK,
+        SCAN,
+        RENDER,
+        const cycles: [4]u16 = .{ 204, 456, 80, 172 };
+    };
+    const Color = enum(u2) { black, dgray, lgray, white };
+    const Tile = [8][8]Color;
+    const VRAM_BEGIN = 0x8000;
+    const VRAM_END = 0x97FF;
+    const VRAM_SIZE = VRAM_END - VRAM_BEGIN + 1;
+
+    const OAM_BEGIN = 0xFE00;
+    const OAM_END = 0xFE9F;
+    const OAM_SIZE = OAM_END - OAM_BEGIN + 1;
 };
 
 ///Contains the fields necessary to create a display,
 ///- Screen, Height, Width, Rendering
 const LCD = struct {
-    const initWinW: u16 = screenWidthPx + 2 * initSideScreen;
-    const initWinH: u16 = screenHeightPx + aboveScreen + initBelowScreen;
-    const aboveScreen = 20;
-    const initSideScreen: u16 = 40;
-    const initBelowScreen: u16 = 2 * screenHeightPx;
-    // const pxScale: u8 = 1;
-    const screenWidthPx = 160;
-    const screenHeightPx = 144;
-    var window_height: c_int = @intCast(initWinH);
-    var window_width: c_int = @intCast(initWinW);
-    var center: u16 = initWinW / 2;
-    var belowScreen = initBelowScreen;
-    var screenW = initWinW - 2 * initSideScreen;
-    var screenH = initWinH - aboveScreen - initBelowScreen;
-    var sidebar = initSideScreen;
-    var pxSize: f32 = @as(f32, @floatFromInt(initWinW)) / screenWidthPx;
-
     screenBuf: [screenHeightPx * screenWidthPx]u32 = undefined,
     background: [32][32]GPU.Tile = undefined, // defines the background pixels of the gameboy
     window: [32][32]GPU.Tile = undefined, // defines the foreground and sprites
@@ -1439,7 +1418,6 @@ const LCD = struct {
     bg_texture:  *g.SDL_Texture = undefined,
     win: *g.SDL_Window = undefined,
     grid_pixel_sz: u16 = undefined,
-
     const special_registers = enum(u8) {
         lcdc, // LCDC (LCD Control) Enables/disables layers, defines rendering mode
         stat, // $FF41 STAT (Status) Tracks PPU state
@@ -1453,40 +1431,88 @@ const LCD = struct {
         obp1, // $FF49 OBP1 (OBJ Palette 1) Defines colors for sprite palette 1
         wy, // $FF4A WY (Window Y) Window vertical position
         wx, // $FF4B WX (Window X) Window horizontal position
-
         const end = 0xFF4B;
         const start = 0xFF40;
         const size = 0xFF4B - 0xFF40 + 1;
     };
-
     const gb_palette = [_]u32{
         0xFFFFFFFF, // white
         0xFFAAAAAA, // light gray
         0xFF555555, // dark gray
-        0xFF000000, // black
+        0xFF000000, // transparent
     };
-
+    // startup
     fn init(self: *@This()) !void {
         var color: GPU.Color = undefined;
         for (0..self.screenBuf.len) |i| {
-            var seed: u64 = undefined;
-            try std.posix.getrandom(std.mem.asBytes(&seed));
-            var prng = std.Random.DefaultPrng.init(seed);
-            const rand = prng.random();
-            color = rand.enumValue(GPU.Color);
+            color = GB.prng.random().enumValue(GPU.Color);
             self.writeToBuf(color, i);
             // @memset(//row, color);
         }
         try self.startAndCreateRenderer(); // set window and renderer
     }
+    fn startAndCreateRenderer(self: *@This()) !void {
+        defer updateDimensions();
+        if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
+            print("SDL_Init failed: {s}\n", .{g.SDL_GetError()});
+            return error.InitializationFailed;
+        }
+        var win: ?*g.SDL_Window = null;
+        var renderer: ?*g.SDL_Renderer = null;
+        if (!g.SDL_CreateWindowAndRenderer("gameboy!", initWinW, initWinH, 0, &win, &renderer)) {
+            print("Failed to create window or renderer: {s}\n", .{g.SDL_GetError()});
+            return error.CreationFailure;
+        }
+        if (win == null) {
+            print("Failed to create window: {s}\n", .{g.SDL_GetError()});
+            return error.WindowNull;
+        }
+        _ = g.SDL_SetWindowResizable(win.?, true);
+        _ = g.SDL_SetWindowMinimumSize(win.?, initWinW, initWinH);
 
-    fn setRect(self: *@This(), rect: *g.SDL_FRect, x: anytype, y: anytype, w: anytype, h: anytype) void {
-        _ = self;
-        rect.x = if (@TypeOf(x) == f32) x else @as(f32, @floatFromInt(x));
-        rect.y = if (@TypeOf(y) == f32) y else @as(f32, @floatFromInt(y));
-        rect.w = if (@TypeOf(w) == f32) w else @as(f32, @floatFromInt(w));
-        rect.h = if (@TypeOf(h) == f32) h else @as(f32, @floatFromInt(h));
+        if (renderer == null) {
+            print("Failed to create renderer: {s}\n", .{g.SDL_GetError()});
+            return error.RendererFailure;
+        }
+        self.renderer = renderer.?;
+        self.win = win.?;
+        if (!g.SDL_GetWindowSizeInPixels(self.win, &window_width, &window_height)) {
+            print("err while getting window size: {s}\n", .{g.SDL_GetError()});
+            return error.NoWinSize;
+        } else {
+            print("window size: {d}x{d}\n", .{ window_width, window_height });
+            if (window_height == 0 or window_width == 0) {
+                return error.DetectedZeroWidthWin;
+            }
+        }
+        self.screen_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_STREAMING, 160, 144);
+        _ = g.SDL_SetTextureScaleMode(self.screen_texture, g.SDL_SCALEMODE_NEAREST);
+        // TODO RESIZABLE
+        self.bg_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_TARGET, window_width, window_height);
+        self.createBody();
+        self.bootScreen(); // wait for sdl to finish building the window to begin progression
     }
+    fn bootScreen(self: *LCD) void {
+        // Draw a dummy frame to force the window to initialize and show
+        self.renderAll();
+        _ = g.SDL_PumpEvents();
+        // Let the OS process events and show the window
+        var window_ready = false;
+        var event: g.SDL_Event = undefined;
+        const timeout_ns = 500 * std.time.ns_per_ms;
+        const start = Clock.Now();
+        while (!window_ready and (Clock.Now() - start < timeout_ns)) {
+            while (g.SDL_PollEvent(&event)) {
+                if (event.type == g.SDL_EVENT_WINDOW_SHOWN) {
+                    window_ready = true;
+                }
+            }
+            std.time.sleep(1 * std.time.ns_per_ms);
+        }
+        std.time.sleep(17 * std.time.ns_per_ms);
+    }
+
+    // peripheral fns
     fn updateDimensions() void {
         screenH = @intFromFloat(@as(f32, @floatFromInt(window_height - aboveScreen)) * 0.4);
         screenW = screenH * screenWidthPx / screenHeightPx;
@@ -1498,17 +1524,26 @@ const LCD = struct {
         pxSize = @as(f32, @floatFromInt(screenH)) / screenHeightPx;
     }
     fn writeToBuf(self: *LCD, color: GPU.Color, index: usize) void {
-        switch(color) {
-            .white => self.screenBuf[index] = 0xFFCCFFCC,
-            .lgray => self.screenBuf[index] = 0xFF99CC99,
-            .dgray => self.screenBuf[index] = 0xFF669966,
-            .black => self.screenBuf[index] = 0xFF336633
-        }
+        self.screenBuf[index] = switch(color) {
+            .white => 0xFFCCFFCC,
+            .lgray => 0xFF99CC99,
+            .dgray =>  0xFF669966,
+            .black =>  0xFF336633
+        };
     }
     fn pushScanline(self: *@This(), new_scanline: [screenWidthPx]GPU.Color, ly: u8) void {
         for (0..screenWidthPx) |x| {
             self.writeToBuf(new_scanline[x], @as(u32, @intCast(ly)) * screenWidthPx + x);
         }
+    }
+
+    // drawing
+    fn setRect(self: *@This(), rect: *g.SDL_FRect, x: anytype, y: anytype, w: anytype, h: anytype) void {
+        _ = self;
+        rect.x = if (@TypeOf(x) == f32) x else @as(f32, @floatFromInt(x));
+        rect.y = if (@TypeOf(y) == f32) y else @as(f32, @floatFromInt(y));
+        rect.w = if (@TypeOf(w) == f32) w else @as(f32, @floatFromInt(w));
+        rect.h = if (@TypeOf(h) == f32) h else @as(f32, @floatFromInt(h));
     }
     fn createBody(self: *LCD) void {
         _ = g.SDL_SetRenderTarget(self.renderer, self.bg_texture);
@@ -1553,46 +1588,7 @@ const LCD = struct {
         _ = g.SDL_RenderPresent(self.renderer);
     }
 
-    fn startAndCreateRenderer(self: *@This()) !void {
-        defer updateDimensions();
-        if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
-            print("SDL_Init failed: {s}\n", .{g.SDL_GetError()});
-            return error.InitializationFailed;
-        }
-        var win: ?*g.SDL_Window = null;
-        var renderer: ?*g.SDL_Renderer = null;
-        if (!g.SDL_CreateWindowAndRenderer("gameboy!", initWinW, initWinH, 0, &win, &renderer)) {
-            print("Failed to create window or renderer: {s}\n", .{g.SDL_GetError()});
-            return error.CreationFailure;
-        }
-        if (win == null) {
-            print("Failed to create window: {s}\n", .{g.SDL_GetError()});
-            return error.WindowNull;
-        }
-        _ = g.SDL_SetWindowResizable(win.?, true);
-        _ = g.SDL_SetWindowMinimumSize(win.?, initWinW, initWinH);
-
-        if (renderer == null) {
-            print("Failed to create renderer: {s}\n", .{g.SDL_GetError()});
-            return error.RendererFailure;
-        }
-        self.renderer = renderer.?;
-        self.win = win.?;
-        if (!g.SDL_GetWindowSizeInPixels(self.win, &window_width, &window_height)) {
-            print("err while getting window size: {s}\n", .{g.SDL_GetError()});
-            return error.NoWinSize;
-        } else {
-            print("window size: {d}x{d}\n", .{ window_width, window_height });
-            if (window_height == 0 or window_width == 0) {
-                return error.DetectedZeroWidthWin;
-            }
-        }
-        self.screen_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_STREAMING, 160, 144);
-        _ = g.SDL_SetTextureScaleMode(self.screen_texture, g.SDL_SCALEMODE_NEAREST);
-        // TODO RESIZABLE
-        self.bg_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_TARGET, window_width, window_height);
-        self.createBody();
-    }
+    // mem dump
     pub fn screen_dump(self: *@This()) void {
         print("Actual memspace dump: \n", .{});
         for (self.screen) |row| {
@@ -1602,52 +1598,67 @@ const LCD = struct {
         }
         print("\n", .{});
     }
+    // end
     fn endSDL(self: *@This()) void {
         g.SDL_Quit();
         g.SDL_DestroyWindow(self.win);
         g.SDL_DestroyRenderer(self.renderer);
     }
+    const initWinW: u16 = screenWidthPx + 2 * initSideScreen;
+    const initWinH: u16 = screenHeightPx + aboveScreen + initBelowScreen;
+    const aboveScreen = 20;
+    const initSideScreen: u16 = 40;
+    const initBelowScreen: u16 = 2 * screenHeightPx;
+    // const pxScale: u8 = 1;
+    const screenWidthPx = 160;
+    const screenHeightPx = 144;
+    var window_height: c_int = @intCast(initWinH);
+    var window_width: c_int = @intCast(initWinW);
+    var center: u16 = initWinW / 2;
+    var belowScreen = initBelowScreen;
+    var screenW = initWinW - 2 * initSideScreen;
+    var screenH = initWinH - aboveScreen - initBelowScreen;
+    var sidebar = initSideScreen;
+    var pxSize: f32 = @as(f32, @floatFromInt(initWinW)) / screenWidthPx;
+
 };
+
 const Clock = struct {
     start: i128 = undefined,
-    ns_elapsed: isize = 0,
+    ns_elapsed: u64= 0,
     last_frame_time: i128 = undefined,
-    last_tick: i128 = undefined,
+    last_fps: f64 = 0,
+    current_fps: f64 = 0,
     fn Start(self: *Clock) !void {
         self.start = Now();
         self.last_frame_time = self.start;
-        self.last_tick = self.start;
     }
     const Now = std.time.nanoTimestamp;
-    fn tick(self: *Clock) bool {
-        const now = Now();
-        const ns_passed = now - self.last_tick;
-        const ticked = ns_passed > ns_per_tick;
-        // if (!ticked) std.time.sleep((@bitCast(@as(i64, @intCast(ns_per_tick - ns_passed)))));
-        // self.last_tick += ns_per_tick;
-        if (ticked) {
-            self.last_tick = Now();
-            return true;
-        }
-        return false;
+
+    fn targetCycles(self: *Clock) usize {
+        const total_elapsed_ns: u64 = @intCast(Now() - self.start);
+        return total_elapsed_ns * @as(u64, @intFromFloat(ticks_per_s)) / std.time.ns_per_s;
     }
+
     fn update(self: *Clock) void {
-        // const zone = tracy.beginZone(@src(), .{.name = "clock update"});
-        // defer zone.end();
         const now = Now();
         const frame_time = now - self.last_frame_time;
-        self.last_frame_time = now;
         self.ns_elapsed += @intCast(frame_time);
-        // TODO tick at 239 ns per tick
+        const fps_estimate = std.time.ns_per_s / @as(f64, @floatFromInt(frame_time));
+        const smoothing = 0.8;
+        self.current_fps = smoothing*self.last_fps + (1.0 - smoothing)*fps_estimate;
+        self.last_frame_time = now;
+        if (self.ns_elapsed >= std.time.ns_per_s) {
+            std.debug.print("fps: {d}\n", .{@as(u64, @intFromFloat(self.current_fps))});
+            self.ns_elapsed = 0;
+        }
+        self.last_fps = self.current_fps;
     }
-    const ticks_per_s = 4.19 * @as(f64, std.math.pow(u64, 10, 6));
-    const fps = 60;
-
+    const ticks_per_s = 4.194304 * @as(f64, std.math.pow(u64, 10, 6));
     const ticks_per_ns = ticks_per_s / std.time.ns_per_s;
-    const ns_per_tick:i128 = @intFromFloat(@round(1 / ticks_per_ns));
-    const ticks_per_frame = 70224;
-    const frames_per_s = 1 / ticks_per_frame * ticks_per_s;
+    const ns_per_tick = 1 / ticks_per_ns;
 };
+
 /// Gameboy Machine, defer endGB
 pub const GB = struct {
     cpu: CPU = CPU{},
@@ -1658,24 +1669,20 @@ pub const GB = struct {
     cycles_spent: usize = 0,
     clock: Clock = Clock{},
     last_frame: std.time.Instant = undefined,
-
-    const sr = LCD.special_registers;
     /// nintendo logo
     const LOGO: [48]u8 = .{ 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E };
-
-    const freqMHz = @as(f64, 1) / 4.19;
-    const cycle_time_ns = @round(freqMHz * std.math.pow(u16, 10, 3)); // tick at 4.19 MHz
-    //
-    fn fpsCounter(self: *GB) f64 {
-        return @as(f64, @floatFromInt(self.gpu.frames_cycled)) / (@as(f64, @floatFromInt(self.clock.ns_elapsed)) / std.time.ns_per_s);
-    }
-
+    // startup
+    var prng: std.Random.Xoshiro256 = undefined;
     pub fn init(self: *@This()) !void {
+        // init random here
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        GB.prng = std.Random.DefaultPrng.init(seed);
         @memset(&self.memory, 0);
         @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
-        self.init_header_checksum();
-        try self.cpu.init();
+        self.init_header_checksum(); // from loaded cartidge
         try self.gpu.init(self);
+        try self.cpu.init();
         _ = InstructionSet.exe_from_byte(self, 0, false); // dummy op to init cache
         self.cpu.pc -= 1;
         self.running = true;
@@ -1704,44 +1711,6 @@ pub const GB = struct {
         self.memory[0x14D] = checksum;
     }
 
-    pub fn readByte(self: *@This(), address: u16) u8 {
-        // const zone = tracy.beginZone(@src(), .{ .name = "read mem byte" });
-        // defer zone.end();
-        @setRuntimeSafety(false);
-        if (address >= 0xFF00) return self.memory[address];
-        // if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
-        //     return self.gpu.getSpecialRegister(@as(LCD.special_registers, @enumFromInt(address - LCD.special_registers.start)));
-        // }
-        if (address >= CPU.WRAM_START and address <= CPU.WRAM_END) {
-            return self.memory[address];
-        } if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) {
-            return self.gpu.readVram(address);
-        } if (address >= GPU.OAM_BEGIN and address <= GPU.OAM_END) {
-            return self.gpu.oam[address - GPU.OAM_BEGIN];
-        } return self.memory[address];
-    }
-
-    pub fn writeByte(self: *@This(), address: u16, value: u8) void {
-        // const zone = tracy.beginZone(@src(), .{ .name = "write mem byte" });
-        // defer zone.end();
-        @setRuntimeSafety(false);
-        if (address < 0x8000) return; // no writes to ROM
-        if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
-            const register = @as(LCD.special_registers, @enumFromInt(address - LCD.special_registers.start));
-            self.gpu.setSpecialRegister(register, value);
-            if (register == LCD.special_registers.dma) {
-                const prefix = address / 0x100;
-                const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
-                @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
-            }
-            return;
-        } if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) { // banks 0 & 1
-            self.gpu.writeVram(address, value);
-            return;
-        }
-        self.memory[address] = value;
-    }
-
     pub fn boot(self: *@This()) !void {
         const bootFile = try std.fs.cwd().openFile("roms/dmg_boot.bin", .{});
         defer bootFile.close();
@@ -1764,37 +1733,59 @@ pub const GB = struct {
             // print("0x{x} ", .{byte});
         }
     }
-
+    // gb execution
     pub fn go(self: *@This()) !void {
         print("GO!\n", .{});
         try self.clock.Start();
         while (self.cpu.pc < 0x100 and self.running) {
-            if (self.clock.tick()) try self.do();
+            try self.do();
+            if (self.gpu.frame_cycles_spent >= 70224) {
+                try self.getEvents(); // poll events once per frame
+                self.clock.update(); // calculates average fps
+                self.gpu.lcd.renderAll(); // render at the last scanline
+                self.gpu.frame_cycles_spent = 0;
+            }
         }
     }
     fn do(self: *@This()) !void {
         const cycles_spent = try self.cpu.execute(self);
-        // const ly = self.gpu.getSpecialRegister(.ly);
         self.cycles_spent += cycles_spent;
-        if (self.cycles_spent >= 70224) {
-            try self.getEvents(); // poll events once per frame
-            self.clock.update();
-            self.gpu.lcd.renderAll(); // render at the last scanline
-            self.cycles_spent = 0;
-        }
-        if (self.clock.ns_elapsed >= 1_000_000_000) {
-            std.debug.print("fps: {d}\n", .{@as(u32, @intFromFloat(self.fpsCounter()))});
-            // print("scy: {d}\n", .{ self.gpu.getSpecialRegister(.scy) });
-            // print("[pc]: 0x{x}\n", .{self.cpu.pc});
-            self.gpu.frames_cycled = 0;
-            self.clock.ns_elapsed = 0;
-        }
-
-        // if (ly == 0)
-        // print("ly: {d}", .{ly});
         self.gpu.tick(cycles_spent * 4);
     }
-    fn getEvents(self: *@This()) !void {
+    // universal callers
+    pub fn readByte(self: *@This(), address: u16) u8 {
+        @setRuntimeSafety(false);
+        if (address >= 0xFF00) return self.memory[address];
+        // if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
+        //     return self.gpu.getSpecialRegister(@as(LCD.special_registers, @enumFromInt(address - LCD.special_registers.start)));
+        // }
+        if (address >= CPU.WRAM_START and address <= CPU.WRAM_END) {
+            return self.memory[address];
+        } if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) {
+            return self.gpu.readVram(address);
+        } if (address >= GPU.OAM_BEGIN and address <= GPU.OAM_END) {
+            return self.gpu.oam[address - GPU.OAM_BEGIN];
+        } return self.memory[address];
+    }
+    pub fn writeByte(self: *@This(), address: u16, value: u8) void {
+        @setRuntimeSafety(false);
+        if (address < 0x8000) return; // no writes to ROM
+        if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
+            const register = @as(LCD.special_registers, @enumFromInt(address - LCD.special_registers.start));
+            self.gpu.setSpecialRegister(register, value);
+            if (register == LCD.special_registers.dma) {
+                const prefix = address / 0x100;
+                const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
+                @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
+            }
+            return;
+        } if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) { // banks 0 & 1
+            self.gpu.writeVram(address, value);
+            return;
+        }
+        self.memory[address] = value;
+    }
+    pub fn getEvents(self: *@This()) !void {
         var event: g.SDL_Event = undefined;
         while (g.SDL_PollEvent(&event)) {
             switch (event.type) {
@@ -1812,6 +1803,7 @@ pub const GB = struct {
             }
         }
     }
+    // memspace dumps
     pub fn mem_dump(self: *@This(), start: u16, end: u16) void {
         print("printing bytes:\n", .{});
         for (self.memory[start..end], start..end) |value, i| {
@@ -1820,7 +1812,6 @@ pub const GB = struct {
         }
         print("\n", .{});
     }
-
     pub fn gfx_dump(self: *@This()) void {
         print("Actual memspace dump: \n", .{});
         for (self.memory[0x8000 .. 0x97FF + 1], 0..(0x97FF - 0x8000 + 1)) |value, i| {
@@ -1829,28 +1820,23 @@ pub const GB = struct {
         }
         print("\n", .{});
     }
-
     pub fn reg_dump(self: *@This()) void {
         print("Actual memspace dump:\n", .{});
-        // for (self.memory[LCD.special_registers.start .. LCD.special_registers.end + 1], LCD.special_registers.start..LCD.special_registers.end + 1) |value, i| {
-        //     println("register@0x{x}: 0x{x} ", .{i, value});
-        // }
+        for (self.memory[LCD.special_registers.start .. LCD.special_registers.end + 1], LCD.special_registers.start..LCD.special_registers.end + 1) |value, i| {
+            print("register@0x{x}: 0x{x}\n", .{i, value});
+        }
         const i = 0xFF44;
         print("register@0x{x}: 0x{x}\n", .{ i, self.gpu.getSpecialRegister(.ly) });
         // println("register@0x{x}: 0x{x} ", .{i, value});
         print("\n", .{});
     }
-
     fn endGB(self: *@This()) void {
         self.gpu.lcd.endSDL();
     }
 };
 
 pub fn main() !void {
-    const zone = tracy.beginZone(@src(), .{ .name = "Main" });
-    defer zone.end();
     var gb = GB{};
-    print("ns per tick {d}\n", .{Clock.ns_per_tick});
     gb.init() catch |err| {
         print("Couldn't inititalize GameBoy, Error: {any}\n", .{err});
         return;
@@ -1861,6 +1847,5 @@ pub fn main() !void {
         return;
     };
     defer gb.endGB();
-    std.time.sleep(3 * std.time.ns_per_s);
     try gb.go();
 }
