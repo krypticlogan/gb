@@ -1176,8 +1176,6 @@ const CPU = struct {
             return self.value & (1 << 6) != 0;
         }
         inline fn write(self: *FlagRegister, z: bool, c: bool, h: bool, s: bool) void {
-            // const zone = tracy.beginZone(@src(), .{.name = "write flag", .color = 0xFF0000});
-            // defer zone.end();
         self.value = (@as(u8, @intFromBool(z)) << 7) | // Z
             (@as(u8, @intFromBool(s)) << 6) | // N always set
             (@as(u8, @intFromBool(h)) << 5) |
@@ -1257,6 +1255,7 @@ const GPU = struct {
         // process interrupts and continue on as well as changing modes midscanline when needed
         // const zone = tracy.beginZone(@src(), .{ .name = "GPU TICK" });
         // defer zone.end();
+        if (!self.specialRegisterBitSet(.lcdc, 7)) return;
         var cycles_left = cycles; // amt of cycles spent by cpu
         self.frame_cycles_spent += cycles_left;
         while (cycles_left > 0) {
@@ -1277,9 +1276,30 @@ const GPU = struct {
         // const zone = tracy.beginZone(@src(), .{ .name = "DO GPU CYCLES" });
         // defer zone.end();
         var cycles_to_spend: f16 = @floatFromInt(cycles);
+
         switch (self.mode) {
             .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
+                       // decoding:
+                       // | byte 0 | y pos
+                       // | byte 1 | x pos
+                       // | byte 2 | tile number --  the Tile Number used for fetching the graphics data for the sprite
+                       // | byte 3 | sprite flags:
+                            // {bit 7} OBJ-BG priority 0 (priority) 1 (1-3 priority)
+                            // {bit 6} Y-flip
+                            // {bit 5} X-flip
+                            // {bit 4} pallete number
                 // print("scanning\n", .{});
+                // const sprite_buffer: u8[40] = .{};
+                // var i: u8 = 0;
+                // var buffer_i: u8 = 0;
+                // while (buffer_i < 40 and i <= OAM_SIZE) : (i+=4) {
+                //     const y_pos = self.oam[i];
+                //     const x_pos = self.oam[i+1];
+                //     if (x_pos > 0 and ly + 16 >= y_pos) {
+                //         for(sprite_buffer[buffer_i]
+                //     }
+                // }
+
                 return;
             },
             .RENDER => { // 3 transfers pixels to the LCD, one scanline at a time, duration variable
@@ -1287,27 +1307,64 @@ const GPU = struct {
                 // - Background tiles at the current scroll position
                 // - Window tiles if enabled and visible on this line
                 // - Sprites that were found during OAM scan
+                const ly = self.getSpecialRegister(.ly);
                 const bg_cpp = 1.0075; // cycles per pixel
-                for (self.scanline_progress..self.scanline.len) |x| {
-                    const color: Color = GB.prng.random().enumValue(Color);
-                    self.scanline[x] = color;
+                const use_signed = !self.specialRegisterBitSet(.lcdc, 4);
+                const base: i32 = if (use_signed) 0x9000 else 0x8000;
+                const tilemap_base: u16 = if (self.specialRegisterBitSet(.lcdc, 3)) 0x9C00 else 0x9800; // check lcdc bit 3
+                const scx = self.getSpecialRegister(.scx);
+                const scy = self.getSpecialRegister(.scy);
+                var x = self.scanline_progress;
+                while (x < self.scanline.len and cycles_to_spend > 0) {
+                    const bg_y: u16 = (ly + scy) & 0xFF; // wraps at 256
+                    const bg_x: u16 = @intCast((x + scx) & 0xFF);
+
+                    const tile_y: u16 = bg_y / 8;
+                    const tile_x: u16 = bg_x / 8;
+
+                    const tile_index_addr: u16 = tilemap_base + tile_y*32 + tile_x;
+
+                    const tile_index: i16 = if (use_signed) @intCast(@as(i8, @bitCast(self.readVram(tile_index_addr)))) else @intCast(self.readVram(tile_index_addr));
+                    const tile_line: u16 = bg_y % 8;
+
+                    const tile_addr: u16 = @intCast(base + tile_index * 16 + @as(i32, @intCast(tile_line * 2)));
+                    const low = self.readVram(tile_addr);
+                    const high = self.readVram(tile_addr + 1);
+
+                    const shift: u3 = @intCast(7 - bg_x % 8);
+                    const color_code: u2 = (@as(u2, @truncate(high >> shift)) << 1) |  @as(u1, @truncate(low >> shift));
+                    const bgp = self.getSpecialRegister(.bgp);
+                    const pallete_color: u2 = @truncate(bgp >> color_code * 2);
+                    self.scanline[x] = @as(Color, @enumFromInt(pallete_color));
                     cycles_to_spend -= bg_cpp;
-                    self.scanline_progress+=1;
+                    x+=1;
+                    self.scanline_progress = x;
                     if (cycles_to_spend <= 0) return;
                 }
+
+
+                // self.scanline[x] =
+                // random static
+                // for (self.scanline_progress..self.scanline.len) |x| {
+                //     const color: Color = GB.prng.random().enumValue(Color);
+                //     self.scanline[x] = color;
+                //     cycles_to_spend -= bg_cpp;
+                //     self.scanline_progress+=1;
+                //     if (cycles_to_spend <= 0) return;
+                // }
                 return;
             },
             else => return, // no action for hblank or vblank
         }
     }
     fn switchMode(self: *@This()) void {
+        const ly = self.getSpecialRegister(.ly);
         switch (self.mode) {
             .SCAN => {
                 self.mode = .RENDER;
                 self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.RENDER)];
             },
             .RENDER => {
-                const ly = self.getSpecialRegister(.ly);
                 self.lcd.pushScanline(self.scanline, ly);
                 self.mode = .HBLANK;
                 self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.HBLANK)];
@@ -1315,10 +1372,8 @@ const GPU = struct {
             },
             .HBLANK => {
                 // Increment LY register
-                const ly = self.getSpecialRegister(.ly);
                 self.setSpecialRegister(.ly, ly + 1);
                 if (ly + 1 == 144) {
-                    // tracy.frameMarkNamed("new frame");
                     tracy.frameMark();
                     self.mode = .VBLANK;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)]; // per scanline
@@ -1329,15 +1384,12 @@ const GPU = struct {
                 // TODO INTERRUPT
             },
             .VBLANK => {
-                const new_ly = self.getSpecialRegister(.ly) + 1;
-                // self.setSpecialRegister(.ly, ly + 1);
+                const new_ly = ly + 1;
                 if (new_ly > 153) { // 153 is the end of VBLANK
                     self.setSpecialRegister(.ly, 0); // reset LY to 0
                     self.mode = .SCAN;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
                     self.frames_cycled += 1;
-                    // print("frames: {d}\n", .{self.frames_cycled});
-                    // self.frame_cycles = 0;
                 } else {
                     self.setSpecialRegister(.ly, new_ly);
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)];
@@ -1348,26 +1400,26 @@ const GPU = struct {
         stat_reg = (stat_reg & 0b1111_1100) | @intFromEnum(self.mode);
         self.setSpecialRegister(.stat, stat_reg);
     }
-
     // memory ops
     fn readVram(self: *@This(), address: usize) u8 {
-        if (self.mode != .RENDER) {
-            const fixed_address: u12 = @intCast(address - VRAM_BEGIN);
-            return self.vram[fixed_address];
-        }
-        return 0;
+        // print("address: 0x{X}", .{address});
+        const fixed_address = address - VRAM_BEGIN;
+        return self.vram[fixed_address];
     }
     fn writeVram(self: *@This(), address: usize, value: u8) void {
-        if (self.mode != .RENDER) {
-            const fixed_address: u12 = @intCast(address - VRAM_BEGIN);
+        // if (!(self.specialRegisterBitSet(.lcdc, 7) and self.mode == .RENDER)) {
+            const fixed_address = address - VRAM_BEGIN;
             self.vram[fixed_address] = value;
-        }
+        // }
     }
     fn setSpecialRegister(self: *@This(), register: LCD.special_registers, value: u8) void {
         self.special_registers[@intFromEnum(register)] = value;
     }
     fn getSpecialRegister(self: *@This(), register: LCD.special_registers) u8 {
         return self.special_registers[@intFromEnum(register)];
+    }
+    fn specialRegisterBitSet(self: *@This(), register: LCD.special_registers, bit: u3) bool {
+        return @as(u1, @truncate(self.special_registers[@intFromEnum(register)] >> bit)) == 1;
     }
     fn writeOAM(self: *@This(), address: usize, value: u8) !void {
         if (self.mode == .RENDER or self.mode == .SCAN) {
@@ -1377,7 +1429,6 @@ const GPU = struct {
         if (address <= 0xFE00 or address >= 0xFE9F) return error.OutOfOAMBounds;
         self.oam[address] = value;
     }
-
     // mem dump
     fn vram_dump(self: *@This()) void {
         print("VRAM dump: \n", .{});
@@ -1387,7 +1438,6 @@ const GPU = struct {
         }
         print("\n", .{});
     }
-
     // context & types
     const Mode = enum { // modes specifying number of cycles per scanline
         HBLANK,
@@ -1399,7 +1449,7 @@ const GPU = struct {
     const Color = enum(u2) { black, dgray, lgray, white };
     const Tile = [8][8]Color;
     const VRAM_BEGIN = 0x8000;
-    const VRAM_END = 0x97FF;
+    const VRAM_END = 0x9FFF;
     const VRAM_SIZE = VRAM_END - VRAM_BEGIN + 1;
 
     const OAM_BEGIN = 0xFE00;
@@ -1447,12 +1497,10 @@ const LCD = struct {
         for (0..self.screenBuf.len) |i| {
             color = GB.prng.random().enumValue(GPU.Color);
             self.writeToBuf(color, i);
-            // @memset(//row, color);
         }
         try self.startAndCreateRenderer(); // set window and renderer
     }
     fn startAndCreateRenderer(self: *@This()) !void {
-        defer updateDimensions();
         if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
             print("SDL_Init failed: {s}\n", .{g.SDL_GetError()});
             return error.InitializationFailed;
@@ -1467,15 +1515,15 @@ const LCD = struct {
             print("Failed to create window: {s}\n", .{g.SDL_GetError()});
             return error.WindowNull;
         }
-        _ = g.SDL_SetWindowResizable(win.?, true);
-        _ = g.SDL_SetWindowMinimumSize(win.?, initWinW, initWinH);
-
         if (renderer == null) {
             print("Failed to create renderer: {s}\n", .{g.SDL_GetError()});
             return error.RendererFailure;
         }
+
         self.renderer = renderer.?;
         self.win = win.?;
+        _ = g.SDL_SetWindowResizable(self.win, true);
+        _ = g.SDL_SetWindowMinimumSize(self.win, initWinW, initWinH);
         if (!g.SDL_GetWindowSizeInPixels(self.win, &window_width, &window_height)) {
             print("err while getting window size: {s}\n", .{g.SDL_GetError()});
             return error.NoWinSize;
@@ -1485,16 +1533,16 @@ const LCD = struct {
                 return error.DetectedZeroWidthWin;
             }
         }
+        // creating textures
         self.screen_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_STREAMING, 160, 144);
         _ = g.SDL_SetTextureScaleMode(self.screen_texture, g.SDL_SCALEMODE_NEAREST);
         // TODO RESIZABLE
         self.bg_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_TARGET, window_width, window_height);
-        self.createBody();
+        self.createBG();
         self.bootScreen(); // wait for sdl to finish building the window to begin progression
     }
     fn bootScreen(self: *LCD) void {
-        // Draw a dummy frame to force the window to initialize and show
-        self.renderAll();
+        self.renderAll(); // Draw a dummy frame to force the window to initialize and show
         _ = g.SDL_PumpEvents();
         // Let the OS process events and show the window
         var window_ready = false;
@@ -1511,18 +1559,7 @@ const LCD = struct {
         }
         std.time.sleep(17 * std.time.ns_per_ms);
     }
-
     // peripheral fns
-    fn updateDimensions() void {
-        screenH = @intFromFloat(@as(f32, @floatFromInt(window_height - aboveScreen)) * 0.4);
-        screenW = screenH * screenWidthPx / screenHeightPx;
-        if (screenW > window_width - 20) {
-            screenW = @intCast(window_width - 20);
-            screenH = screenW * screenHeightPx / screenWidthPx;
-        }
-        sidebar = center - screenW / 2;
-        pxSize = @as(f32, @floatFromInt(screenH)) / screenHeightPx;
-    }
     fn writeToBuf(self: *LCD, color: GPU.Color, index: usize) void {
         self.screenBuf[index] = switch(color) {
             .white => 0xFFCCFFCC,
@@ -1536,7 +1573,6 @@ const LCD = struct {
             self.writeToBuf(new_scanline[x], @as(u32, @intCast(ly)) * screenWidthPx + x);
         }
     }
-
     // drawing
     fn setRect(self: *@This(), rect: *g.SDL_FRect, x: anytype, y: anytype, w: anytype, h: anytype) void {
         _ = self;
@@ -1545,42 +1581,25 @@ const LCD = struct {
         rect.w = if (@TypeOf(w) == f32) w else @as(f32, @floatFromInt(w));
         rect.h = if (@TypeOf(h) == f32) h else @as(f32, @floatFromInt(h));
     }
-    fn createBody(self: *LCD) void {
+    fn createBG(self: *LCD) void {
         _ = g.SDL_SetRenderTarget(self.renderer, self.bg_texture);
         defer _ = g.SDL_SetRenderTarget(self.renderer, null);
         _ = g.SDL_SetRenderDrawColor(self.renderer, 255, 192, 220, 255);
         _ = g.SDL_RenderClear(self.renderer);
-        var rect = g.SDL_FRect{};
-        // render the screen in the right place
-        // SCREEN
-        _ = g.SDL_SetRenderDrawColor(self.renderer, 230, 230, 230, 255);
-        self.setRect(&rect, sidebar, aboveScreen - 5, screenW + 5, 5); // top of screen
-        _ = g.SDL_RenderFillRect(self.renderer, &rect);
-
-        self.setRect(&rect, sidebar - 5, aboveScreen - 5, 5, screenH + 10); // right side of screen
-        _ = g.SDL_RenderFillRect(self.renderer, &rect);
-
-        // SHADOW
-        _ = g.SDL_SetRenderDrawColor(self.renderer, 50, 50, 50, 1);
-        self.setRect(&rect, sidebar, aboveScreen + screenH, screenW, 5); // bottom of screen
-        _ = g.SDL_RenderFillRect(self.renderer, &rect);
-
-        self.setRect(&rect, sidebar + screenW, aboveScreen, 5, screenH + 5); // left side of screen
-        _ = g.SDL_RenderFillRect(self.renderer, &rect);
     }
     fn renderAll(self: *@This()) void {
         _ = g.SDL_UpdateTexture(self.screen_texture, null, &self.screenBuf, 160 * @sizeOf(u32));
         // _ = g.SDL_RenderClear(self.renderer);
-        const bg_rect = g.SDL_FRect{
-            .x = 0,
+        const bg_rect = g.SDL_FRect {
+            .x = screenWidthPx * pxSize + border * 2,
             .y = 0,
-            .w = @as(f32, @floatFromInt(window_width)), // scale as needed
+            .w = @as(f32, @floatFromInt(window_width)) - (screenWidthPx * pxSize + border * 2),
             .h = @as(f32, @floatFromInt(window_height)),
         };
-        const screen_rect = g.SDL_FRect{
-            .x = @as(f32, @floatFromInt(sidebar)),
-            .y = @as(f32, @floatFromInt(aboveScreen)),
-            .w = screenWidthPx * pxSize, // scale as needed
+        const screen_rect = g.SDL_FRect {
+            .x = @as(f32, @floatFromInt(10)),
+            .y = @as(f32, @floatFromInt(0)),
+            .w = screenWidthPx * pxSize,
             .h = screenHeightPx * pxSize,
         };
         _ = g.SDL_RenderTexture(self.renderer, self.bg_texture, null, &bg_rect);
@@ -1591,10 +1610,8 @@ const LCD = struct {
     // mem dump
     pub fn screen_dump(self: *@This()) void {
         print("Actual memspace dump: \n", .{});
-        for (self.screen) |row| {
-            for (row) |pixel| {
-                print("{any}", .{pixel});
-            }
+        for (self.screenBuf) |pixel| {
+            print("{any}", .{@as(GPU.Color, @enumFromInt(pixel))});
         }
         print("\n", .{});
     }
@@ -1604,68 +1621,58 @@ const LCD = struct {
         g.SDL_DestroyWindow(self.win);
         g.SDL_DestroyRenderer(self.renderer);
     }
-    const initWinW: u16 = screenWidthPx + 2 * initSideScreen;
-    const initWinH: u16 = screenHeightPx + aboveScreen + initBelowScreen;
-    const aboveScreen = 20;
-    const initSideScreen: u16 = 40;
-    const initBelowScreen: u16 = 2 * screenHeightPx;
-    // const pxScale: u8 = 1;
+    const initWinW: u16 = 1000;
+    const initWinH: u16 = 700;
+    const border = 10;
     const screenWidthPx = 160;
     const screenHeightPx = 144;
     var window_height: c_int = @intCast(initWinH);
     var window_width: c_int = @intCast(initWinW);
     var center: u16 = initWinW / 2;
-    var belowScreen = initBelowScreen;
-    var screenW = initWinW - 2 * initSideScreen;
-    var screenH = initWinH - aboveScreen - initBelowScreen;
-    var sidebar = initSideScreen;
-    var pxSize: f32 = @as(f32, @floatFromInt(initWinW)) / screenWidthPx;
-
+    var pxSize: f32 = @as(f32, @floatFromInt(initWinW)) / screenWidthPx / 2;
 };
 
 const Clock = struct {
     start: i128 = undefined,
     ns_elapsed: u64= 0,
-    last_frame_time: i128 = undefined,
+    last_frame_time: i128 = undefined, // TODO(logan) use 0 tracked time
     last_fps: f64 = 0,
     current_fps: f64 = 0,
     slept: u64 = 0,
+    debt: i128 = 0,
     fn Start(self: *Clock) !void {
         self.start = Now();
-        self.last_frame_time = self.start;
     }
     const Now = std.time.nanoTimestamp;
 
     fn targetCycles(self: *Clock) u64 {
-        const total_elapsed_ns: u64 = @intCast(Now() - self.start);
-        return total_elapsed_ns / @as(u64, @intFromFloat(ns_per_tick));
+        const total_elapsed_ns: f64 = @floatFromInt(Now() - self.start);
+        return @intFromFloat(total_elapsed_ns * ticks_per_ns);
     }
     fn tick(self: *Clock) void {
         const now = Now();
         const ns_passed = now - self.last_frame_time;
         if (ns_passed < ns_per_frame) {
             const wait_time_ns: u64 = @intCast(ns_per_frame - ns_passed);
-            if (wait_time_ns > 5000) {
-                std.time.sleep(wait_time_ns - 5000); // sleep when necessary
-                // print("slept {d}\n", .{wait_time_ns});
-            } else {
-                const wait_start = Now();
-                while (Now() - wait_start < wait_time_ns) {} // spin max 5000 ns
-                print("spun {d}\n", .{wait_time_ns});
+            if (wait_time_ns > 100_000) {
+                const start = Now();
+                const sleeptime = std.math.cast(u64, wait_time_ns + self.debt - 100_000);
+                std.time.sleep(sleeptime orelse 0); // sleep when necessary
+                const waited = Now() - start;
+                self.debt += wait_time_ns - waited;
+                // print("leftover {d}\n", .{self.debt});
             }
         }
     }
     fn update(self: *Clock) void {
         const now = Now();
         const frame_time = now - self.last_frame_time;
-        self.last_frame_time = now;
         self.ns_elapsed += @intCast(frame_time);
         const fps_estimate = std.time.ns_per_s / @as(f64, @floatFromInt(frame_time));
-        const smoothing = 0.8;
+        const smoothing = 0.7;
         self.current_fps = smoothing*self.last_fps + (1.0 - smoothing)*fps_estimate;
         if (self.ns_elapsed >= std.time.ns_per_s) {
-            // std.debug.print("frame time: {d}\n", .{fps_estimate});
-           print("{d} fps\n", .{@as(u16, @intFromFloat(self.current_fps))});
+           print("{d:.2} fps\n", .{self.current_fps});
             self.ns_elapsed = 0;
         }
         self.last_fps = self.current_fps;
@@ -1674,8 +1681,8 @@ const Clock = struct {
     const ticks_per_ns = ticks_per_s / std.time.ns_per_s;
     const ns_per_tick = 1 / ticks_per_ns;
     const ns_per_frame: u64 = @intFromFloat(@round(1_000_000_000.0 / 59.744));
+    const cycles_per_frame = 70224;
 };
-
 /// Gameboy Machine, defer endGB
 pub const GB = struct {
     cpu: CPU = CPU{},
@@ -1716,7 +1723,6 @@ pub const GB = struct {
         self.memory[0x14A] = 0x01; // Non-Japan
         self.memory[0x14B] = 0x33; // Old licensee code
         self.memory[0x14C] = 0x00; // Mask ROM version
-
         // Then compute checksum
         var checksum: u8 = 0;
         for (0x134..0x14D) |i| {
@@ -1724,7 +1730,6 @@ pub const GB = struct {
         }
         self.memory[0x14D] = checksum;
     }
-
     pub fn boot(self: *@This()) !void {
         const bootFile = try std.fs.cwd().openFile("roms/dmg_boot.bin", .{});
         defer bootFile.close();
@@ -1734,7 +1739,6 @@ pub const GB = struct {
             self.memory[i] = bootFileBuf[i];
         }
     }
-
     pub fn load_game(self: *@This(), game_path: []const u8) !void {
         const romHeaderStart = 0x0100;
         const rom = try std.fs.cwd().openFile(game_path, .{});
@@ -1751,19 +1755,22 @@ pub const GB = struct {
     pub fn go(self: *@This()) !void {
         print("GO!\n", .{});
         try self.clock.Start();
-        while (self.cpu.pc < 0x100 and self.running) {
-            const target_cycles = self.clock.targetCycles();
-            while(self.cycles_spent <= target_cycles) {
+        while (self.running) {
+            self.clock.last_frame_time = Clock.Now();
+            while (self.gpu.frame_cycles_spent < Clock.cycles_per_frame) {
                 try self.do();
-                if (self.gpu.frame_cycles_spent >= 70224) {
-                    try self.getEvents(); // poll events once per frame
-                    if (self.gpu.frames_cycled == 0) self.clock.last_frame_time = Clock.Now();
-                    self.clock.tick();
-                    self.clock.update(); // calculates average fps
-                    self.gpu.lcd.renderAll(); // render at the last scanline
-                    self.gpu.frame_cycles_spent = 0;
-                }
             }
+            std.debug.print("BG map:\n", .{});
+            for (0..40) |i| {
+                const b = self.gpu.vram[0x9800 - 0x8000 + i];
+                std.debug.print("0x{x} ", .{b});
+            }
+            std.debug.print("\n", .{});
+            try self.getEvents(); // poll events once per frame
+            self.clock.tick();
+            self.clock.update(); // calculates average fps
+            self.gpu.lcd.renderAll(); // render at the last scanline
+            self.gpu.frame_cycles_spent = 0;
         }
     }
     fn do(self: *@This()) !void {
@@ -1804,7 +1811,8 @@ pub const GB = struct {
                 @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
             }
             return;
-        } if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) { // banks 0 & 1
+        }
+        if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) { // banks 0 & 1
             self.gpu.writeVram(address, value);
             return;
         }
@@ -1821,8 +1829,6 @@ pub const GB = struct {
                 },
                 g.SDL_EVENT_WINDOW_RESIZED => {
                     print("RESIZED, NEW SIZE\n\n\n\n\n\n", .{});
-                    _ = g.SDL_GetWindowSizeInPixels(self.gpu.lcd.win, &LCD.window_width, &LCD.window_height);
-                    LCD.updateDimensions();
                 },
                 else => {},
             }
