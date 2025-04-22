@@ -44,7 +44,7 @@ const InstructionSet = struct {
         defer zone.end();
         const value = gb.cpu.get_word(args.target);
         const res = @addWithOverflow(value, 1)[0];
-        // print("INCr16, target: {any}\n 0x{X} + 1 = 0x{X}", .{ args.target, value, res });
+        // print("INCr16, target: {any}\n 0x{X} + 1 = 0x{X}\n", .{ args.target, value, res });
         gb.cpu.set_word(args.target, res);
         gb.cpu.pc += 1;
         return 2;
@@ -56,7 +56,7 @@ const InstructionSet = struct {
         // print("DECr8, target: {any} ({d} -= 1)\n", .{ args.target, gb.cpu.get_byte(args.target) });
         const res = @subWithOverflow(value, 1)[0];
         gb.cpu.set_byte(args.target, res);
-        const h = (value & 0xF) & 0x10 == 0x10; // half carry conditions
+        const h = (value & 0xF) == 0x00; // half carry conditions
         const z = res == 0;
         const s = true;
         const c = gb.cpu.f.cFlag();
@@ -86,10 +86,11 @@ const InstructionSet = struct {
     fn LD16(gb: *GB, args: InstrArgs) u8 { // LD r16, n16 TODO TEST
         const zone = tracy.beginZone(@src(), .{ .name = "LD16" });
         defer zone.end();
+        // print("pc: 0x{X}\n", .{ gb.cpu.pc });
         const n: u16 = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
         // print("LD16, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
-        // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        // print("n b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.readByte(gb.cpu.pc + 2) });
+        // print("n b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.readByte(gb.cpu.pc + 1) });
         gb.cpu.set_word(args.target, n);
         gb.cpu.pc += 3;
         return 3;
@@ -149,14 +150,15 @@ const InstructionSet = struct {
         return 2;
     }
     fn LDHLIA(gb: *GB, _: InstrArgs) u8 { // LD [HLI],A
+        // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         const zone = tracy.beginZone(@src(), .{ .name = "LDHLIA" });
         defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
-        // print("LDHLIA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
+        // print("LDHLIA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.readByte(hl), value });
         gb.writeByte(hl, value);
         gb.cpu.set_word(regID.h, hl + 1);
-        // print("after op: hl+1= 0x{X}\t mem@0x{X}: 0x{X}\n", .{ gb.cpu.get_word(regID.h), hl, gb.read_byte(hl) });
+        // print("after op: hl+1= 0x{X}\t mem@0x{X}: 0x{X}\n", .{ gb.cpu.get_word(regID.h), hl, gb.readByte(hl) });
         gb.cpu.pc += 1;
         return 2;
     }
@@ -363,20 +365,37 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 1;
     }
+    fn RLA(gb: *GB, _: InstrArgs) u8 {
+        const carried = gb.cpu.f.cFlag();
+        const reg = gb.cpu.get_byte(regID.a);
+        // print("[pc]:0x{X}\t", .{gb.cpu.pc});
+        // print("RLA, prior: 0b{b}, carried = {d}\n", .{ reg, @intFromBool(carried) });
+        const c = reg >> 7 == 1;
+        const rotated: u8 = reg << 1 | @intFromBool(carried);
+        const z = false;
+        const h = false;
+        const s = false;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, rotated);
+        // print("rotated: 0b{b}\n", .{rotated});
+        gb.cpu.pc += 1;
+        return 1;
+    }
     fn PUSH(gb: *GB, args: InstrArgs) u8 {
         const zone = tracy.beginZone(@src(), .{ .name = "PUSH" });
         defer zone.end();
         var high: u8 = undefined;
         var low: u8 = undefined;
+        // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         if (args.target == regID.a) {
             high = gb.cpu.get_byte(regID.a);
-            low = gb.cpu.f.value;
+            low = gb.cpu.f.value & 0xF0; // only the upper 4 bits
             // print("PUSH AF a: 0x{X}, f: 0x{X}\n", .{ high, low });
         } else {
             const value = gb.cpu.get_word(args.target);
             high = @truncate(value >> 8);
             low = @truncate(value);
-            // print("PUSH 0x{X} from {any}\n", .{ value, args.target });
+            // print("PUSH 0x{X} from {any}, hi 0x{X} lo 0x{X}\n", .{ value, args.target, high, low });
         }
 
         gb.cpu.sp -= 1;
@@ -393,11 +412,12 @@ const InstructionSet = struct {
         gb.cpu.sp += 1;
         const high = gb.readByte(gb.cpu.sp);
         gb.cpu.sp += 1;
+        // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         const value = @as(u16, high) << 8 | low;
         // print("POP 0x{X} --> {any}\n", .{ value, args.target });
         if (args.target == regID.a) {
             gb.cpu.set_byte(regID.a, high);
-            gb.cpu.f.value = low >> 4;
+            gb.cpu.f.value = low & 0xF0;
         } else gb.cpu.set_word(args.target, value);
         gb.cpu.pc += 1;
         return 3;
@@ -448,11 +468,12 @@ const InstructionSet = struct {
         defer zone.end();
         const call = gb.cpu.f.check(args.flagConditions);
         // const byte = gb.read_byte(gb.cpu.pc);
-
         if (call) {
+            // print("DE = 0x{X}, HL = 0x{X}\n", .{ gb.cpu.get_word(regID.d), gb.cpu.get_word(regID.h) });
+            // print("[pc]:0x{X}\t", .{gb.cpu.pc});
             const n = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
             const ret = gb.cpu.pc + 3;
-            // print("CALL to 0x{X}, later RET to 0x{X}", .{ n, ret });
+            // print("CALL to 0x{X}, later RET to 0x{X}\n", .{ n, ret });
             gb.cpu.sp -= 1;
             gb.writeByte(gb.cpu.sp, @truncate(ret >> 8));
             gb.cpu.sp -= 1;
@@ -468,9 +489,9 @@ const InstructionSet = struct {
     fn RET(gb: *GB, args: InstrArgs) u8 { // TODO TEST, UPDATE cycles 5 if condition met, 2 if not met, 4 if no condition
         const zone = tracy.beginZone(@src(), .{ .name = "RET" });
         defer zone.end();
+        // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         // print("RET, condition:{any}", .{args.flagConditions});
         const ret = gb.cpu.f.check(args.flagConditions);
-        // const byte = gb.read_byte(gb.cpu.pc);
         if (ret) {
             const low = gb.readByte(gb.cpu.sp);
             gb.cpu.sp += 1;
@@ -544,7 +565,7 @@ const InstructionSet = struct {
         const s = false;
         const c = gb.cpu.f.cFlag();
         gb.cpu.f.write(z, c, h, s);
-        gb.cpu.pc += 2;
+        gb.cpu.pc += 1;
         return 2;
     }
     fn BITTESTHL(gb: *GB, args: InstrArgs) u8 { // TODO TEST
@@ -559,7 +580,7 @@ const InstructionSet = struct {
         const c = gb.cpu.f.cFlag();
         const s = false;
         gb.cpu.f.write(z, c, h, s);
-        gb.cpu.pc += 2;
+        gb.cpu.pc += 1;
         return 3;
     }
     fn RL(gb: *GB, args: InstrArgs) u8 { // TODO TEST Rotate bits in register r8 left through carry.
@@ -567,6 +588,7 @@ const InstructionSet = struct {
         defer zone.end();
         const carried = gb.cpu.f.cFlag();
         const reg = gb.cpu.get_byte(args.target);
+        // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         // print("RL, target: {any}, prior: 0b{b}, carried = {d}\n", .{ args.target, reg, @intFromBool(carried) });
         const c = reg >> 7 == 1;
         const rotated: u8 = reg << 1 | @intFromBool(carried);
@@ -576,7 +598,7 @@ const InstructionSet = struct {
         gb.cpu.f.write(z, c, h, s);
         gb.cpu.set_byte(args.target, rotated);
         // print("after: 0b{b}\n", .{gb.cpu.get_byte(args.target)});
-        gb.cpu.pc += 2;
+        gb.cpu.pc += 1;
         return 2;
     }
     fn UNDEF(_: *GB, _: InstrArgs) u8 {
@@ -609,7 +631,7 @@ const InstructionSet = struct {
                 0x14 => INCr8(gb, .{ .target = regID.d }),
                 0x15 => DECr8(gb, .{ .target = regID.d }),
                 0x16 => LD8(gb, .{ .target = regID.d }),
-                0x17 => UNDEF(gb, .{ .none = {} }),
+                0x17 => RLA(gb, .{ .none = {} }),
                 0x18 => JR(gb, .{ .flagConditions = .none }),
                 0x19 => ADDHLr16(gb, .{ .target = regID.d }),
                 0x1A => LDAr16(gb, .{ .target = regID.d }),
@@ -1176,18 +1198,18 @@ const CPU = struct {
             return self.value & (1 << 6) != 0;
         }
         inline fn write(self: *FlagRegister, z: bool, c: bool, h: bool, s: bool) void {
-        self.value = (@as(u8, @intFromBool(z)) << 7) | // Z
-            (@as(u8, @intFromBool(s)) << 6) | // N always set
-            (@as(u8, @intFromBool(h)) << 5) |
+            self.value = (@as(u8, @intFromBool(z)) << 7) | // Z
+                (@as(u8, @intFromBool(s)) << 6) | // N always set
+                (@as(u8, @intFromBool(h)) << 5) |
                 (@as(u8, @intFromBool(c)) << 4);
         }
         inline fn check(self: *FlagRegister, cond: InstructionSet.Condition) bool {
             return switch (cond) {
                 .z => self.zFlag(), // Z
-            .nz => !self.zFlag(),
+                .nz => !self.zFlag(),
                 .c => self.cFlag(), // C
-            .nc => !self.cFlag(),
-                .none => true
+                .nc => !self.cFlag(),
+                .none => true,
             };
         }
     };
@@ -1255,7 +1277,6 @@ const GPU = struct {
         // process interrupts and continue on as well as changing modes midscanline when needed
         // const zone = tracy.beginZone(@src(), .{ .name = "GPU TICK" });
         // defer zone.end();
-        if (!self.specialRegisterBitSet(.lcdc, 7)) return;
         var cycles_left = cycles; // amt of cycles spent by cpu
         self.frame_cycles_spent += cycles_left;
         while (cycles_left > 0) {
@@ -1279,15 +1300,15 @@ const GPU = struct {
 
         switch (self.mode) {
             .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
-                       // decoding:
-                       // | byte 0 | y pos
-                       // | byte 1 | x pos
-                       // | byte 2 | tile number --  the Tile Number used for fetching the graphics data for the sprite
-                       // | byte 3 | sprite flags:
-                            // {bit 7} OBJ-BG priority 0 (priority) 1 (1-3 priority)
-                            // {bit 6} Y-flip
-                            // {bit 5} X-flip
-                            // {bit 4} pallete number
+                // decoding:
+                // | byte 0 | y pos
+                // | byte 1 | x pos
+                // | byte 2 | tile number --  the Tile Number used for fetching the graphics data for the sprite
+                // | byte 3 | sprite flags:
+                // {bit 7} OBJ-BG priority 0 (priority) 1 (1-3 priority)
+                // {bit 6} Y-flip
+                // {bit 5} X-flip
+                // {bit 4} pallete number
                 // print("scanning\n", .{});
                 // const sprite_buffer: u8[40] = .{};
                 // var i: u8 = 0;
@@ -1299,7 +1320,6 @@ const GPU = struct {
                 //         for(sprite_buffer[buffer_i]
                 //     }
                 // }
-
                 return;
             },
             .RENDER => { // 3 transfers pixels to the LCD, one scanline at a time, duration variable
@@ -1307,11 +1327,12 @@ const GPU = struct {
                 // - Background tiles at the current scroll position
                 // - Window tiles if enabled and visible on this line
                 // - Sprites that were found during OAM scan
+                if (!self.testSpecialRegister(.lcdc, 7)) return;
                 const ly = self.getSpecialRegister(.ly);
                 const bg_cpp = 1.0075; // cycles per pixel
-                const use_signed = !self.specialRegisterBitSet(.lcdc, 4);
+                const use_signed = !self.testSpecialRegister(.lcdc, 4);
                 const base: i32 = if (use_signed) 0x9000 else 0x8000;
-                const tilemap_base: u16 = if (self.specialRegisterBitSet(.lcdc, 3)) 0x9C00 else 0x9800; // check lcdc bit 3
+                const tilemap_base: u16 = if (self.testSpecialRegister(.lcdc, 3)) 0x9C00 else 0x9800; // check lcdc bit 3
                 const scx = self.getSpecialRegister(.scx);
                 const scy = self.getSpecialRegister(.scy);
                 var x = self.scanline_progress;
@@ -1322,7 +1343,7 @@ const GPU = struct {
                     const tile_y: u16 = bg_y / 8;
                     const tile_x: u16 = bg_x / 8;
 
-                    const tile_index_addr: u16 = tilemap_base + tile_y*32 + tile_x;
+                    const tile_index_addr: u16 = tilemap_base + tile_y * 32 + tile_x;
 
                     const tile_index: i16 = if (use_signed) @intCast(@as(i8, @bitCast(self.readVram(tile_index_addr)))) else @intCast(self.readVram(tile_index_addr));
                     const tile_line: u16 = bg_y % 8;
@@ -1331,17 +1352,13 @@ const GPU = struct {
                     const low = self.readVram(tile_addr);
                     const high = self.readVram(tile_addr + 1);
 
-                    const shift: u3 = @intCast(7 - bg_x % 8);
-                    const color_code: u2 = (@as(u2, @truncate(high >> shift)) << 1) |  @as(u1, @truncate(low >> shift));
-                    const bgp = self.getSpecialRegister(.bgp);
-                    const pallete_color: u2 = @truncate(bgp >> color_code * 2);
-                    self.scanline[x] = @as(Color, @enumFromInt(pallete_color));
+                    const pixel: u3 = @intCast(bg_x % 8);
+                    self.scanline[x] = self.tileDecoder(high, low, pixel);
                     cycles_to_spend -= bg_cpp;
-                    x+=1;
+                    x += 1;
                     self.scanline_progress = x;
                     if (cycles_to_spend <= 0) return;
                 }
-
 
                 // self.scanline[x] =
                 // random static
@@ -1356,6 +1373,16 @@ const GPU = struct {
             },
             else => return, // no action for hblank or vblank
         }
+    }
+    fn tileDecoder(self: *GPU, high: u8, low: u8, pixel_index: u3) Color {
+        const shift: u3 = 7 - pixel_index;
+        const hi = @as(u1, @truncate(high >> shift));
+        const lo = @as(u1, @truncate(low >> shift));
+        const color_code: u2 = (@as(u2, hi) << 1) | lo;
+        const bgp = self.getSpecialRegister(.bgp); // get the right color pallete (dmg)
+        // print("color_code: {d}\n", .{color_code});
+        const pallete_color: u2 = @truncate(bgp >> @as(u3, @intCast(color_code)) * 2); // selecting color 
+        return @as(Color, @enumFromInt(pallete_color));
     }
     fn switchMode(self: *@This()) void {
         const ly = self.getSpecialRegister(.ly);
@@ -1386,6 +1413,27 @@ const GPU = struct {
             .VBLANK => {
                 const new_ly = ly + 1;
                 if (new_ly > 153) { // 153 is the end of VBLANK
+                    // fetching and writing background tiles to the lcd
+                    const base: u16 = 0x8000; // start of tile data
+                    var tile: u16 = 0;
+                    while (tile < 384) : (tile += 1) {
+                        const tileX = tile % 24;
+                        const tileY = tile / 24;
+                        const dstY = tileY * 8;
+                        const dstX = tileX * 8;
+                        const tile_addr: u16 = base + tile * 16;
+                        for (0..8) |row| {
+                        for (0..8) |col| {
+                                const pixel_index: u3 = @intCast(col);
+                                const low = self.readVram(tile_addr + row * 2);
+                                const high = self.readVram(tile_addr + row * 2 + 1);
+                                const color = self.tileDecoder(high, low, pixel_index);
+                                // write to tilesheet buffer
+                                const tilesheet_index = (dstY + row) * 192 + (dstX + col);
+                                LCD.writeToBuf(&self.lcd.tilesheetBuf, color, tilesheet_index);
+                            }
+                        }
+                    }
                     self.setSpecialRegister(.ly, 0); // reset LY to 0
                     self.mode = .SCAN;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
@@ -1407,7 +1455,7 @@ const GPU = struct {
         return self.vram[fixed_address];
     }
     fn writeVram(self: *@This(), address: usize, value: u8) void {
-        // if (!(self.specialRegisterBitSet(.lcdc, 7) and self.mode == .RENDER)) {
+        // if (self.mode != .RENDER) {
             const fixed_address = address - VRAM_BEGIN;
             self.vram[fixed_address] = value;
         // }
@@ -1418,7 +1466,7 @@ const GPU = struct {
     fn getSpecialRegister(self: *@This(), register: LCD.special_registers) u8 {
         return self.special_registers[@intFromEnum(register)];
     }
-    fn specialRegisterBitSet(self: *@This(), register: LCD.special_registers, bit: u3) bool {
+    fn testSpecialRegister(self: *@This(), register: LCD.special_registers, bit: u3) bool {
         return @as(u1, @truncate(self.special_registers[@intFromEnum(register)] >> bit)) == 1;
     }
     fn writeOAM(self: *@This(), address: usize, value: u8) !void {
@@ -1433,8 +1481,13 @@ const GPU = struct {
     fn vram_dump(self: *@This()) void {
         print("VRAM dump: \n", .{});
         for (self.vram, 0..VRAM_SIZE) |value, i| {
-            print("0x{x}", .{value});
-            if (i != 0 and i % 80 == 0) print("\n", .{});
+            const global_address = i  + VRAM_BEGIN;
+            if (global_address == 0x8000) print("\nentering vram\n", .{})
+            else if (global_address == 0x9800) print("\nentering tilemap one\n", .{})
+            else if (global_address == 0x9C00) print("\nentering tilemap two\n", .{});
+            print("@0x{X}[", .{global_address});
+            print("0x{x}]\t", .{value});
+            if (i != 0 and i % 12 == 0) print("\n", .{});
         }
         print("\n", .{});
     }
@@ -1451,7 +1504,9 @@ const GPU = struct {
     const VRAM_BEGIN = 0x8000;
     const VRAM_END = 0x9FFF;
     const VRAM_SIZE = VRAM_END - VRAM_BEGIN + 1;
-
+    const tilemap_one = 0x9800;
+    const tilemap_two = 0x9C00;
+    const tilemap_size: u16 = tilemap_two - tilemap_one;
     const OAM_BEGIN = 0xFE00;
     const OAM_END = 0xFE9F;
     const OAM_SIZE = OAM_END - OAM_BEGIN + 1;
@@ -1461,11 +1516,11 @@ const GPU = struct {
 ///- Screen, Height, Width, Rendering
 const LCD = struct {
     screenBuf: [screenHeightPx * screenWidthPx]u32 = undefined,
-    background: [32][32]GPU.Tile = undefined, // defines the background pixels of the gameboy
-    window: [32][32]GPU.Tile = undefined, // defines the foreground and sprites
+    tilesheetBuf: [192 * 128]u32 = undefined,
     renderer: *g.SDL_Renderer = undefined,
     screen_texture: *g.SDL_Texture = undefined,
-    bg_texture:  *g.SDL_Texture = undefined,
+    bg_texture: *g.SDL_Texture = undefined,
+    tilesheet_texture: *g.SDL_Texture = undefined,
     win: *g.SDL_Window = undefined,
     grid_pixel_sz: u16 = undefined,
     const special_registers = enum(u8) {
@@ -1496,7 +1551,11 @@ const LCD = struct {
         var color: GPU.Color = undefined;
         for (0..self.screenBuf.len) |i| {
             color = GB.prng.random().enumValue(GPU.Color);
-            self.writeToBuf(color, i);
+            writeToBuf(&self.screenBuf, color, i);
+        }
+        for (0..self.tilesheetBuf.len) |i| {
+            color = GB.prng.random().enumValue(GPU.Color);
+            writeToBuf(&self.tilesheetBuf, color, i);
         }
         try self.startAndCreateRenderer(); // set window and renderer
     }
@@ -1538,6 +1597,8 @@ const LCD = struct {
         _ = g.SDL_SetTextureScaleMode(self.screen_texture, g.SDL_SCALEMODE_NEAREST);
         // TODO RESIZABLE
         self.bg_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_TARGET, window_width, window_height);
+        self.tilesheet_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_TARGET, 192, 128);
+        _ = g.SDL_SetTextureScaleMode(self.tilesheet_texture, g.SDL_SCALEMODE_NEAREST);
         self.createBG();
         self.bootScreen(); // wait for sdl to finish building the window to begin progression
     }
@@ -1560,17 +1621,17 @@ const LCD = struct {
         std.time.sleep(17 * std.time.ns_per_ms);
     }
     // peripheral fns
-    fn writeToBuf(self: *LCD, color: GPU.Color, index: usize) void {
-        self.screenBuf[index] = switch(color) {
+    fn writeToBuf(buf: []u32, color: GPU.Color, index: usize) void {
+        buf[index] = switch (color) {
             .white => 0xFFCCFFCC,
             .lgray => 0xFF99CC99,
-            .dgray =>  0xFF669966,
-            .black =>  0xFF336633
+            .dgray => 0xFF669966,
+            .black => 0xFF336633,
         };
     }
     fn pushScanline(self: *@This(), new_scanline: [screenWidthPx]GPU.Color, ly: u8) void {
         for (0..screenWidthPx) |x| {
-            self.writeToBuf(new_scanline[x], @as(u32, @intCast(ly)) * screenWidthPx + x);
+            writeToBuf(&self.screenBuf, new_scanline[x], @as(u32, @intCast(ly)) * screenWidthPx + x);
         }
     }
     // drawing
@@ -1589,21 +1650,30 @@ const LCD = struct {
     }
     fn renderAll(self: *@This()) void {
         _ = g.SDL_UpdateTexture(self.screen_texture, null, &self.screenBuf, 160 * @sizeOf(u32));
+        _ = g.SDL_UpdateTexture(self.tilesheet_texture, null, &self.tilesheetBuf, 192 * @sizeOf(u32));
         // _ = g.SDL_RenderClear(self.renderer);
-        const bg_rect = g.SDL_FRect {
+        const bg_rect = g.SDL_FRect{
             .x = screenWidthPx * pxSize + border * 2,
             .y = 0,
             .w = @as(f32, @floatFromInt(window_width)) - (screenWidthPx * pxSize + border * 2),
             .h = @as(f32, @floatFromInt(window_height)),
         };
-        const screen_rect = g.SDL_FRect {
-            .x = @as(f32, @floatFromInt(10)),
-            .y = @as(f32, @floatFromInt(0)),
+        const screen_rect = g.SDL_FRect{
+            .x = 10.0,
+            .y = 0,
             .w = screenWidthPx * pxSize,
             .h = screenHeightPx * pxSize,
         };
+        const bg_px_sz: f32 = (@as(f32, @floatFromInt(window_height)) - (screenHeightPx * pxSize) + 10) / 128;
+        const bg_map_rect = g.SDL_FRect{
+            .x = @as(f32, @floatFromInt(0)),
+            .y = screenHeightPx * pxSize + 10,
+            .w = 192 * bg_px_sz,
+            .h = 128 * bg_px_sz,
+        };
         _ = g.SDL_RenderTexture(self.renderer, self.bg_texture, null, &bg_rect);
         _ = g.SDL_RenderTexture(self.renderer, self.screen_texture, null, &screen_rect);
+        _ = g.SDL_RenderTexture(self.renderer, self.tilesheet_texture, null, &bg_map_rect);
         _ = g.SDL_RenderPresent(self.renderer);
     }
 
@@ -1634,7 +1704,7 @@ const LCD = struct {
 
 const Clock = struct {
     start: i128 = undefined,
-    ns_elapsed: u64= 0,
+    ns_elapsed: u64 = 0,
     last_frame_time: i128 = undefined, // TODO(logan) use 0 tracked time
     last_fps: f64 = 0,
     current_fps: f64 = 0,
@@ -1670,9 +1740,9 @@ const Clock = struct {
         self.ns_elapsed += @intCast(frame_time);
         const fps_estimate = std.time.ns_per_s / @as(f64, @floatFromInt(frame_time));
         const smoothing = 0.7;
-        self.current_fps = smoothing*self.last_fps + (1.0 - smoothing)*fps_estimate;
+        self.current_fps = smoothing * self.last_fps + (1.0 - smoothing) * fps_estimate;
         if (self.ns_elapsed >= std.time.ns_per_s) {
-           print("{d:.2} fps\n", .{self.current_fps});
+            // print("{d:.2} fps\n", .{self.current_fps});
             self.ns_elapsed = 0;
         }
         self.last_fps = self.current_fps;
@@ -1730,6 +1800,7 @@ pub const GB = struct {
         }
         self.memory[0x14D] = checksum;
     }
+    /// Loads gameboy bootrom
     pub fn boot(self: *@This()) !void {
         const bootFile = try std.fs.cwd().openFile("roms/dmg_boot.bin", .{});
         defer bootFile.close();
@@ -1760,12 +1831,6 @@ pub const GB = struct {
             while (self.gpu.frame_cycles_spent < Clock.cycles_per_frame) {
                 try self.do();
             }
-            std.debug.print("BG map:\n", .{});
-            for (0..40) |i| {
-                const b = self.gpu.vram[0x9800 - 0x8000 + i];
-                std.debug.print("0x{x} ", .{b});
-            }
-            std.debug.print("\n", .{});
             try self.getEvents(); // poll events once per frame
             self.clock.tick();
             self.clock.update(); // calculates average fps
@@ -1793,11 +1858,14 @@ pub const GB = struct {
         // }
         if (address >= CPU.WRAM_START and address <= CPU.WRAM_END) {
             return self.memory[address];
-        } if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) {
+        }
+        if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) {
             return self.gpu.readVram(address);
-        } if (address >= GPU.OAM_BEGIN and address <= GPU.OAM_END) {
+        }
+        if (address >= GPU.OAM_BEGIN and address <= GPU.OAM_END) {
             return self.gpu.oam[address - GPU.OAM_BEGIN];
-        } return self.memory[address];
+        }
+        return self.memory[address];
     }
     pub fn writeByte(self: *@This(), address: u16, value: u8) void {
         @setRuntimeSafety(false);
@@ -1854,7 +1922,7 @@ pub const GB = struct {
     pub fn reg_dump(self: *@This()) void {
         print("Actual memspace dump:\n", .{});
         for (self.memory[LCD.special_registers.start .. LCD.special_registers.end + 1], LCD.special_registers.start..LCD.special_registers.end + 1) |value, i| {
-            print("register@0x{x}: 0x{x}\n", .{i, value});
+            print("register@0x{x}: 0x{x}\n", .{ i, value });
         }
         const i = 0xFF44;
         print("register@0x{x}: 0x{x}\n", .{ i, self.gpu.getSpecialRegister(.ly) });
@@ -1879,5 +1947,8 @@ pub fn main() !void {
         return;
     };
     defer gb.endGB();
-    try gb.go();
+    gb.go() catch |err| {
+        // gb.gpu.vram_dump();
+        print("Error while running GameBoy: {any}\n", .{err});
+    };
 }
