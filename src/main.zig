@@ -1359,20 +1359,16 @@ const GPU = struct {
                     self.scanline_progress = x;
                     if (cycles_to_spend <= 0) return;
                 }
-
-                // self.scanline[x] =
-                // random static
-                // for (self.scanline_progress..self.scanline.len) |x| {
-                //     const color: Color = GB.prng.random().enumValue(Color);
-                //     self.scanline[x] = color;
-                //     cycles_to_spend -= bg_cpp;
-                //     self.scanline_progress+=1;
-                //     if (cycles_to_spend <= 0) return;
-                // }
                 return;
             },
             else => return, // no action for hblank or vblank
         }
+    }
+    fn randomStatic(self: *GPU) void { // random static
+       for (0..self.lcd.screenBuf.len) |i| {
+           const color: Color = GB.prng.random().enumValue(Color);
+           LCD.writeToBuf(&self.lcd.screenBuf, color, i);
+       }
     }
     fn tileDecoder(self: *GPU, high: u8, low: u8, pixel_index: u3) Color {
         const shift: u3 = 7 - pixel_index;
@@ -1381,7 +1377,7 @@ const GPU = struct {
         const color_code: u2 = (@as(u2, hi) << 1) | lo;
         const bgp = self.getSpecialRegister(.bgp); // get the right color pallete (dmg)
         // print("color_code: {d}\n", .{color_code});
-        const pallete_color: u2 = @truncate(bgp >> @as(u3, @intCast(color_code)) * 2); // selecting color 
+        const pallete_color: u2 = @truncate(bgp >> @as(u3, @intCast(color_code)) * 2); // selecting color
         return @as(Color, @enumFromInt(pallete_color));
     }
     fn switchMode(self: *@This()) void {
@@ -1423,7 +1419,7 @@ const GPU = struct {
                         const dstX = tileX * 8;
                         const tile_addr: u16 = base + tile * 16;
                         for (0..8) |row| {
-                        for (0..8) |col| {
+                            for (0..8) |col| {
                                 const pixel_index: u3 = @intCast(col);
                                 const low = self.readVram(tile_addr + row * 2);
                                 const high = self.readVram(tile_addr + row * 2 + 1);
@@ -1455,10 +1451,8 @@ const GPU = struct {
         return self.vram[fixed_address];
     }
     fn writeVram(self: *@This(), address: usize, value: u8) void {
-        // if (self.mode != .RENDER) {
-            const fixed_address = address - VRAM_BEGIN;
-            self.vram[fixed_address] = value;
-        // }
+        const fixed_address = address - VRAM_BEGIN;
+        self.vram[fixed_address] = value;
     }
     fn setSpecialRegister(self: *@This(), register: LCD.special_registers, value: u8) void {
         self.special_registers[@intFromEnum(register)] = value;
@@ -1481,10 +1475,8 @@ const GPU = struct {
     fn vram_dump(self: *@This()) void {
         print("VRAM dump: \n", .{});
         for (self.vram, 0..VRAM_SIZE) |value, i| {
-            const global_address = i  + VRAM_BEGIN;
-            if (global_address == 0x8000) print("\nentering vram\n", .{})
-            else if (global_address == 0x9800) print("\nentering tilemap one\n", .{})
-            else if (global_address == 0x9C00) print("\nentering tilemap two\n", .{});
+            const global_address = i + VRAM_BEGIN;
+            if (global_address == 0x8000) print("\nentering vram\n", .{}) else if (global_address == 0x9800) print("\nentering tilemap one\n", .{}) else if (global_address == 0x9C00) print("\nentering tilemap two\n", .{});
             print("@0x{X}[", .{global_address});
             print("0x{x}]\t", .{value});
             if (i != 0 and i % 12 == 0) print("\n", .{});
@@ -1690,6 +1682,9 @@ const LCD = struct {
         g.SDL_Quit();
         g.SDL_DestroyWindow(self.win);
         g.SDL_DestroyRenderer(self.renderer);
+        g.SDL_DestroyTexture(self.bg_texture);
+        g.SDL_DestroyTexture(self.screen_texture);
+        g.SDL_DestroyTexture(self.tilesheet_texture);
     }
     const initWinW: u16 = 1000;
     const initWinH: u16 = 700;
@@ -1760,6 +1755,7 @@ pub const GB = struct {
     apu: APU = APU{},
     memory: [0xFFFF]u8 = undefined,
     running: bool = undefined,
+    crash: bool = false,
     cycles_spent: usize = 0,
     clock: Clock = Clock{},
     last_frame: std.time.Instant = undefined,
@@ -1782,8 +1778,7 @@ pub const GB = struct {
     fn init_header_checksum(self: *GB) void {
         const TITLE = "TEST GAME";
         @memcpy(self.memory[0x134 .. 0x134 + TITLE.len], TITLE);
-
-        // Fill remaining header fields with dummy but valid values
+        // Fill remaining header fields with dummy
         self.memory[0x144] = 0x00; // manufacturer code
         self.memory[0x145] = 0x00;
         self.memory[0x146] = 0x00; // CGB flag
@@ -1828,8 +1823,13 @@ pub const GB = struct {
         try self.clock.Start();
         while (self.running) {
             self.clock.last_frame_time = Clock.Now();
-            while (self.gpu.frame_cycles_spent < Clock.cycles_per_frame) {
-                try self.do();
+            while (self.gpu.frame_cycles_spent < Clock.cycles_per_frame and !self.crash) {
+                self.do() catch {
+                 self.crash = true;
+                };
+            }
+            if (self.crash) {
+                self.gpu.randomStatic();
             }
             try self.getEvents(); // poll events once per frame
             self.clock.tick();
