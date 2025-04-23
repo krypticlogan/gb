@@ -1451,8 +1451,10 @@ const GPU = struct {
         return self.vram[fixed_address];
     }
     fn writeVram(self: *@This(), address: usize, value: u8) void {
-        const fixed_address = address - VRAM_BEGIN;
-        self.vram[fixed_address] = value;
+        if (!(self.testSpecialRegister(.lcdc, 7) and self.mode == .RENDER)) {
+            const fixed_address = address - VRAM_BEGIN;
+            self.vram[fixed_address] = value;
+        }
     }
     fn setSpecialRegister(self: *@This(), register: LCD.special_registers, value: u8) void {
         self.special_registers[@intFromEnum(register)] = value;
@@ -1748,6 +1750,62 @@ const Clock = struct {
     const ns_per_frame: u64 = @intFromFloat(@round(1_000_000_000.0 / 59.744));
     const cycles_per_frame = 70224;
 };
+const Timer = struct {
+    registers: [4]u8 = undefined,
+    counter: u16 = 0,
+    prev_enabled: bool = false,
+    const timer_reg = enum {
+        div, // $FF04 - Divider Register (DIV)
+        tima, // $FF05 - Timer Counter (TIMA)
+        tma, // $FF06 - Timer Modulo (TMA)
+        tac // $FF07 - Timer Control (TAC)
+            // |bit 2| timer enable |bit 1-0| clock select
+                                    // 0b00 : CPU Clock / 1024
+                                    // 0b01 : CPU Clock / 16
+                                    // 0b10 : CPU Clock / 64
+                                    // 0b11 : CPU Clock / 256
+    };
+    fn init(self: *Timer, gb: *GB) void {
+        self.registers = gb.memory[0xFF04..0xFF08];
+    }
+    fn tick(self: *Timer, cycles: u8) void {
+        const timer_enable: u1 = @truncate(self.registers[@intFromEnum(.tac)] >> 2 & 1);
+        const bit_pos = switch(@as(u2, @truncate(self.registers[@intFromEnum(.tac)]))) {
+            0b00 => 9,
+            0b01 => 3,
+            0b10 => 5,
+            0b11 => 7
+        };
+        var bit: u1 = undefined;
+        const cycles_ticked = 0;
+        while (cycles_ticked < cycles) : (cycles_ticked += 1) {
+            self.counter += 1;
+            bit = @truncate(self.registers[@intFromEnum(.div)] >> bit_pos);
+            const edge = (bit & timer_enable) == 1;
+            if (!edge and self.prev_enabled) {
+                self.registers[@intFromEnum(.tima)] += 1;
+            }
+        }
+    }
+    fn readTimer(self: *Timer, address: u8) u8 {
+        const fixed_address = address - 0xFF04;
+        return switch (@as(timer_reg, @enumFromInt(fixed_address))) {
+            .div => @truncate(self.counter >> 8),
+            else => self.registers[fixed_address]
+        };
+    }
+    fn writeTimer(self: *Timer, address: u8, value: u8) void {
+        const fixed_address = address - 0xFF04;
+        switch (@as(timer_reg, @enumFromInt(fixed_address))) {
+            .div => { // writing here resets the counter to 0
+                self.counter = 0;
+            },
+            else => {
+                self.registers[fixed_address] = value;
+            }
+        }
+    }
+};
 /// Gameboy Machine, defer endGB
 pub const GB = struct {
     cpu: CPU = CPU{},
@@ -1819,6 +1877,8 @@ pub const GB = struct {
     }
     // gb execution
     pub fn go(self: *@This()) !void {
+        // TODO Unmap bootrom, load 0x00-0xFF with cartidge data
+        // TODO Timers, interrupts
         print("GO!\n", .{});
         try self.clock.Start();
         while (self.running) {
