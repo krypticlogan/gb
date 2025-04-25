@@ -1751,9 +1751,12 @@ const Clock = struct {
     const cycles_per_frame = 70224;
 };
 const Timer = struct {
-    registers: [4]u8 = undefined,
+    registers: *[4]u8 = undefined,
     counter: u16 = 0,
     prev_enabled: bool = false,
+    cycles_since_overflow: ?u8 = null,
+    const START = 0xFF04;
+    const END = 0xFF07;
     const timer_reg = enum {
         div, // $FF04 - Divider Register (DIV)
         tima, // $FF05 - Timer Counter (TIMA)
@@ -1766,7 +1769,7 @@ const Timer = struct {
                                     // 0b11 : CPU Clock / 256
     };
     fn init(self: *Timer, gb: *GB) void {
-        self.registers = gb.memory[0xFF04..0xFF08];
+        self.registers = gb.memory[START..END];
     }
     fn tick(self: *Timer, cycles: u8) void {
         const timer_enable: u1 = @truncate(self.registers[@intFromEnum(.tac)] >> 2 & 1);
@@ -1780,21 +1783,32 @@ const Timer = struct {
         const cycles_ticked = 0;
         while (cycles_ticked < cycles) : (cycles_ticked += 1) {
             self.counter += 1;
+            if (self.cycles_since_overflow) |*cycles_since| {
+                cycles_since += 1;
+                if (cycles_since == 4) {
+                    // TODO timer interrupt
+                    self.registers[@intFromEnum(.tima)];
+                }
+            }
             bit = @truncate(self.registers[@intFromEnum(.div)] >> bit_pos);
             const edge = (bit & timer_enable) == 1;
             if (!edge and self.prev_enabled) {
-                self.registers[@intFromEnum(.tima)] += 1;
+                const res = @addWithOverflow(self.registers[@intFromEnum(.tima)], 1);
+                if (res[0] != 0) {
+                    self.cycles_since_overflow = 0;
+                    self.registers[@intFromEnum(.tima)] = 0;
+                }
             }
         }
     }
-    fn readTimer(self: *Timer, address: u8) u8 {
+    fn read(self: *Timer, address: u16) u8 {
         const fixed_address = address - 0xFF04;
         return switch (@as(timer_reg, @enumFromInt(fixed_address))) {
             .div => @truncate(self.counter >> 8),
             else => self.registers[fixed_address]
         };
     }
-    fn writeTimer(self: *Timer, address: u8, value: u8) void {
+    fn write(self: *Timer, address: u16, value: u8) void {
         const fixed_address = address - 0xFF04;
         switch (@as(timer_reg, @enumFromInt(fixed_address))) {
             .div => { // writing here resets the counter to 0
@@ -1811,12 +1825,17 @@ pub const GB = struct {
     cpu: CPU = CPU{},
     gpu: GPU = GPU{},
     apu: APU = APU{},
+    timer: Timer = Timer{},
     memory: [0xFFFF]u8 = undefined,
     running: bool = undefined,
     crash: bool = false,
     cycles_spent: usize = 0,
     clock: Clock = Clock{},
     last_frame: std.time.Instant = undefined,
+    // containers
+    const interrupts = enum {
+
+    };
     /// nintendo logo
     const LOGO: [48]u8 = .{ 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E };
     // startup
@@ -1912,10 +1931,13 @@ pub const GB = struct {
     // universal callers
     pub fn readByte(self: *@This(), address: u16) u8 {
         @setRuntimeSafety(false);
-        if (address >= 0xFF00) return self.memory[address];
-        // if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
-        //     return self.gpu.getSpecialRegister(@as(LCD.special_registers, @enumFromInt(address - LCD.special_registers.start)));
-        // }
+        // if (address >= 0xFF00) return self.memory[address];
+        if (address >= Timer.START and address <= Timer.END) {
+            return self.timer.read(address);
+        }
+        if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
+            return self.gpu.getSpecialRegister(@as(LCD.special_registers, @enumFromInt(address - LCD.special_registers.start)));
+        }
         if (address >= CPU.WRAM_START and address <= CPU.WRAM_END) {
             return self.memory[address];
         }
@@ -1930,6 +1952,9 @@ pub const GB = struct {
     pub fn writeByte(self: *@This(), address: u16, value: u8) void {
         @setRuntimeSafety(false);
         if (address < 0x8000) return; // no writes to ROM
+        if (address >= Timer.START and address <= Timer.END) {
+            self.timer.write(address, value);
+        }
         if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
             const register = @as(LCD.special_registers, @enumFromInt(address - LCD.special_registers.start));
             self.gpu.setSpecialRegister(register, value);
