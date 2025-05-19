@@ -31,6 +31,10 @@
             .url = "git+https://github.com/tealsnow/zig-tracy.git#4f23bca3e4f59604a8d298796030858677df3f53",
             .hash = "tracy-0.0.9-Dn49mw9SAACCtNBeyyb3EOipVIAhYuoDI9bLBi3LDJh6",
         },
+        .sdl_ttf = .{
+            .url = "git+https://github.com/boubl/SDL_ttf.git#e825cdf18bb3aa50ac0e208589963a3a22cddb42",
+            .hash = "sdl_ttf-3.2.0-GgzNnYkKBwAThbqYkz3LyGH7QuL7vT74uoKiHXPOdeQ9",
+        },
     },
     .paths = .{
         "build.zig",

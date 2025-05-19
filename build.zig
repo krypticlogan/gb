@@ -33,15 +33,25 @@ pub fn build(b: *std.Build) void {
     .target = target,
     .optimize = optimize,
     //.preferred_link_mode = .static, // or .dynamic
-});
+    });
     const sdl_lib = sdl_dep.artifact("SDL3");
     exe.root_module.linkLibrary(sdl_lib);
+
+    // SDL_ttf Dependency
+    const sdl_ttf_dep = b.dependency("sdl_ttf", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const sdl_ttf_lib = sdl_ttf_dep.artifact("SDL_ttf");
+    exe.root_module.linkLibrary(sdl_ttf_lib);
     // const sdl_test_lib = sdl_dep.artifact("SDL3_test");
     exe.linkLibC();
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
     b.installArtifact(exe);
+
+    
 
     // This *creates* a Run step in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish

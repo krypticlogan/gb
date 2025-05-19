@@ -6,6 +6,7 @@ const g = @cImport({
     @cInclude("SDL3/SDL_revision.h");
     @cDefine("SDL_MAIN_HANDLED", {});
     @cInclude("SDL3/SDL_main.h");
+    @cInclude("SDL3_ttf/SDL_ttf.h");
 });
 
 const DEBUG = true; // Set to false to disable debug prints
@@ -15,19 +16,23 @@ fn print(comptime fmt: []const u8, args: anytype) void {
 const allocator = std.heap.page_allocator;
 
 const InstructionSet = struct {
-    const InstrFn = *const fn (*GB, InstrArgs) u8;
-    const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: Condition, targets: struct { to: regID, from: regID } };
+    const InstrFn = fn (*GB, InstrArgs) u8;
+    const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: Condition, targets: struct { to: regID, from: regID }, hl_mod: i2};
+    const InstrInfo = struct { InstrFn, InstrArgs, u8 };
     const Condition = union(enum) { none, z, c, nz, nc };
+    const table = [_]InstrInfo{
+        .{NOP, .{ .none = {} }, 1},
+    };
     fn NOP(gb: *GB, _: InstrArgs) u8 { // TODO test
-        const zone = tracy.beginZone(@src(), .{ .name = "NOP" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "NOP" });
+        // defer zone.end();
         // print("NOP\n", .{});
         gb.cpu.pc += 1;
         return 1;
     }
     fn INCr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "INCr8" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "INCr8" });
+        // defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("INCr8, target: {any}\n", .{args.target});
         gb.cpu.set_byte(args.target, @addWithOverflow(value, 1)[0]);
@@ -40,8 +45,8 @@ const InstructionSet = struct {
         return 1;
     }
     fn INCr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "INCr16" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "INCr16" });
+        // defer zone.end();
         const value = gb.cpu.get_word(args.target);
         const res = @addWithOverflow(value, 1)[0];
         // print("INCr16, target: {any}\n 0x{X} + 1 = 0x{X}\n", .{ args.target, value, res });
@@ -50,8 +55,8 @@ const InstructionSet = struct {
         return 2;
     }
     fn DECr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST -- overflow? r16 too
-        const zone = tracy.beginZone(@src(), .{ .name = "DECr8" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "DECr8" });
+        // defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("DECr8, target: {any} ({d} -= 1)\n", .{ args.target, gb.cpu.get_byte(args.target) });
         const res = @subWithOverflow(value, 1)[0];
@@ -65,8 +70,8 @@ const InstructionSet = struct {
         return 1;
     }
     fn DECr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "DECr16" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "DECr16" });
+        // defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("DECr16, target: {any}\n", .{args.target});
         gb.cpu.set_word(args.target, @subWithOverflow(value, 1)[0]);
@@ -74,8 +79,8 @@ const InstructionSet = struct {
         return 2;
     }
     fn LD8(gb: *GB, args: InstrArgs) u8 { // LD r8, n8 TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "LD8" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LD8" });
+        // defer zone.end();
         const n: u8 = gb.readByte(gb.cpu.pc + 1);
         // print("LD8, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
         // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
@@ -84,8 +89,8 @@ const InstructionSet = struct {
         return 2;
     }
     fn LD16(gb: *GB, args: InstrArgs) u8 { // LD r16, n16 TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "LD16" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LD16" });
+        // defer zone.end();
         // print("pc: 0x{X}\n", .{ gb.cpu.pc });
         const n: u16 = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
         // print("LD16, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
@@ -96,28 +101,29 @@ const InstructionSet = struct {
         return 3;
     }
     fn LDr8(gb: *GB, args: InstrArgs) u8 { // LD r8, r8 TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "LDr8" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDr8" });
+        // defer zone.end();
         // print("LDr8, targets: from {any} --> to {any}\n", .{ args.targets.from, args.targets.to });
         // print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(args.targets.to), gb.cpu.get_byte(args.targets.from) });
         gb.cpu.set_byte(args.targets.to, gb.cpu.get_byte(args.targets.from));
         gb.cpu.pc += 1;
         return 1;
     }
-    fn LDAHL(gb: *GB, _: InstrArgs) u8 { // LD r8, r8 TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "LDAHL" });
-        defer zone.end();
+    fn LDAHL(gb: *GB, args: InstrArgs) u8 { // LD r8, r8 TODO TEST
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDAHL" });
+        // defer zone.end();
         const mem_place = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         // print("LDHL, mem@hl:0x{X} --> to A\n", .{mem_place});
         // print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(regID.a), gb.read_byte(mem_place) });
         gb.writeByte(mem_place, value);
+        if (args.hl_mod != 0) gb.cpu.set_word(.h, @intCast(@addWithOverflow(args.hl_mod, @as(i17, mem_place))[0]));
         gb.cpu.pc += 1;
         return 2;
     }
     fn LDSP16(gb: *GB, _: InstrArgs) u8 { // LD r16, n16, 0x31
-        const zone = tracy.beginZone(@src(), .{ .name = "LDSP16" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDSP16" });
+        // defer zone.end();
         // print("LD16SP\n", .{});
         const n: u16 = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
         // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
@@ -128,8 +134,8 @@ const InstructionSet = struct {
         return 3;
     }
     fn LDHL8(gb: *GB, _: InstrArgs) u8 { // LD[HL], n8
-        const zone = tracy.beginZone(@src(), .{ .name = "LDHL8" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDHL8" });
+        // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.readByte(gb.cpu.pc + 1);
         // print("LDHLDA\thl:0x{X}\tvalue:0x{x}\nmem@hl: 0x{x}\n", .{ hl, value, gb.read_byte(hl) });
@@ -139,8 +145,8 @@ const InstructionSet = struct {
         return 3;
     }
     fn LDHLR(gb: *GB, args: InstrArgs) u8 { // LD[HL],r8
-        const zone = tracy.beginZone(@src(), .{ .name = "LDHLR" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDHLR" });
+        // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(args.target);
         // print("LDHLR, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
@@ -151,8 +157,8 @@ const InstructionSet = struct {
     }
     fn LDHLIA(gb: *GB, _: InstrArgs) u8 { // LD [HLI],A
         // print("[pc]:0x{X}\t", .{gb.cpu.pc});
-        const zone = tracy.beginZone(@src(), .{ .name = "LDHLIA" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDHLIA" });
+        // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         // print("LDHLIA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.readByte(hl), value });
@@ -163,8 +169,8 @@ const InstructionSet = struct {
         return 2;
     }
     fn LDHLDA(gb: *GB, _: InstrArgs) u8 { // LD [HLD],A
-        const zone = tracy.beginZone(@src(), .{ .name = "LDHLDA" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDHLDA" });
+        // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         // print("LDHLDA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
@@ -175,8 +181,8 @@ const InstructionSet = struct {
         return 2;
     }
     fn LDHCA(gb: *GB, _: InstrArgs) u8 {
-        const zone = tracy.beginZone(@src(), .{ .name = "LDHCA" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDHCA" });
+        // defer zone.end();
         const c = gb.cpu.get_byte(regID.c);
         const a = gb.cpu.get_byte(regID.a);
         const mem_place = 0xFF00 + @as(u16, c);
@@ -186,8 +192,8 @@ const InstructionSet = struct {
         return 2;
     }
     fn LDHAC(gb: *GB, _: InstrArgs) u8 { // Load value in register A from the byte at address $FF00+c
-        const zone = tracy.beginZone(@src(), .{ .name = "LDHAC" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDHAC" });
+        // defer zone.end();
         // const a = gb.cpu.get_byte(regID.a);
         const c = gb.cpu.get_byte(regID.c);
         const byte = gb.readByte(0xFF00 + @as(u16, c));
@@ -197,8 +203,8 @@ const InstructionSet = struct {
         return 2;
     }
     fn LDAn16(gb: *GB, _: InstrArgs) u8 { // TODO TEST Load value in register A from the byte at address n16.
-        const zone = tracy.beginZone(@src(), .{ .name = "LDAn16" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDAn16" });
+        // defer zone.end();
         const memory_place = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
         const n = gb.readByte(memory_place);
         // print("LDAn16, n: Ox{X} --> A\n", .{n});
@@ -209,8 +215,8 @@ const InstructionSet = struct {
         return 4;
     }
     fn LDHAn16(gb: *GB, _: InstrArgs) u8 { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
-        const zone = tracy.beginZone(@src(), .{ .name = "LDHAn16" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDHAn16" });
+        // defer zone.end();
         const memory_place = 0xFF00 + @as(u16, gb.readByte(gb.cpu.pc + 1));
         // print("LDHAn16, \n", .{});
         // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
@@ -222,8 +228,8 @@ const InstructionSet = struct {
         return 3;
     }
     fn LDn16A(gb: *GB, _: InstrArgs) u8 { // TODO TEST Store value in register A into the byte at address n16.
-        const zone = tracy.beginZone(@src(), .{ .name = "LDn16A" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDn16A" });
+        // defer zone.end();
         const memory_place = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
@@ -234,8 +240,8 @@ const InstructionSet = struct {
         return 4;
     }
     fn LDHn16A(gb: *GB, _: InstrArgs) u8 { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
-        const zone = tracy.beginZone(@src(), .{ .name = "LDHn16A" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDHn16A" });
+        // defer zone.end();
         // print("LDHn16A\n", .{});
         const memory_place = 0xFF00 + @as(u16, gb.readByte(gb.cpu.pc + 1));
         // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
@@ -247,8 +253,8 @@ const InstructionSet = struct {
         return 3;
     }
     fn LDAr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST Load value in register A from the byte pointed to by register r16.
-        const zone = tracy.beginZone(@src(), .{ .name = "LDAr16" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDAr16" });
+        // defer zone.end();
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.readByte(memory_place);
         // print("LDAr16, n: 0x{X} --> A\n", .{n});
@@ -257,8 +263,8 @@ const InstructionSet = struct {
         return 2;
     }
     fn LDr16A(gb: *GB, args: InstrArgs) u8 { // TODO TEST Store value in register A into the byte pointed to by register r16.
-        const zone = tracy.beginZone(@src(), .{ .name = "LDr16A" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDr16A" });
+        // defer zone.end();
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
@@ -268,8 +274,8 @@ const InstructionSet = struct {
     }
 
     fn XORA(gb: *GB, args: InstrArgs) u8 {
-        const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
+        // defer zone.end();
         // print("XORA, target {any}\n", .{args.target});
         gb.cpu.registers[@intFromEnum(regID.a)] ^= gb.cpu.registers[@intFromEnum(args.target)];
         if (gb.cpu.registers[@intFromEnum(regID.a)] == 0) {
@@ -280,8 +286,8 @@ const InstructionSet = struct {
         return 1;
     }
     fn ADDAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
-        const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
+        // defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("ADDAr8 target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
@@ -296,8 +302,8 @@ const InstructionSet = struct {
         return 1;
     }
     fn SUBAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
-        const zone = tracy.beginZone(@src(), .{ .name = "SUBAr8" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "SUBAr8" });
+        // defer zone.end();
         const value = gb.cpu.get_byte(args.target);
         // print("SUBA target: {any}, value: {d} \n", .{ args.target, value });
         const a = gb.cpu.get_byte(regID.a);
@@ -312,8 +318,8 @@ const InstructionSet = struct {
         return 1;
     }
     fn ADDAHL(gb: *GB, _: InstrArgs) u8 { // TODO Add the byte pointed to by HL to A.
-        const zone = tracy.beginZone(@src(), .{ .name = "ADDAHL" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "ADDAHL" });
+        // defer zone.end();
         const mem_place = gb.cpu.get_word(regID.h);
         const value = gb.readByte(mem_place);
         // print("ADDAHL:A + mem@0x{X}: value: {d} \n", .{ mem_place, value });
@@ -329,8 +335,8 @@ const InstructionSet = struct {
         return 2;
     }
     fn ADDHLr16(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
-        const zone = tracy.beginZone(@src(), .{ .name = "ADDHLr16" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "ADDHLr16" });
+        // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_word(args.target);
         // print("ADDHL {any} + hl, {d} + {d} \n", .{ args.target, value, hl });
@@ -345,17 +351,22 @@ const InstructionSet = struct {
         return 2;
     }
     fn EI(gb: *GB, _: InstrArgs) u8 { // TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "EI" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "EI" });
+        // defer zone.end();
+        // print("EI\n", .{});
+        gb.cpu.pc += 1;
+        return 1;
+    }
+    fn DI(gb: *GB, _: InstrArgs) u8 { // TODO TEST
         // print("EI\n", .{});
         gb.cpu.pc += 1;
         return 1;
     }
     fn RRCA(gb: *GB, _: InstrArgs) u8 { // TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "RRCA" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "RRCA" });
+        // defer zone.end();
         const a = gb.cpu.get_byte(regID.a);
-        // print("RRCA\n", .{});
+        gb.cpu.pushToExecutionChain(fmtInsDebug("RRCA", .{}));
         gb.cpu.set_byte(regID.a, a << 7 | a >> 1);
         const c = (@as(u1, @truncate(a)) == 1);
         const s = gb.cpu.f.sFlag();
@@ -369,7 +380,7 @@ const InstructionSet = struct {
         const carried = gb.cpu.f.cFlag();
         const reg = gb.cpu.get_byte(regID.a);
         // print("[pc]:0x{X}\t", .{gb.cpu.pc});
-        // print("RLA, prior: 0b{b}, carried = {d}\n", .{ reg, @intFromBool(carried) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("RLA, prior: 0b{b}, carried = {d}", .{ reg, @intFromBool(carried) }));
         const c = reg >> 7 == 1;
         const rotated: u8 = reg << 1 | @intFromBool(carried);
         const z = false;
@@ -382,15 +393,15 @@ const InstructionSet = struct {
         return 1;
     }
     fn PUSH(gb: *GB, args: InstrArgs) u8 {
-        const zone = tracy.beginZone(@src(), .{ .name = "PUSH" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "PUSH" });
+        // defer zone.end();
         var high: u8 = undefined;
         var low: u8 = undefined;
         // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         if (args.target == regID.a) {
             high = gb.cpu.get_byte(regID.a);
             low = gb.cpu.f.value & 0xF0; // only the upper 4 bits
-            // print("PUSH AF a: 0x{X}, f: 0x{X}\n", .{ high, low });
+            gb.cpu.pushToExecutionChain(fmtInsDebug("PUSH AF a: 0x{X}, f: 0x{X}", .{ high, low }));
         } else {
             const value = gb.cpu.get_word(args.target);
             high = @truncate(value >> 8);
@@ -406,15 +417,15 @@ const InstructionSet = struct {
         return 4;
     }
     fn POP(gb: *GB, args: InstrArgs) u8 {
-        const zone = tracy.beginZone(@src(), .{ .name = "POP" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "POP" });
+        // defer zone.end();
         const low = gb.readByte(gb.cpu.sp);
         gb.cpu.sp += 1;
         const high = gb.readByte(gb.cpu.sp);
         gb.cpu.sp += 1;
         // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         const value = @as(u16, high) << 8 | low;
-        // print("POP 0x{X} --> {any}\n", .{ value, args.target });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("POP 0x{X} --> {any}", .{ value, args.target }));
         if (args.target == regID.a) {
             gb.cpu.set_byte(regID.a, high);
             gb.cpu.f.value = low & 0xF0;
@@ -422,58 +433,56 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 3;
     }
-    fn JP(gb: *GB, args: InstrArgs) u8 { // TODO ONLY 3 CYCLES IF NOT TAKEN OTHERWISE 4
-        const zone = tracy.beginZone(@src(), .{ .name = "JP" });
-        defer zone.end();
+    fn JP(gb: *GB, args: InstrArgs) u8 {
+        // const zone = tracy.beginZone(@src(), .{ .name = "JP" });
+        // defer zone.end();
         // print("JP", .{});
         const jump = gb.cpu.f.check(args.flagConditions);
         if (jump) {
             const n = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
-            // print("to 0x{X}\n", .{n});
+            gb.cpu.pushToExecutionChain(fmtInsDebug("JP | to 0x{X}", .{n}));
             gb.cpu.pc = n;
             return 4; // 4 cycles when taken
         } else {
+            gb.cpu.pushToExecutionChain(fmtInsDebug("JP | no jump", .{}));
             gb.cpu.pc += 3;
             return 3; // 3 cycles when not taken
         }
     }
-    fn JR(gb: *GB, args: InstrArgs) u8 { // TODO ONLY 2 CYCLES IF NOT TAKEN OTHERWISE 3
-        const zone = tracy.beginZone(@src(), .{ .name = "JR", .color = 0x00FF00 });
-        defer zone.end();
-        // print("JR, \tcondition:", .{});
+    fn JR(gb: *GB, args: InstrArgs) u8 {
+        // const zone = tracy.beginZone(@src(), .{ .name = "JR", .color = 0x00FF00 });
+        // defer zone.end();
         const dist: i8 = @bitCast(gb.readByte(gb.cpu.pc + 1));
         const jump = gb.cpu.f.check(args.flagConditions);
-        // print(" by dist: [pc]0x{X} \t0x{X} ({d}) bytes \n", .{ gb.cpu.pc + 1, dist, dist });
-        // const byte = gb.read_byte(gb.cpu.pc);
+
         if (jump) {
             const new_mem: u16 = @bitCast(@addWithOverflow(@as(i16, @intCast(gb.cpu.pc + 2)), dist)[0]);
             gb.cpu.pc = new_mem;
-            // print("to pc:0x{X}\n", .{gb.cpu.pc});
+            gb.cpu.pushToExecutionChain(fmtInsDebug("JR | to pc:0x{X}", .{new_mem}));
             return 3; // 3 cycles when taken
         } else { // next instruction, condition failed
-            // print("skipped jump, failed condition\n", .{});
+            gb.cpu.pushToExecutionChain(fmtInsDebug("JR | skipped jump, failed condition", .{}));
             gb.cpu.pc += 2;
             return 2; // 2 cycles when not taken
         }
     }
     fn JPHL(gb: *GB, _: InstrArgs) u8 {
-        const zone = tracy.beginZone(@src(), .{ .name = "JPHL" });
-        defer zone.end();
-        // print("JPHL\n", .{});
+        // const zone = tracy.beginZone(@src(), .{ .name = "JPHL" });
+        // defer zone.end();
+        gb.cpu.pushToExecutionChain(fmtInsDebug("JPHL", .{}));
         gb.cpu.pc = gb.cpu.get_word(regID.h);
         return 1;
     }
     fn CALLn16(gb: *GB, args: InstrArgs) u8 { //
-        const zone = tracy.beginZone(@src(), .{ .name = "CALLn16" });
-        defer zone.end();
+        // const zone = tracy.beginZone(@src(), .{ .name = "CALLn16" });
+        // defer zone.end();
         const call = gb.cpu.f.check(args.flagConditions);
         // const byte = gb.read_byte(gb.cpu.pc);
         if (call) {
-            // print("DE = 0x{X}, HL = 0x{X}\n", .{ gb.cpu.get_word(regID.d), gb.cpu.get_word(regID.h) });
             // print("[pc]:0x{X}\t", .{gb.cpu.pc});
             const n = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
             const ret = gb.cpu.pc + 3;
-            // print("CALL to 0x{X}, later RET to 0x{X}\n", .{ n, ret });
+            gb.cpu.pushToExecutionChain(fmtInsDebug("CALL to 0x{X}, later RET to 0x{X}", .{ n, ret }));
             gb.cpu.sp -= 1;
             gb.writeByte(gb.cpu.sp, @truncate(ret >> 8));
             gb.cpu.sp -= 1;
@@ -481,14 +490,14 @@ const InstructionSet = struct {
             gb.cpu.pc = n;
             return 6; // 6 cycles when taken
         } else { // next instruction, condition failed
-            // print("skipped jump, failed condition\n", .{});
+            gb.cpu.pushToExecutionChain("skipped jump, failed condition");
             gb.cpu.pc += 3;
             return 3; // 3 cycles when not taken
         }
     }
-    fn RET(gb: *GB, args: InstrArgs) u8 { // TODO TEST, UPDATE cycles 5 if condition met, 2 if not met, 4 if no condition
-        const zone = tracy.beginZone(@src(), .{ .name = "RET" });
-        defer zone.end();
+    fn RET(gb: *GB, args: InstrArgs) u8 {
+        // const zone = tracy.beginZone(@src(), .{ .name = "RET" });
+        // defer zone.end();
         // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         // print("RET, condition:{any}", .{args.flagConditions});
         const ret = gb.cpu.f.check(args.flagConditions);
@@ -496,17 +505,23 @@ const InstructionSet = struct {
             const low = gb.readByte(gb.cpu.sp);
             gb.cpu.sp += 1;
             const high = gb.readByte(gb.cpu.sp);
+            const jumpto = @as(u16, high) << 8 | low;
+            gb.cpu.pushToExecutionChain(fmtInsDebug("RET | {any} met, jumpto pc[{X:04}]", .{args.flagConditions, jumpto}));
             gb.cpu.sp += 1;
-            gb.cpu.pc = @as(u16, high) << 8 | low;
-            return 5; // 5 cycles if condition met
+            gb.cpu.pc = jumpto;
+            return switch (args.flagConditions) {
+                .none => 4,
+                else =>  5 // 5 cycles if condition met
+            };
         } else {
+            gb.cpu.pushToExecutionChain(fmtInsDebug("RET | if {any} not met", .{args.flagConditions}));
             gb.cpu.pc += 1;
             return 2; // 2 cycles when not taken
         }
     }
     fn CPAn8(gb: *GB, _: InstrArgs) u8 { // TODO TEST;
-        const zone = tracy.beginZone(@src(), .{ .name = "CPAn8", .color = 0x00FF00 });
-        defer zone.end();
+        // // const zone = tracy.beginZone(@src(), .{ .name = "CPAn8", .color = 0x00FF00 });
+        // // defer zone.end();
         // print("CPAn8, pc:[0x{X}] \n", .{gb.cpu.pc});
         const n = gb.readByte(gb.cpu.pc + 1);
         const reg = gb.cpu.get_byte(regID.a);
@@ -517,12 +532,13 @@ const InstructionSet = struct {
         const h = (reg & 0xF) < (n & 0xF); // half carry conditions
         const c = reg < n;
         gb.cpu.f.write(z, c, h, s);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("CPAn8 | := reg.A, n := {d}, {d}", .{reg, n}));
         gb.cpu.pc += 2;
         return 2;
     }
     fn CPAr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST;
-        const zone = tracy.beginZone(@src(), .{ .name = "CPAr8", .color = 0x00FF00 });
-        defer zone.end();
+        // // const zone = tracy.beginZone(@src(), .{ .name = "CPAr8", .color = 0x00FF00 });
+        // // defer zone.end();
         const n = gb.cpu.get_byte(args.target);
         // print("CPAr8, target = {any}\n", .{args.target});
         const reg = gb.cpu.get_byte(regID.a);
@@ -532,64 +548,56 @@ const InstructionSet = struct {
         const h = (reg & 0xF) < (n & 0xF); // half carry conditions
         const c = reg < n;
         gb.cpu.f.write(z, c, h, s);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("CPAr8 | reg.A, {any} := {d}, {d}", .{args.target, reg, n}));
         gb.cpu.pc += 1;
         return 1;
     }
     fn CPAHL(gb: *GB, _: InstrArgs) u8 { // TODO TEST;
-        const zone = tracy.beginZone(@src(), .{ .name = "CPAHL", .color = 0x00FF00 });
-        defer zone.end();
+        // // const zone = tracy.beginZone(@src(), .{ .name = "CPAHL", .color = 0x00FF00 });
+        // // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const reg = gb.cpu.get_byte(regID.a);
         const byte = gb.readByte(hl);
         // print("CPAHL, compare mem_place: 0x{X} ({d}) to A:{d}\n", .{ hl, gb.read_byte(hl), reg });
-        // const res = @subWithOverflow(reg, hl);
         const z = reg == byte;
         const s = true;
         const h = (reg & 0xF) < (byte & 0xF); // half carry conditions
         const c = reg < byte;
         gb.cpu.f.write(z, c, h, s);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("CPAHL | reg.A, mem[X.{X:04}] := {d}, {d}", .{hl, reg, byte}));
         gb.cpu.pc += 1;
         return 2;
     }
 
     // PREFIX INSTRUCTIONS
     fn BITTEST(gb: *GB, args: InstrArgs) u8 { // TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "BITTEST" });
-        defer zone.end();
         const bit: u3 = args.bit_target.bit;
         const target = gb.cpu.get_byte(args.bit_target.target);
-        // print("BITTEST, target: {any}, bit: {any}, reg_bin: 0b{b}", .{ args.bit_target.target, args.bit_target.bit, target });
-        // print("                                             ^", .{});
         const z = @as(u1, @truncate(target >> bit)) == 0; // set zero flag if the target bit is not set
         const h = true; // set half carry
         const s = false;
         const c = gb.cpu.f.cFlag();
         gb.cpu.f.write(z, c, h, s);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("BITTEST | {any} >> {d}", .{target, bit})); // which register/bit
         gb.cpu.pc += 1;
         return 2;
     }
-    fn BITTESTHL(gb: *GB, args: InstrArgs) u8 { // TODO TEST
-        const zone = tracy.beginZone(@src(), .{ .name = "BITTESTHL" });
-        defer zone.end();
+    fn BITTESTHL(gb: *GB, args: InstrArgs) u8 { // TODO IMPORTANT -- MEMORY @ HL not register HL
         const bit: u3 = args.bit_target.bit;
-        // print("BITTESTHL, target: {any}, bit: {any}\n", .{ args.bit_target.target, args.bit_target.bit });
-        const hl = gb.cpu.get_word(args.target);
+        const hl = gb.cpu.get_word(.hl);
         const byte = gb.readByte(hl);
         const z = @as(u1, @truncate(byte >> bit)) == 0;
         const h = true;
         const c = gb.cpu.f.cFlag();
         const s = false;
         gb.cpu.f.write(z, c, h, s);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("BITTEST HL | mem[X.{X:04}] = b.{b} >> {d}", .{hl, byte, bit})); // which bit
         gb.cpu.pc += 1;
         return 3;
     }
     fn RL(gb: *GB, args: InstrArgs) u8 { // TODO TEST Rotate bits in register r8 left through carry.
-        const zone = tracy.beginZone(@src(), .{ .name = "RL" });
-        defer zone.end();
         const carried = gb.cpu.f.cFlag();
         const reg = gb.cpu.get_byte(args.target);
-        // print("[pc]:0x{X}\t", .{gb.cpu.pc});
-        // print("RL, target: {any}, prior: 0b{b}, carried = {d}\n", .{ args.target, reg, @intFromBool(carried) });
         const c = reg >> 7 == 1;
         const rotated: u8 = reg << 1 | @intFromBool(carried);
         const z = rotated == 0;
@@ -597,17 +605,21 @@ const InstructionSet = struct {
         const s = false;
         gb.cpu.f.write(z, c, h, s);
         gb.cpu.set_byte(args.target, rotated);
-        // print("after: 0b{b}\n", .{gb.cpu.get_byte(args.target)});
+        gb.cpu.pushToExecutionChain(fmtInsDebug("RL | b.{b}", .{reg}));
         gb.cpu.pc += 1;
         return 2;
     }
-    fn UNDEF(_: *GB, _: InstrArgs) u8 {
-        print("CRIT UNDEF INSTRUCTION\n", .{});
+    fn UNDEF(gb: *GB, _: InstrArgs) u8 {
+        gb.cpu.pushToExecutionChain("UNDEFINED INSTRUCTION");
         return 255;
     }
-    inline fn exe_from_byte(gb: *GB, byte: u8, prefixed: bool) u8 {
+    inline fn fmtInsDebug(string: []const u8, args: anytype) []const u8 {
+        var buffer: [CPU.Log.MAX_CHAR]u8 = undefined;
+        return std.fmt.bufPrint(&buffer, string, args) catch unreachable;
+    }
+    inline fn exe_from_byte(gb: *GB, prefixed: bool) u8 {
         return switch (prefixed) {
-            false => switch (byte) {
+            false => switch (gb.cpu.executing_byte) {
                 0x00 => NOP(gb, .{ .none = {} }),
                 0x01 => LD16(gb, .{ .target = regID.b }),
                 0x02 => UNDEF(gb, .{ .none = {} }),
@@ -650,7 +662,7 @@ const InstructionSet = struct {
                 0x27 => UNDEF(gb, .{ .none = {} }),
                 0x28 => JR(gb, .{ .flagConditions = .z }),
                 0x29 => UNDEF(gb, .{ .none = {} }),
-                0x2A => UNDEF(gb, .{ .none = {} }),
+                0x2A => LDAHL(gb, .{ .hl_mod = 1 }),
                 0x2B => UNDEF(gb, .{ .none = {} }),
                 0x2C => UNDEF(gb, .{ .none = {} }),
                 0x2D => UNDEF(gb, .{ .none = {} }),
@@ -662,7 +674,7 @@ const InstructionSet = struct {
                 0x33 => UNDEF(gb, .{ .none = {} }),
                 0x34 => UNDEF(gb, .{ .none = {} }),
                 0x35 => UNDEF(gb, .{ .none = {} }),
-                0x36 => UNDEF(gb, .{ .none = {} }),
+                0x36 => LDHL8(gb, .{ .none = {} }),
                 0x37 => UNDEF(gb, .{ .none = {} }),
                 0x38 => UNDEF(gb, .{ .none = {} }),
                 0x39 => UNDEF(gb, .{ .none = {} }),
@@ -851,7 +863,7 @@ const InstructionSet = struct {
                 0xF0 => LDHAn16(gb, .{ .none = {} }),
                 0xF1 => UNDEF(gb, .{ .none = {} }),
                 0xF2 => LDHAC(gb, .{ .none = {} }),
-                0xF3 => UNDEF(gb, .{ .none = {} }),
+                0xF3 => DI(gb, .{ .none = {} }),
                 0xF4 => UNDEF(gb, .{ .none = {} }),
                 0xF5 => UNDEF(gb, .{ .none = {} }),
                 0xF6 => UNDEF(gb, .{ .none = {} }),
@@ -865,7 +877,7 @@ const InstructionSet = struct {
                 0xFE => CPAn8(gb, .{ .none = {} }),
                 0xFF => UNDEF(gb, .{ .none = {} }),
             },
-            true => switch (byte) {
+            true => switch (gb.cpu.executing_byte) {
                 0x00 => UNDEF(gb, .{ .none = {} }),
                 0x01 => UNDEF(gb, .{ .none = {} }),
                 0x02 => UNDEF(gb, .{ .none = {} }),
@@ -1142,31 +1154,41 @@ const CPU = struct {
     f: FlagRegister = FlagRegister{},
     pc: u16 = undefined,
     sp: u16 = undefined,
-    last_ins: u16 = 0x0,
-    pub fn init(self: *@This()) !void {
+    executing_byte: u8 = 0x0,
+    log: Log = Log{},
+    // TODO instruction cache?
+
+
+
+    pub fn init(self: *CPU) !void {
         @memset(&self.registers, 0);
         self.pc = 0; //TODO: program start value
         self.sp = 0;
     }
     // cpu execution
     pub fn execute(self: *@This(), gb: *GB) !u8 {
-        const exe_zone = tracy.beginZone(@src(), .{ .name = "Execute Ins" });
-        defer exe_zone.end();
-        var byte = gb.readByte(self.pc);
+        // const ei = self.executing_byte == 0xFB;
+        self.executing_byte = gb.readByte(self.pc);
         var prefixed = false;
-        if (byte == 0xCB) { // prefix byte
+        if (self.executing_byte == 0xCB) { // prefix byte
             prefixed = true;
             self.pc += 1;
-            byte = gb.readByte(self.pc);
+            self.executing_byte = gb.readByte(self.pc);
         }
-        // print("[pc]0x{X}\t(0x{X})\n", .{ self.pc, byte});
-        const cycles_spent = InstructionSet.exe_from_byte(gb, byte, prefixed);
-        if (cycles_spent == 255) return error.UNDEF_INSTRUCTION;
+        const cycles_spent = InstructionSet.exe_from_byte(gb, prefixed);
+        if (cycles_spent == 255) {
+            print("crashed @[pc]0x{X}\tbyte:(0x{X})\n", .{ self.pc, self.executing_byte});
+            return error.UNDEF_INSTRUCTION;
+        }
         // print("\n", .{});
-        // if (self.last_ins == 0xFB) { // set IME flag after previous instruction
+        // if (ei == 0xFB) { // set IME flag after previous instruction
         //     // print("set IME\n", .{});
         // }
         return cycles_spent;
+    }
+
+    inline fn pushToExecutionChain(self: *CPU, debug: []const u8) void {
+        self.log.write(.{debug, self.pc, self.executing_byte});
     }
     // memory ops
     pub fn set_byte(self: *@This(), reg1: regID, value: u8) void {
@@ -1211,6 +1233,40 @@ const CPU = struct {
                 .nc => !self.cFlag(),
                 .none => true,
             };
+        }
+    };
+    const Log = struct {
+        const MAX_LINES = 20;
+        const MAX_CHAR = 128;
+        var buffer: [MAX_LINES*MAX_CHAR]u8 = undefined;
+        log: [MAX_LINES]?[]const u8 = [_]?[] const u8{null} ** MAX_LINES,
+        ring_idx: u8 = 0,
+
+        inline fn write(self: *Log, debug: struct {[]const u8, u16, u8}) void {
+            // debug: string, pc, byte
+            const offset = MAX_CHAR*@as(usize, self.ring_idx);
+            const buf = buffer[offset.. offset + MAX_CHAR];
+            const fmt_debug = std.fmt.bufPrint(
+                buf[0..MAX_CHAR-1],
+                "pc[X.{1X:04}]: X.{2X} -> {0s}\n", debug
+            ) catch unreachable;
+            buf[fmt_debug.len] = 0;
+            self.log[self.ring_idx] = buf[0..fmt_debug.len];
+            self.ring_idx = (self.ring_idx + 1) % MAX_LINES;
+        }
+
+        inline fn writeAll(self: *Log) []const u8 {
+            var text_buffer: [MAX_LINES*MAX_CHAR]u8 = undefined;
+            var stream = std.io.fixedBufferStream(&text_buffer);
+            const writer = stream.writer();
+            var i: u8 = 0;
+            while (i < MAX_LINES) : (i += 1) {
+                const idx = (self.ring_idx + i) % MAX_LINES;
+                if (self.log[idx]) |debug| {
+                    writer.print("{s}", .{debug}) catch unreachable;
+                }
+            }
+            return stream.getWritten();
         }
     };
     const WRAM_START = 0xC000;
@@ -1275,8 +1331,8 @@ const GPU = struct {
         // TODO the gpu should tick/cycle just as many
         // times as the cpu did, while being able to
         // process interrupts and continue on as well as changing modes midscanline when needed
-        // const zone = tracy.beginZone(@src(), .{ .name = "GPU TICK" });
-        // defer zone.end();
+        // // const zone = tracy.beginZone(@src(), .{ .name = "GPU TICK" });
+        // // defer zone.end();
         var cycles_left = cycles; // amt of cycles spent by cpu
         self.frame_cycles_spent += cycles_left;
         while (cycles_left > 0) {
@@ -1294,8 +1350,8 @@ const GPU = struct {
     }
     fn do(self: *@This(), cycles: u8) void {
         // Operate GPU here
-        // const zone = tracy.beginZone(@src(), .{ .name = "DO GPU CYCLES" });
-        // defer zone.end();
+        // // const zone = tracy.beginZone(@src(), .{ .name = "DO GPU CYCLES" });
+        // // defer zone.end();
         var cycles_to_spend: f16 = @floatFromInt(cycles);
 
         switch (self.mode) {
@@ -1365,10 +1421,10 @@ const GPU = struct {
         }
     }
     fn randomStatic(self: *GPU) void { // random static
-       for (0..self.lcd.screenBuf.len) |i| {
-           const color: Color = GB.prng.random().enumValue(Color);
-           LCD.writeToBuf(&self.lcd.screenBuf, color, i);
-       }
+        for (0..self.lcd.screenBuf.len) |i| {
+            const color: Color = GB.prng.random().enumValue(Color);
+            LCD.writeToBuf(&self.lcd.screenBuf, color, i);
+        }
     }
     fn tileDecoder(self: *GPU, high: u8, low: u8, pixel_index: u3) Color {
         const shift: u3 = 7 - pixel_index;
@@ -1515,6 +1571,9 @@ const LCD = struct {
     screen_texture: *g.SDL_Texture = undefined,
     bg_texture: *g.SDL_Texture = undefined,
     tilesheet_texture: *g.SDL_Texture = undefined,
+    text_surface: *g.SDL_Surface = undefined,
+    text_texture: *g.SDL_Texture = undefined,
+    font: *g.TTF_Font = undefined,
     win: *g.SDL_Window = undefined,
     grid_pixel_sz: u16 = undefined,
     const special_registers = enum(u8) {
@@ -1534,12 +1593,13 @@ const LCD = struct {
         const start = 0xFF40;
         const size = 0xFF4B - 0xFF40 + 1;
     };
-    const gb_palette = [_]u32{
+    const gb_palette = [_]u32{ // actually greens
         0xFFFFFFFF, // white
         0xFFAAAAAA, // light gray
         0xFF555555, // dark gray
         0xFF000000, // transparent
     };
+
     // startup
     fn init(self: *@This()) !void {
         var color: GPU.Color = undefined;
@@ -1586,6 +1646,16 @@ const LCD = struct {
                 return error.DetectedZeroWidthWin;
             }
         }
+        // Font & Text init
+        if (!g.TTF_Init()) {
+            print("TTF Init failed", .{});
+            return error.TTF_Init;
+        }
+        const font = g.TTF_OpenFont("fonts/Minecraft.ttf", 18);
+        self.font = font orelse {
+            print("Font Loading Error", .{});
+            return error.FontInit;
+        };
         // creating textures
         self.screen_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_STREAMING, 160, 144);
         _ = g.SDL_SetTextureScaleMode(self.screen_texture, g.SDL_SCALEMODE_NEAREST);
@@ -1597,14 +1667,13 @@ const LCD = struct {
         self.bootScreen(); // wait for sdl to finish building the window to begin progression
     }
     fn bootScreen(self: *LCD) void {
-        self.renderAll(); // Draw a dummy frame to force the window to initialize and show
-        _ = g.SDL_PumpEvents();
-        // Let the OS process events and show the window
+        self.renderAll("GAMEBOY\n"); // Draw a dummy frame to force the window to initialize and show
+        _ = g.SDL_PumpEvents(); // Let the OS process events and show the window
         var window_ready = false;
         var event: g.SDL_Event = undefined;
         const timeout_ns = 500 * std.time.ns_per_ms;
         const start = Clock.Now();
-        while (!window_ready and (Clock.Now() - start < timeout_ns)) {
+        while (!window_ready and (Clock.Now() - start < timeout_ns)) { // fallback
             while (g.SDL_PollEvent(&event)) {
                 if (event.type == g.SDL_EVENT_WINDOW_SHOWN) {
                     window_ready = true;
@@ -1642,15 +1711,31 @@ const LCD = struct {
         _ = g.SDL_SetRenderDrawColor(self.renderer, 255, 192, 220, 255);
         _ = g.SDL_RenderClear(self.renderer);
     }
-    fn renderAll(self: *@This()) void {
+    fn renderAll(self: *@This(), debug: []const u8) void {
         _ = g.SDL_UpdateTexture(self.screen_texture, null, &self.screenBuf, 160 * @sizeOf(u32));
         _ = g.SDL_UpdateTexture(self.tilesheet_texture, null, &self.tilesheetBuf, 192 * @sizeOf(u32));
+        // self.writeDebugText();
+        // const placeholder = "vv PRINT DEBUG HERE vv\nhere";
+        const dgray = g.SDL_Color{.r = 36, .g = 36, .b = 36, .a = 255};
+        if ( debug.len > 0) {
+            self.text_surface = g.TTF_RenderText_Solid_Wrapped(self.font, debug.ptr, debug.len, dgray, 0);
+            self.text_texture = g.SDL_CreateTextureFromSurface(self.renderer, self.text_surface);
+        }
+
         // _ = g.SDL_RenderClear(self.renderer);
+        const bg_x = screenWidthPx * pxSize + border * 2;
+        const bg_width: f32 = @as(f32, @floatFromInt(window_width)) - (screenWidthPx * pxSize + border * 2);
         const bg_rect = g.SDL_FRect{
-            .x = screenWidthPx * pxSize + border * 2,
+            .x = bg_x,
             .y = 0,
-            .w = @as(f32, @floatFromInt(window_width)) - (screenWidthPx * pxSize + border * 2),
+            .w = bg_width,
             .h = @as(f32, @floatFromInt(window_height)),
+        };
+        const text_rect = g.SDL_FRect{
+            .x = bg_x + 15,
+            .y = 30,
+            .w = @as(f32, @floatFromInt(self.text_surface.w)),
+            .h = @as(f32, @floatFromInt(self.text_surface.h))
         };
         const screen_rect = g.SDL_FRect{
             .x = 10.0,
@@ -1666,6 +1751,7 @@ const LCD = struct {
             .h = 128 * bg_px_sz,
         };
         _ = g.SDL_RenderTexture(self.renderer, self.bg_texture, null, &bg_rect);
+        _ = g.SDL_RenderTexture(self.renderer, self.text_texture, null, &text_rect);
         _ = g.SDL_RenderTexture(self.renderer, self.screen_texture, null, &screen_rect);
         _ = g.SDL_RenderTexture(self.renderer, self.tilesheet_texture, null, &bg_map_rect);
         _ = g.SDL_RenderPresent(self.renderer);
@@ -1681,14 +1767,18 @@ const LCD = struct {
     }
     // end
     fn endSDL(self: *@This()) void {
-        g.SDL_Quit();
         g.SDL_DestroyWindow(self.win);
         g.SDL_DestroyRenderer(self.renderer);
         g.SDL_DestroyTexture(self.bg_texture);
         g.SDL_DestroyTexture(self.screen_texture);
         g.SDL_DestroyTexture(self.tilesheet_texture);
+        g.SDL_DestroyTexture(self.text_texture);
+        g.SDL_DestroySurface(self.text_surface);
+        g.TTF_CloseFont(self.font);
+        g.SDL_Quit();
+        g.TTF_Quit();
     }
-    const initWinW: u16 = 1000;
+    const initWinW: u16 = 1280;
     const initWinH: u16 = 700;
     const border = 10;
     const screenWidthPx = 160;
@@ -1739,7 +1829,7 @@ const Clock = struct {
         const smoothing = 0.7;
         self.current_fps = smoothing * self.last_fps + (1.0 - smoothing) * fps_estimate;
         if (self.ns_elapsed >= std.time.ns_per_s) {
-            // print("{d:.2} fps\n", .{self.current_fps});
+            print("{d:.2} fps\n", .{self.current_fps});
             self.ns_elapsed = 0;
         }
         self.last_fps = self.current_fps;
@@ -1761,23 +1851,23 @@ const Timer = struct {
         div, // $FF04 - Divider Register (DIV)
         tima, // $FF05 - Timer Counter (TIMA)
         tma, // $FF06 - Timer Modulo (TMA)
-        tac // $FF07 - Timer Control (TAC)
-            // |bit 2| timer enable |bit 1-0| clock select
-                                    // 0b00 : CPU Clock / 1024
-                                    // 0b01 : CPU Clock / 16
-                                    // 0b10 : CPU Clock / 64
-                                    // 0b11 : CPU Clock / 256
+        tac, // $FF07 - Timer Control (TAC)
+        // |bit 2| timer enable |bit 1-0| clock select
+        // 0b00 : CPU Clock / 1024
+        // 0b01 : CPU Clock / 16
+        // 0b10 : CPU Clock / 64
+        // 0b11 : CPU Clock / 256
     };
     fn init(self: *Timer, gb: *GB) void {
         self.registers = gb.memory[START..END];
     }
     fn tick(self: *Timer, cycles: u8) void {
         const timer_enable: u1 = @truncate(self.registers[@intFromEnum(.tac)] >> 2 & 1);
-        const bit_pos = switch(@as(u2, @truncate(self.registers[@intFromEnum(.tac)]))) {
+        const bit_pos = switch (@as(u2, @truncate(self.registers[@intFromEnum(.tac)]))) {
             0b00 => 9,
             0b01 => 3,
             0b10 => 5,
-            0b11 => 7
+            0b11 => 7,
         };
         var bit: u1 = undefined;
         const cycles_ticked = 0;
@@ -1805,7 +1895,7 @@ const Timer = struct {
         const fixed_address = address - 0xFF04;
         return switch (@as(timer_reg, @enumFromInt(fixed_address))) {
             .div => @truncate(self.counter >> 8),
-            else => self.registers[fixed_address]
+            else => self.registers[fixed_address],
         };
     }
     fn write(self: *Timer, address: u16, value: u8) void {
@@ -1816,7 +1906,7 @@ const Timer = struct {
             },
             else => {
                 self.registers[fixed_address] = value;
-            }
+            },
         }
     }
 };
@@ -1828,26 +1918,26 @@ pub const GB = struct {
     timer: Timer = Timer{},
     memory: [0xFFFF]u8 = undefined,
     running: bool = undefined,
-    crash: bool = false,
+    booted: bool = false,
+    crashed: bool = false,
     cycles_spent: usize = 0,
     clock: Clock = Clock{},
     last_frame: std.time.Instant = undefined,
     // containers
-    const interrupts = enum {
-
-    };
+    const interrupts = enum {};
     /// nintendo logo
     const LOGO: [48]u8 = .{ 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E };
     // startup
     var prng: std.Random.Xoshiro256 = undefined;
     pub fn init(self: *@This()) !void {
         @memset(&self.memory, 0);
-        @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
-        self.init_header_checksum(); // from loaded cartidge
+        // @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
+        // self.init_header_checksum(); // from loaded cartidge
+        try self.load_game("roms/Tetris.gb");
         try initRandom(); // init random before gpu init
         try self.gpu.init(self);
         try self.cpu.init();
-        _ = InstructionSet.exe_from_byte(self, 0, false); // dummy op to init cache
+        _ = InstructionSet.exe_from_byte(self, false); // dummy op to init cache
         self.cpu.pc -= 1;
         self.running = true;
     }
@@ -1883,15 +1973,19 @@ pub const GB = struct {
         }
     }
     pub fn load_game(self: *@This(), game_path: []const u8) !void {
-        const romHeaderStart = 0x0100;
         const rom = try std.fs.cwd().openFile(game_path, .{});
         defer rom.close();
         const stats = try rom.stat();
         const buf: []u8 = try rom.readToEndAlloc(allocator, stats.size);
         print("Reading bytes...\n", .{});
-        for (0..buf.len) |i| {
-            self.memory[i + romHeaderStart] = buf[i];
-            // print("0x{x} ", .{byte});
+        if (self.booted) {
+            for (0x0..0x100) |i| { // replace the bootrom after completed
+                self.memory[i] = buf[i];
+            }
+        } else {
+            for (0x100..buf.len) |i| {
+                self.memory[i] = buf[i];
+            }
         }
     }
     // gb execution
@@ -1902,18 +1996,18 @@ pub const GB = struct {
         try self.clock.Start();
         while (self.running) {
             self.clock.last_frame_time = Clock.Now();
-            while (self.gpu.frame_cycles_spent < Clock.cycles_per_frame and !self.crash) {
+            while (self.gpu.frame_cycles_spent < Clock.cycles_per_frame and !self.crashed) {
                 self.do() catch {
-                 self.crash = true;
+                    self.crashed = true;
                 };
             }
-            if (self.crash) {
+            if (self.crashed) {
                 self.gpu.randomStatic();
             }
             try self.getEvents(); // poll events once per frame
             self.clock.tick();
             self.clock.update(); // calculates average fps
-            self.gpu.lcd.renderAll(); // render at the last scanline
+            self.gpu.lcd.renderAll(self.cpu.log.writeAll()); // render at the last scanline
             self.gpu.frame_cycles_spent = 0;
         }
     }
@@ -1921,6 +2015,10 @@ pub const GB = struct {
         const cycles_spent = try self.cpu.execute(self);
         self.cycles_spent += cycles_spent;
         self.gpu.tick(cycles_spent * 4);
+        if (self.cpu.pc > 0xFF and !self.booted) {
+            self.booted = true;
+            try self.load_game("roms/Tetris.gb");
+        }
     }
     // helper
     fn initRandom() !void {
