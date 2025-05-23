@@ -26,7 +26,7 @@ const InstructionSet = struct {
     fn NOP(gb: *GB, _: InstrArgs) u8 { // TODO test
         // const zone = tracy.beginZone(@src(), .{ .name = "NOP" });
         // defer zone.end();
-        // print("NOP\n", .{});
+        gb.cpu.pushToExecutionChain(fmtInsDebug("NOP", .{}));
         gb.cpu.pc += 1;
         return 1;
     }
@@ -34,7 +34,7 @@ const InstructionSet = struct {
         // const zone = tracy.beginZone(@src(), .{ .name = "INCr8" });
         // defer zone.end();
         const value = gb.cpu.get_byte(args.target);
-        // print("INCr8, target: {any}\n", .{args.target});
+        gb.cpu.pushToExecutionChain(fmtInsDebug("INCr8 | target: {any}", .{args.target}));
         gb.cpu.set_byte(args.target, @addWithOverflow(value, 1)[0]);
         const h = (value & 0xF + 1) & 0x10 == 0x10; // half carry conditions
         const z = gb.cpu.get_byte(args.target) == 0;
@@ -49,7 +49,7 @@ const InstructionSet = struct {
         // defer zone.end();
         const value = gb.cpu.get_word(args.target);
         const res = @addWithOverflow(value, 1)[0];
-        // print("INCr16, target: {any}\n 0x{X} + 1 = 0x{X}\n", .{ args.target, value, res });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("INCr16 | target: {any}, 0x{X} + 1 = 0x{X}", .{ args.target, value, res }));
         gb.cpu.set_word(args.target, res);
         gb.cpu.pc += 1;
         return 2;
@@ -58,7 +58,7 @@ const InstructionSet = struct {
         // const zone = tracy.beginZone(@src(), .{ .name = "DECr8" });
         // defer zone.end();
         const value = gb.cpu.get_byte(args.target);
-        // print("DECr8, target: {any} ({d} -= 1)\n", .{ args.target, gb.cpu.get_byte(args.target) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("DECr8 | target: {any}", .{ args.target }));
         const res = @subWithOverflow(value, 1)[0];
         gb.cpu.set_byte(args.target, res);
         const h = (value & 0xF) == 0x00; // half carry conditions
@@ -72,8 +72,8 @@ const InstructionSet = struct {
     fn DECr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST
         // const zone = tracy.beginZone(@src(), .{ .name = "DECr16" });
         // defer zone.end();
-        const value = gb.cpu.get_byte(args.target);
-        // print("DECr16, target: {any}\n", .{args.target});
+        const value = gb.cpu.get_word(args.target);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("DECr16 | target: {any}", .{args.target}));
         gb.cpu.set_word(args.target, @subWithOverflow(value, 1)[0]);
         gb.cpu.pc += 1;
         return 2;
@@ -82,8 +82,7 @@ const InstructionSet = struct {
         // const zone = tracy.beginZone(@src(), .{ .name = "LD8" });
         // defer zone.end();
         const n: u8 = gb.readByte(gb.cpu.pc + 1);
-        // print("LD8, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
-        // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LD8 | target {any}, n: Ox{X}", .{ @as(regID, args.target), n }));
         gb.cpu.set_byte(args.target, n);
         gb.cpu.pc += 2;
         return 2;
@@ -93,9 +92,7 @@ const InstructionSet = struct {
         // defer zone.end();
         // print("pc: 0x{X}\n", .{ gb.cpu.pc });
         const n: u16 = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
-        // print("LD16, target {any}, n: Ox{X}\n", .{ @as(regID, args.target), n });
-        // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.readByte(gb.cpu.pc + 2) });
-        // print("n b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.readByte(gb.cpu.pc + 1) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LD16 | target {any}, n: Ox{X}", .{ @as(regID, args.target), n }));
         gb.cpu.set_word(args.target, n);
         gb.cpu.pc += 3;
         return 3;
@@ -103,8 +100,7 @@ const InstructionSet = struct {
     fn LDr8(gb: *GB, args: InstrArgs) u8 { // LD r8, r8 TODO TEST
         // const zone = tracy.beginZone(@src(), .{ .name = "LDr8" });
         // defer zone.end();
-        // print("LDr8, targets: from {any} --> to {any}\n", .{ args.targets.from, args.targets.to });
-        // print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(args.targets.to), gb.cpu.get_byte(args.targets.from) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDr8 | targets: from {any} --> to {any}", .{ args.targets.from, args.targets.to }));
         gb.cpu.set_byte(args.targets.to, gb.cpu.get_byte(args.targets.from));
         gb.cpu.pc += 1;
         return 1;
@@ -114,8 +110,7 @@ const InstructionSet = struct {
         // defer zone.end();
         const mem_place = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
-        // print("LDHL, mem@hl:0x{X} --> to A\n", .{mem_place});
-        // print("Values, from {any} --> to {any}\n", .{ gb.cpu.get_byte(regID.a), gb.read_byte(mem_place) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHL, mem@hl:0x{X} --> to A", .{mem_place}));
         gb.writeByte(mem_place, value);
         if (args.hl_mod != 0) gb.cpu.set_word(.h, @intCast(@addWithOverflow(args.hl_mod, @as(i17, mem_place))[0]));
         gb.cpu.pc += 1;
@@ -124,10 +119,9 @@ const InstructionSet = struct {
     fn LDSP16(gb: *GB, _: InstrArgs) u8 { // LD r16, n16, 0x31
         // const zone = tracy.beginZone(@src(), .{ .name = "LDSP16" });
         // defer zone.end();
-        // print("LD16SP\n", .{});
         const n: u16 = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
-        // print("n b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        // print("n b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LD16SP | n (0x{X})", .{ n }));
+        // gb.cpu.pushToExecutionChain(fmtInsDebug(", .{ gb.cpu.pc + 1, gb.readByte(gb.cpu.pc + 1) }));
         gb.cpu.sp = n;
         // print("after op: sp: {d}\n", .{gb.cpu.sp});
         gb.cpu.pc += 3;
@@ -138,9 +132,8 @@ const InstructionSet = struct {
         // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.readByte(gb.cpu.pc + 1);
-        // print("LDHLDA\thl:0x{X}\tvalue:0x{x}\nmem@hl: 0x{x}\n", .{ hl, value, gb.read_byte(hl) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHL8 | hl:0x{X}, value:0x{x}, mem@hl: 0x{x}", .{ hl, value, gb.readByte(hl) }));
         gb.writeByte(hl, value);
-        // print("after op: mem@hl: 0x{X}\thl:{d}\n", .{ hl, gb.read_byte(hl), hl });
         gb.cpu.pc += 2;
         return 3;
     }
@@ -149,22 +142,19 @@ const InstructionSet = struct {
         // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(args.target);
-        // print("LDHLR, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHLR | mem@0x{X}: 0x{X} --> 0x{X}", .{ hl, gb.readByte(hl), value }));
         gb.writeByte(hl, value);
-        // print("after op: mem@0x{X}: 0x{X}\n", .{ hl, gb.read_byte(hl) });
         gb.cpu.pc += 1;
         return 2;
     }
     fn LDHLIA(gb: *GB, _: InstrArgs) u8 { // LD [HLI],A
-        // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         // const zone = tracy.beginZone(@src(), .{ .name = "LDHLIA" });
         // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
-        // print("LDHLIA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.readByte(hl), value });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHLIA | mem@0x{X}: 0x{X} --> 0x{X}", .{ hl, gb.readByte(hl), value }));
         gb.writeByte(hl, value);
         gb.cpu.set_word(regID.h, hl + 1);
-        // print("after op: hl+1= 0x{X}\t mem@0x{X}: 0x{X}\n", .{ gb.cpu.get_word(regID.h), hl, gb.readByte(hl) });
         gb.cpu.pc += 1;
         return 2;
     }
@@ -173,10 +163,9 @@ const InstructionSet = struct {
         // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
-        // print("LDHLDA, \nmem@0x{X}: 0x{X} --> 0x{X}\n", .{ hl, gb.read_byte(hl), value });
         gb.writeByte(hl, value);
-        gb.cpu.set_word(regID.h, hl - 1);
-        // print("after op: mem@0x{X}: 0x{X}\n", .{ hl, gb.read_byte(hl) });
+        gb.cpu.set_word(regID.h, @subWithOverflow(hl , 1)[0]);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHLDA | after op: mem@0x{X}: 0x{X}", .{ hl, gb.readByte(hl) }));
         gb.cpu.pc += 1;
         return 2;
     }
@@ -186,7 +175,7 @@ const InstructionSet = struct {
         const c = gb.cpu.get_byte(regID.c);
         const a = gb.cpu.get_byte(regID.a);
         const mem_place = 0xFF00 + @as(u16, c);
-        // print("LDHCA, memplace@0x{X} --> 0x{X}\n", .{ mem_place, a });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHCA | memplace@0x{X} --> 0x{X}", .{ mem_place, a }));
         gb.writeByte(mem_place, a);
         gb.cpu.pc += 1;
         return 2;
@@ -194,10 +183,9 @@ const InstructionSet = struct {
     fn LDHAC(gb: *GB, _: InstrArgs) u8 { // Load value in register A from the byte at address $FF00+c
         // const zone = tracy.beginZone(@src(), .{ .name = "LDHAC" });
         // defer zone.end();
-        // const a = gb.cpu.get_byte(regID.a);
         const c = gb.cpu.get_byte(regID.c);
         const byte = gb.readByte(0xFF00 + @as(u16, c));
-        // print("LDHAC byte: 0x{X} --> A\n", .{byte});
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHAC | byte: 0x{X} --> A", .{byte}));
         gb.cpu.set_byte(regID.a, byte);
         gb.cpu.pc += 1;
         return 2;
@@ -207,9 +195,7 @@ const InstructionSet = struct {
         // defer zone.end();
         const memory_place = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
         const n = gb.readByte(memory_place);
-        // print("LDAn16, n: Ox{X} --> A\n", .{n});
-        // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        // print("memplace b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDAn16 | n: Ox{X} --> A", .{n}));
         gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 3;
         return 4;
@@ -218,11 +204,8 @@ const InstructionSet = struct {
         // const zone = tracy.beginZone(@src(), .{ .name = "LDHAn16" });
         // defer zone.end();
         const memory_place = 0xFF00 + @as(u16, gb.readByte(gb.cpu.pc + 1));
-        // print("LDHAn16, \n", .{});
-        // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
-        // print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         const n = gb.readByte(memory_place);
-        // print("n: 0x{X} --> A\n", .{n});
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHAn16 | n: 0x{X} --> A", .{n}));
         gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 2;
         return 3;
@@ -233,22 +216,17 @@ const InstructionSet = struct {
         const memory_place = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
-        // print("LDn16A, n: Ox{X} --> memplace@{X}", .{ n, memory_place });
-        // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 2, gb.read_byte(gb.cpu.pc + 2) });
-        // print("memplace b2: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDn16A | n: Ox{X} --> memplace@{X}", .{ n, memory_place }));
         gb.cpu.pc += 3;
         return 4;
     }
     fn LDHn16A(gb: *GB, _: InstrArgs) u8 { // TODO TEST same as above, provided the address is between $FF00 and $FFFF.
         // const zone = tracy.beginZone(@src(), .{ .name = "LDHn16A" });
         // defer zone.end();
-        // print("LDHn16A\n", .{});
         const memory_place = 0xFF00 + @as(u16, gb.readByte(gb.cpu.pc + 1));
-        // print("memplace b1: [pc]0x{X} \t(0x{X})\n", .{ gb.cpu.pc + 1, memory_place });
-        // print("memplace b2: [pc]{d} \t(0x{X})\n", .{ gb.cpu.pc + 1, gb.read_byte(gb.cpu.pc + 1) });
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
-        // print("n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHn16A | n: 0x{X} --> memplace@0x{X}", .{ n, memory_place }));
         gb.cpu.pc += 2;
         return 3;
     }
@@ -257,7 +235,7 @@ const InstructionSet = struct {
         // defer zone.end();
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.readByte(memory_place);
-        // print("LDAr16, n: 0x{X} --> A\n", .{n});
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDAr16 | n: 0x{X} --> A", .{n}));
         gb.cpu.set_byte(regID.a, n);
         gb.cpu.pc += 1;
         return 2;
@@ -268,28 +246,56 @@ const InstructionSet = struct {
         const memory_place = gb.cpu.get_word(args.target);
         const n = gb.cpu.get_byte(regID.a);
         gb.writeByte(memory_place, n);
-        // print("LDr16A, n: 0x{X} --> memplace@0x{X}\n", .{ n, memory_place });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDr16A | n: 0x{X} --> memplace@0x{X}", .{ n, memory_place }));
         gb.cpu.pc += 1;
         return 2;
     }
-
-    fn XORA(gb: *GB, args: InstrArgs) u8 {
-        // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
-        // defer zone.end();
-        // print("XORA, target {any}\n", .{args.target});
-        gb.cpu.registers[@intFromEnum(regID.a)] ^= gb.cpu.registers[@intFromEnum(args.target)];
-        if (gb.cpu.registers[@intFromEnum(regID.a)] == 0) {
-            // const z = true;
-            gb.cpu.f.write(true, gb.cpu.f.cFlag(), gb.cpu.f.hFlag(), gb.cpu.f.sFlag());
-        }
+    fn ORr8(gb: *GB, args: InstrArgs) u8 {
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ORr8 | target {any}", .{args.target}));
+        const a = gb.cpu.get_byte(.a);
+        gb.cpu.set_byte(.a, a | gb.cpu.get_byte(args.target));
+        gb.cpu.f.write(a == 0, false, false, false);
         gb.cpu.pc += 1;
         return 1;
     }
+    fn ORn8(gb: *GB, _: InstrArgs) u8 {
+        // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
+        // defer zone.end();
+        const n = gb.readByte(gb.cpu.pc);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ORn8 | n: {any}", .{n}));
+        const a = gb.cpu.get_byte(.a);
+        gb.cpu.set_byte(.a, a | n);
+        gb.cpu.f.write(a == 0, false, true, false);
+        gb.cpu.pc += 2;
+        return 2;
+    }
+    fn XORr8(gb: *GB, args: InstrArgs) u8 {
+        // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
+        // defer zone.end();
+        gb.cpu.pushToExecutionChain(fmtInsDebug("XORr8 | target {any}", .{args.target}));
+        const a = gb.cpu.get_byte(.a);
+        gb.cpu.set_byte(.a, a ^ gb.cpu.get_byte(args.target));
+        gb.cpu.f.write(a == 0, false, false, false);
+        gb.cpu.pc += 1;
+        return 1;
+    }
+    fn ANDn8(gb: *GB, _: InstrArgs) u8 {
+        // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
+        // defer zone.end();
+        const n = gb.readByte(gb.cpu.pc);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ANDn8 | n: {any}", .{n}));
+        const a = gb.cpu.get_byte(.a);
+        gb.cpu.set_byte(.a, a & n);
+        gb.cpu.f.write(a == 0, false, true, false);
+        gb.cpu.pc += 2;
+        return 2;
+    }
+
     fn ADDAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
         // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
         // defer zone.end();
         const value = gb.cpu.get_byte(args.target);
-        // print("ADDAr8 target: {any}, value: {d} \n", .{ args.target, value });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADDAr8 | target: {any}, value: {d}", .{ args.target, value }));
         const a = gb.cpu.get_byte(regID.a);
         const res: struct { u8, u1 } = @addWithOverflow(a, value);
         const s = false;
@@ -305,7 +311,7 @@ const InstructionSet = struct {
         // const zone = tracy.beginZone(@src(), .{ .name = "SUBAr8" });
         // defer zone.end();
         const value = gb.cpu.get_byte(args.target);
-        // print("SUBA target: {any}, value: {d} \n", .{ args.target, value });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("SUBA | target: {any}, value: {d}", .{ args.target, value }));
         const a = gb.cpu.get_byte(regID.a);
         const res: struct { u8, u1 } = @subWithOverflow(a, value);
         const c = value > a;
@@ -322,7 +328,7 @@ const InstructionSet = struct {
         // defer zone.end();
         const mem_place = gb.cpu.get_word(regID.h);
         const value = gb.readByte(mem_place);
-        // print("ADDAHL:A + mem@0x{X}: value: {d} \n", .{ mem_place, value });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADDAHL | A + mem@0x{X}: value: {d}", .{ mem_place, value }));
         const a = gb.cpu.get_byte(regID.a);
         const res: struct { u8, u1 } = @addWithOverflow(a, value);
         const s = false;
@@ -339,7 +345,7 @@ const InstructionSet = struct {
         // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_word(args.target);
-        // print("ADDHL {any} + hl, {d} + {d} \n", .{ args.target, value, hl });
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADDHL | {any} + hl, {d} + {d}", .{ args.target, value, hl }));
         const res: u16 = @addWithOverflow(hl, value)[0];
         const s = false;
         const h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
@@ -350,15 +356,29 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 2;
     }
+    fn SCF(gb: *GB, _: InstrArgs) u8 { // set carry flag
+        gb.cpu.pushToExecutionChain(fmtInsDebug("SCF", .{}));
+        gb.cpu.f.write(gb.cpu.f.zFlag(), true, false, false);
+        gb.cpu.pc += 1;
+        return 1;
+    }
+    fn CPL(gb: *GB, _: InstrArgs) u8 { // sets the value in register A to its complement
+        gb.cpu.pushToExecutionChain(fmtInsDebug("CPL", .{}));
+        gb.cpu.set_byte(.a, gb.cpu.get_byte(.a) ^ 0xFF);
+        gb.cpu.f.write(gb.cpu.f.zFlag(), gb.cpu.f.cFlag(), true, true);
+        gb.cpu.pc += 1;
+        return 1;
+    }
     fn EI(gb: *GB, _: InstrArgs) u8 { // TODO TEST
         // const zone = tracy.beginZone(@src(), .{ .name = "EI" });
         // defer zone.end();
-        // print("EI\n", .{});
+        gb.cpu.pushToExecutionChain(fmtInsDebug("EI", .{}));
         gb.cpu.pc += 1;
         return 1;
     }
     fn DI(gb: *GB, _: InstrArgs) u8 { // TODO TEST
         // print("EI\n", .{});
+        gb.cpu.pushToExecutionChain(fmtInsDebug("DI", .{}));
         gb.cpu.pc += 1;
         return 1;
     }
@@ -477,7 +497,7 @@ const InstructionSet = struct {
         // const zone = tracy.beginZone(@src(), .{ .name = "CALLn16" });
         // defer zone.end();
         const call = gb.cpu.f.check(args.flagConditions);
-        // const byte = gb.read_byte(gb.cpu.pc);
+        // const byte = gb.readByte(gb.cpu.pc);
         if (call) {
             // print("[pc]:0x{X}\t", .{gb.cpu.pc});
             const n = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
@@ -558,7 +578,7 @@ const InstructionSet = struct {
         const hl = gb.cpu.get_word(regID.h);
         const reg = gb.cpu.get_byte(regID.a);
         const byte = gb.readByte(hl);
-        // print("CPAHL, compare mem_place: 0x{X} ({d}) to A:{d}\n", .{ hl, gb.read_byte(hl), reg });
+        // print("CPAHL, compare mem_place: 0x{X} ({d}) to A:{d}\n", .{ hl, gb.readByte(hl), reg });
         const z = reg == byte;
         const s = true;
         const h = (reg & 0xF) < (byte & 0xF); // half carry conditions
@@ -595,7 +615,7 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 3;
     }
-    fn RL(gb: *GB, args: InstrArgs) u8 { // TODO TEST Rotate bits in register r8 left through carry.
+    fn RL(gb: *GB, args: InstrArgs) u8 { // Rotate bits in register r8 left through carry.
         const carried = gb.cpu.f.cFlag();
         const reg = gb.cpu.get_byte(args.target);
         const c = reg >> 7 == 1;
@@ -609,6 +629,15 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 2;
     }
+    fn SWAPr8(gb: *GB, args: InstrArgs) u8 { // Swap the upper 4 bits in register r8 and the lower 4 ones.
+        const reg = gb.cpu.get_byte(args.target);
+        const high: u4 = @truncate(reg >> 4);
+        const low: u4 = @truncate(reg);
+        gb.cpu.set_byte(args.target, (@as(u8, high) << 4) | low);
+        gb.cpu.pc += 2;
+        return 2;
+    }
+
     fn UNDEF(gb: *GB, _: InstrArgs) u8 {
         gb.cpu.pushToExecutionChain("UNDEFINED INSTRUCTION");
         return 255;
@@ -631,7 +660,7 @@ const InstructionSet = struct {
                 0x08 => UNDEF(gb, .{ .none = {} }),
                 0x09 => UNDEF(gb, .{ .none = {} }),
                 0x0A => UNDEF(gb, .{ .none = {} }),
-                0x0B => UNDEF(gb, .{ .none = {} }),
+                0x0B => DECr16(gb, .{ .target = regID.b }),
                 0x0C => INCr8(gb, .{ .target = regID.c }),
                 0x0D => DECr8(gb, .{ .target = regID.c }),
                 0x0E => LD8(gb, .{ .target = regID.c }),
@@ -667,7 +696,7 @@ const InstructionSet = struct {
                 0x2C => UNDEF(gb, .{ .none = {} }),
                 0x2D => UNDEF(gb, .{ .none = {} }),
                 0x2E => LD8(gb, .{ .target = regID.l }),
-                0x2F => UNDEF(gb, .{ .none = {} }),
+                0x2F => CPL(gb, .{ .none = {} }),
                 0x30 => UNDEF(gb, .{ .none = {} }),
                 0x31 => LDSP16(gb, .{ .none = {} }),
                 0x32 => LDHLDA(gb, .{ .none = {} }),
@@ -675,7 +704,7 @@ const InstructionSet = struct {
                 0x34 => UNDEF(gb, .{ .none = {} }),
                 0x35 => UNDEF(gb, .{ .none = {} }),
                 0x36 => LDHL8(gb, .{ .none = {} }),
-                0x37 => UNDEF(gb, .{ .none = {} }),
+                0x37 => SCF(gb, .{ .none = {} }),
                 0x38 => UNDEF(gb, .{ .none = {} }),
                 0x39 => UNDEF(gb, .{ .none = {} }),
                 0x3A => UNDEF(gb, .{ .none = {} }),
@@ -795,9 +824,9 @@ const InstructionSet = struct {
                 0xAC => UNDEF(gb, .{ .none = {} }),
                 0xAD => UNDEF(gb, .{ .none = {} }),
                 0xAE => UNDEF(gb, .{ .none = {} }),
-                0xAF => XORA(gb, .{ .target = regID.a }),
-                0xB0 => UNDEF(gb, .{ .none = {} }),
-                0xB1 => UNDEF(gb, .{ .none = {} }),
+                0xAF => XORr8(gb, .{ .target = regID.a }),
+                0xB0 => ORr8(gb, .{ .target = .b }),
+                0xB1 => ORr8(gb, .{ .target = regID.c }),
                 0xB2 => UNDEF(gb, .{ .none = {} }),
                 0xB3 => UNDEF(gb, .{ .none = {} }),
                 0xB4 => UNDEF(gb, .{ .none = {} }),
@@ -850,7 +879,7 @@ const InstructionSet = struct {
                 0xE3 => UNDEF(gb, .{ .none = {} }),
                 0xE4 => UNDEF(gb, .{ .none = {} }),
                 0xE5 => UNDEF(gb, .{ .none = {} }),
-                0xE6 => UNDEF(gb, .{ .none = {} }),
+                0xE6 => ANDn8(gb, .{ .none = {} }),
                 0xE7 => UNDEF(gb, .{ .none = {} }),
                 0xE8 => UNDEF(gb, .{ .none = {} }),
                 0xE9 => JPHL(gb, .{ .none = {} }),
@@ -866,7 +895,7 @@ const InstructionSet = struct {
                 0xF3 => DI(gb, .{ .none = {} }),
                 0xF4 => UNDEF(gb, .{ .none = {} }),
                 0xF5 => UNDEF(gb, .{ .none = {} }),
-                0xF6 => UNDEF(gb, .{ .none = {} }),
+                0xF6 => ORn8(gb, .{ .none = {} }),
                 0xF7 => UNDEF(gb, .{ .none = {} }),
                 0xF8 => UNDEF(gb, .{ .none = {} }),
                 0xF9 => UNDEF(gb, .{ .none = {} }),
@@ -933,7 +962,7 @@ const InstructionSet = struct {
                 0x34 => UNDEF(gb, .{ .none = {} }),
                 0x35 => UNDEF(gb, .{ .none = {} }),
                 0x36 => UNDEF(gb, .{ .none = {} }),
-                0x37 => UNDEF(gb, .{ .none = {} }),
+                0x37 => SWAPr8(gb, .{ .target = .a }),
                 0x38 => UNDEF(gb, .{ .none = {} }),
                 0x39 => UNDEF(gb, .{ .none = {} }),
                 0x3A => UNDEF(gb, .{ .none = {} }),
@@ -1177,7 +1206,7 @@ const CPU = struct {
         }
         const cycles_spent = InstructionSet.exe_from_byte(gb, prefixed);
         if (cycles_spent == 255) {
-            print("crashed @[pc]0x{X}\tbyte:(0x{X})\n", .{ self.pc, self.executing_byte});
+            print("crashed @[pc]0x{X}\tbyte:(0x{X}), prefixed? {any}\n", .{ self.pc, self.executing_byte, prefixed});
             return error.UNDEF_INSTRUCTION;
         }
         // print("\n", .{});
@@ -1859,7 +1888,7 @@ const Timer = struct {
         // 0b11 : CPU Clock / 256
     };
     fn init(self: *Timer, gb: *GB) void {
-        self.registers = gb.memory[START..END];
+        self.registers = gb.memory[START..END + 1];
     }
     fn tick(self: *Timer, cycles: u8) void {
         const timer_enable: u1 = @truncate(self.registers[@intFromEnum(.tac)] >> 2 & 1);
@@ -1893,21 +1922,16 @@ const Timer = struct {
     }
     fn read(self: *Timer, address: u16) u8 {
         const fixed_address = address - 0xFF04;
-        return switch (@as(timer_reg, @enumFromInt(fixed_address))) {
-            .div => @truncate(self.counter >> 8),
-            else => self.registers[fixed_address],
-        };
+        return if (@as(timer_reg, @enumFromInt(fixed_address)) == .div)
+            @truncate(self.counter >> 8)
+        else self.registers[fixed_address];
     }
     fn write(self: *Timer, address: u16, value: u8) void {
-        const fixed_address = address - 0xFF04;
-        switch (@as(timer_reg, @enumFromInt(fixed_address))) {
-            .div => { // writing here resets the counter to 0
-                self.counter = 0;
-            },
-            else => {
-                self.registers[fixed_address] = value;
-            },
-        }
+        const fixed_address: u3 = @intCast(address - 0xFF04);
+        // print("timer reg len: {d}, index: {d}", .{self.registers.len, fixed_address});
+        if (@as(timer_reg, @enumFromInt(fixed_address)) == .div) { // writing here resets the counter to 0
+            self.counter = 0;
+        } else self.registers[fixed_address] = value;
     }
 };
 /// Gameboy Machine, defer endGB
@@ -1936,6 +1960,7 @@ pub const GB = struct {
         try self.load_game("roms/Tetris.gb");
         try initRandom(); // init random before gpu init
         try self.gpu.init(self);
+        self.timer.init(self);
         try self.cpu.init();
         _ = InstructionSet.exe_from_byte(self, false); // dummy op to init cache
         self.cpu.pc -= 1;
@@ -1990,8 +2015,6 @@ pub const GB = struct {
     }
     // gb execution
     pub fn go(self: *@This()) !void {
-        // TODO Unmap bootrom, load 0x00-0xFF with cartidge data
-        // TODO Timers, interrupts
         print("GO!\n", .{});
         try self.clock.Start();
         while (self.running) {
@@ -2051,6 +2074,7 @@ pub const GB = struct {
         @setRuntimeSafety(false);
         if (address < 0x8000) return; // no writes to ROM
         if (address >= Timer.START and address <= Timer.END) {
+            // print("address : 0x{X}", .{address});
             self.timer.write(address, value);
         }
         if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
