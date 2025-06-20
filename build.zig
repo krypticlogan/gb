@@ -14,21 +14,21 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize
     });
-    const tracy_enable =
-        b.option(bool, "tracy_enable", "Enable profiling") orelse
-            if (optimize == .Debug) true else false;
+    // const tracy_enable =
+    //     b.option(bool, "tracy_enable", "Enable profiling") orelse
+    //         if (optimize == .Debug) true else false;
 
-    const tracy = b.dependency("tracy", .{
-        .target = target,
-        .optimize = optimize,
-        .tracy_enable = tracy_enable,
-    });
+    // const tracy = b.dependency("tracy", .{
+    //     .target = target,
+    //     .optimize = optimize,
+    //     .tracy_enable = tracy_enable,
+    // });
 
-    exe.root_module.addImport("tracy", tracy.module("tracy"));
-    if (tracy_enable) {
-        exe.root_module.linkLibrary(tracy.artifact("tracy"));
-        exe.root_module.link_libcpp = true;
-    }
+    // exe.root_module.addImport("tracy", tracy.module("tracy"));
+    // if (tracy_enable) {
+    //     exe.root_module.linkLibrary(tracy.artifact("tracy"));
+    //     exe.root_module.link_libcpp = true;
+    // }
     const sdl_dep = b.dependency("sdl", .{
     .target = target,
     .optimize = optimize,

@@ -1,5 +1,5 @@
 const std = @import("std");
-const tracy = @import("tracy");
+// const tracy = @import("tracy");
 const g = @cImport({
     @cDefine("SDL_DISABLE_OLD_NAMES", {});
     @cInclude("SDL3/SDL.h");
@@ -17,12 +17,8 @@ const allocator = std.heap.page_allocator;
 
 const InstructionSet = struct {
     const InstrFn = fn (*GB, InstrArgs) u8;
-    const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: Condition, targets: struct { to: regID, from: regID }, hl_mod: i2};
-    const InstrInfo = struct { InstrFn, InstrArgs, u8 };
+    const InstrArgs = union(enum) { none: void, target: regID, bit_target: struct { bit: u3, target: regID }, flagConditions: Condition, targets: struct { to: regID, from: regID }, hl_mod: i2, where: u16};
     const Condition = union(enum) { none, z, c, nz, nc };
-    const table = [_]InstrInfo{
-        .{NOP, .{ .none = {} }, 1},
-    };
     fn NOP(gb: *GB, _: InstrArgs) u8 { // TODO test
         // const zone = tracy.beginZone(@src(), .{ .name = "NOP" });
         // defer zone.end();
@@ -290,6 +286,17 @@ const InstructionSet = struct {
         gb.cpu.pc += 2;
         return 2;
     }
+    fn ANDr8(gb: *GB, args: InstrArgs) u8 {
+        // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
+        // defer zone.end();
+        const reg = gb.cpu.get_byte(args.target);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ANDr8 | A & {any}", .{args.target}));
+        const a = gb.cpu.get_byte(.a);
+        gb.cpu.set_byte(.a, a & reg);
+        gb.cpu.f.write(a == 0, false, true, false);
+        gb.cpu.pc += 2;
+        return 2;
+    }
 
     fn ADDAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
         // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
@@ -382,6 +389,13 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 1;
     }
+    fn RST(gb: *GB, args: InstrArgs) u8 { // TODO TEST
+        const ret = gb.cpu.pc + 1;
+        pushStack(gb, ret);
+        gb.cpu.pc = args.where;
+        gb.cpu.pushToExecutionChain(fmtInsDebug("RST | to 0x{X}, later RET to 0x{X}", .{ args.where, ret }));
+        return 4;
+    }
     fn RRCA(gb: *GB, _: InstrArgs) u8 { // TODO TEST
         // const zone = tracy.beginZone(@src(), .{ .name = "RRCA" });
         // defer zone.end();
@@ -428,21 +442,16 @@ const InstructionSet = struct {
             low = @truncate(value);
             // print("PUSH 0x{X} from {any}, hi 0x{X} lo 0x{X}\n", .{ value, args.target, high, low });
         }
-
-        gb.cpu.sp -= 1;
-        gb.writeByte(gb.cpu.sp, high);
-        gb.cpu.sp -= 1;
-        gb.writeByte(gb.cpu.sp, low);
+        pushStack(gb, (@as(u16, high) << 8) | low);
         gb.cpu.pc += 1;
         return 4;
     }
     fn POP(gb: *GB, args: InstrArgs) u8 {
         // const zone = tracy.beginZone(@src(), .{ .name = "POP" });
         // defer zone.end();
-        const low = gb.readByte(gb.cpu.sp);
-        gb.cpu.sp += 1;
-        const high = gb.readByte(gb.cpu.sp);
-        gb.cpu.sp += 1;
+        const popped  = popStack(gb);
+        const low = popped[0];
+        const high = popped[1];
         // print("[pc]:0x{X}\t", .{gb.cpu.pc});
         const value = @as(u16, high) << 8 | low;
         gb.cpu.pushToExecutionChain(fmtInsDebug("POP 0x{X} --> {any}", .{ value, args.target }));
@@ -452,6 +461,20 @@ const InstructionSet = struct {
         } else gb.cpu.set_word(args.target, value);
         gb.cpu.pc += 1;
         return 3;
+    }
+    //helpers
+    inline fn pushStack(gb: *GB, val: u16) void {
+        gb.cpu.sp = @subWithOverflow(gb.cpu.sp, 1)[0];
+        gb.writeByte(gb.cpu.sp, @truncate(val >> 8));
+        gb.cpu.sp = @subWithOverflow(gb.cpu.sp, 1)[0];
+        gb.writeByte(gb.cpu.sp, @truncate(val));
+    }
+    inline fn popStack(gb: *GB) struct {u8, u8} {
+        const low = gb.readByte(gb.cpu.sp);
+        gb.cpu.sp = @addWithOverflow(gb.cpu.sp, 1)[0];
+        const high = gb.readByte(gb.cpu.sp);
+        gb.cpu.sp = @addWithOverflow(gb.cpu.sp, 1)[0];
+        return .{low, high};
     }
     fn JP(gb: *GB, args: InstrArgs) u8 {
         // const zone = tracy.beginZone(@src(), .{ .name = "JP" });
@@ -637,7 +660,6 @@ const InstructionSet = struct {
         gb.cpu.pc += 2;
         return 2;
     }
-
     fn UNDEF(gb: *GB, _: InstrArgs) u8 {
         gb.cpu.pushToExecutionChain("UNDEFINED INSTRUCTION");
         return 255;
@@ -810,7 +832,7 @@ const InstructionSet = struct {
                 0x9E => UNDEF(gb, .{ .none = {} }),
                 0x9F => UNDEF(gb, .{ .none = {} }),
                 0xA0 => UNDEF(gb, .{ .none = {} }),
-                0xA1 => UNDEF(gb, .{ .none = {} }),
+                0xA1 => ANDr8(gb, .{ .target = .c }),
                 0xA2 => UNDEF(gb, .{ .none = {} }),
                 0xA3 => UNDEF(gb, .{ .none = {} }),
                 0xA4 => UNDEF(gb, .{ .none = {} }),
@@ -818,7 +840,7 @@ const InstructionSet = struct {
                 0xA6 => UNDEF(gb, .{ .none = {} }),
                 0xA7 => UNDEF(gb, .{ .none = {} }),
                 0xA8 => UNDEF(gb, .{ .none = {} }),
-                0xA9 => UNDEF(gb, .{ .none = {} }),
+                0xA9 => XORr8(gb, .{ .target = .c }),
                 0xAA => UNDEF(gb, .{ .none = {} }),
                 0xAB => UNDEF(gb, .{ .none = {} }),
                 0xAC => UNDEF(gb, .{ .none = {} }),
@@ -888,7 +910,7 @@ const InstructionSet = struct {
                 0xEC => UNDEF(gb, .{ .none = {} }),
                 0xED => UNDEF(gb, .{ .none = {} }),
                 0xEE => UNDEF(gb, .{ .none = {} }),
-                0xEF => UNDEF(gb, .{ .none = {} }),
+                0xEF => RST(gb, .{ .where = 0x18 }),
                 0xF0 => LDHAn16(gb, .{ .none = {} }),
                 0xF1 => UNDEF(gb, .{ .none = {} }),
                 0xF2 => LDHAC(gb, .{ .none = {} }),
@@ -904,7 +926,7 @@ const InstructionSet = struct {
                 0xFC => UNDEF(gb, .{ .none = {} }),
                 0xFD => UNDEF(gb, .{ .none = {} }),
                 0xFE => CPAn8(gb, .{ .none = {} }),
-                0xFF => UNDEF(gb, .{ .none = {} }),
+                0xFF => RST(gb, .{ .where = 0x38 }),
             },
             true => switch (gb.cpu.executing_byte) {
                 0x00 => UNDEF(gb, .{ .none = {} }),
@@ -1186,9 +1208,6 @@ const CPU = struct {
     executing_byte: u8 = 0x0,
     log: Log = Log{},
     // TODO instruction cache?
-
-
-
     pub fn init(self: *CPU) !void {
         @memset(&self.registers, 0);
         self.pc = 0; //TODO: program start value
@@ -1233,6 +1252,8 @@ const CPU = struct {
     pub fn get_word(self: *@This(), reg1: regID) u16 {
         return (@as(u16, self.registers[@intFromEnum(reg1)]) << 8) | self.registers[@intFromEnum(reg1) + 1];
     }
+    
+    
     // types & context
     const FlagRegister = struct {
         value: u8 = 0,
@@ -1482,7 +1503,7 @@ const GPU = struct {
                 // Increment LY register
                 self.setSpecialRegister(.ly, ly + 1);
                 if (ly + 1 == 144) {
-                    tracy.frameMark();
+                    // tracy.frameMark();
                     self.mode = .VBLANK;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)]; // per scanline
                 } else {
@@ -1940,13 +1961,14 @@ pub const GB = struct {
     gpu: GPU = GPU{},
     apu: APU = APU{},
     timer: Timer = Timer{},
-    memory: [0xFFFF]u8 = undefined,
+    memory: [BUS_SIZE]u8 = undefined,
     running: bool = undefined,
     booted: bool = false,
     crashed: bool = false,
     cycles_spent: usize = 0,
     clock: Clock = Clock{},
     last_frame: std.time.Instant = undefined,
+    const BUS_SIZE = 0xFFFF; 
     // containers
     const interrupts = enum {};
     /// nintendo logo
@@ -2153,7 +2175,10 @@ pub fn main() !void {
         print("Couldn't boot GameBoy, err: {any}\t", .{err});
         return;
     };
-    defer gb.endGB();
+    defer {
+        print("exiting gameboy...\nlast instruction: 0x{X}\n", .{gb.cpu.executing_byte});
+        gb.endGB();
+    }
     gb.go() catch |err| {
         // gb.gpu.vram_dump();
         print("Error while running GameBoy: {any}\n", .{err});
