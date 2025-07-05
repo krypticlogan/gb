@@ -392,8 +392,8 @@ const InstructionSet = struct {
     fn RST(gb: *GB, args: InstrArgs) u8 { // TODO TEST
         const ret = gb.cpu.pc + 1;
         pushStack(gb, ret);
-        gb.cpu.pc = args.where;
         gb.cpu.pushToExecutionChain(fmtInsDebug("RST | to 0x{X}, later RET to 0x{X}", .{ args.where, ret }));
+        gb.cpu.pc = args.where;
         return 4;
     }
     fn RRCA(gb: *GB, _: InstrArgs) u8 { // TODO TEST
@@ -1222,6 +1222,15 @@ const CPU = struct {
             prefixed = true;
             self.pc += 1;
             self.executing_byte = gb.readByte(self.pc);
+        }
+        else if (self.executing_byte == 0xFF) {
+            print("tried to execute RST 38 @ 0x{X}... shouldn't happen,\ntraceback: \n", .{self.pc});
+            for (self.log.log) |info| {
+                if (info != null) {
+                    print("{s}", .{info.?});
+                }
+            }
+            return error.NO_RST;
         }
         const cycles_spent = InstructionSet.exe_from_byte(gb, prefixed);
         if (cycles_spent == 255) {
@@ -2099,7 +2108,7 @@ pub const GB = struct {
             // print("address : 0x{X}", .{address});
             self.timer.write(address, value);
         }
-        if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
+        else if (address >= LCD.special_registers.start and address <= LCD.special_registers.end) {
             const register = @as(LCD.special_registers, @enumFromInt(address - LCD.special_registers.start));
             self.gpu.setSpecialRegister(register, value);
             if (register == LCD.special_registers.dma) {
@@ -2107,13 +2116,11 @@ pub const GB = struct {
                 const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
                 @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
             }
-            return;
         }
-        if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) { // banks 0 & 1
+        else if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) { // banks 0 & 1
             self.gpu.writeVram(address, value);
-            return;
         }
-        self.memory[address] = value;
+        else self.memory[address] = value;
     }
     pub fn getEvents(self: *@This()) !void {
         var event: g.SDL_Event = undefined;
