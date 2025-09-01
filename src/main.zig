@@ -1491,7 +1491,7 @@ const GPU = struct {
         const lo = @as(u1, @truncate(low >> shift));
         const color_code: u2 = (@as(u2, hi) << 1) | lo;
         const bgp = self.getSpecialRegister(.bgp); // get the right color pallete (dmg)
-        // print("color_code: {d}\n", .{color_code});
+        print("color_code: {d}\n", .{color_code});
         const pallete_color: u2 = @truncate(bgp >> @as(u3, @intCast(color_code)) * 2); // selecting color
         return @as(Color, @enumFromInt(pallete_color));
     }
@@ -1608,7 +1608,7 @@ const GPU = struct {
         RENDER,
         const cycles: [4]u16 = .{ 204, 456, 80, 172 };
     };
-    const Color = enum(u2) { black, dgray, lgray, white };
+    const Color = enum(u8) { black, dgray, lgray, white};
     const Tile = [8][8]Color;
     const VRAM_BEGIN = 0x8000;
     const VRAM_END = 0x9FFF;
@@ -1738,12 +1738,15 @@ const LCD = struct {
                     window_ready = true;
                 }
             }
-            std.time.sleep(1 * std.time.ns_per_ms);
+            std.Thread.sleep(1 * std.time.ns_per_ms);
         }
-        std.time.sleep(17 * std.time.ns_per_ms);
+        std.Thread.sleep(17 * std.time.ns_per_ms);
     }
     // peripheral fns
     fn writeToBuf(buf: []u32, color: GPU.Color, index: usize) void {
+        if (@intFromEnum(color) > 3) {
+            print("enum Color(0-3): {d}\n", .{color});
+        }
         buf[index] = switch (color) {
             .white => 0xFFCCFFCC,
             .lgray => 0xFF99CC99,
@@ -1873,7 +1876,7 @@ const Clock = struct {
             if (wait_time_ns > 100_000) {
                 const start = Now();
                 const sleeptime = std.math.cast(u64, wait_time_ns + self.debt - 100_000);
-                std.time.sleep(sleeptime orelse 0); // sleep when necessary
+                std.Thread.sleep(sleeptime orelse 0); // sleep when necessary
                 const waited = Now() - start;
                 self.debt += wait_time_ns - waited;
                 // print("leftover {d}\n", .{self.debt});
@@ -1987,8 +1990,8 @@ pub const GB = struct {
     pub fn init(self: *@This()) !void {
         @memset(&self.memory, 0);
         // @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
-        // self.init_header_checksum(); // from loaded cartidge
-        try self.load_game("roms/Tetris.gb");
+        // self.init_header_checksum(); // from loaded cartridge
+        try self.load_game("roms/tetris.gb");
         try initRandom(); // init random before gpu init
         try self.gpu.init(self);
         self.timer.init(self);

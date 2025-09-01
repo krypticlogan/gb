@@ -9,10 +9,15 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
-        .name = "gb",
-        .root_source_file  = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize
+            .name = "gb",
+            .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/main.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                },
+            ),
+            // .use_llvm = true
     });
     // const tracy_enable =
     //     b.option(bool, "tracy_enable", "Enable profiling") orelse
@@ -29,13 +34,13 @@ pub fn build(b: *std.Build) void {
     //     exe.root_module.linkLibrary(tracy.artifact("tracy"));
     //     exe.root_module.link_libcpp = true;
     // }
-    const sdl_dep = b.dependency("sdl", .{
-    .target = target,
-    .optimize = optimize,
-    //.preferred_link_mode = .static, // or .dynamic
-    });
-    const sdl_lib = sdl_dep.artifact("SDL3");
-    exe.root_module.linkLibrary(sdl_lib);
+    // const sdl_dep = b.dependency("sdl", .{
+    // .target = target,
+    // .optimize = optimize,
+    // //.preferred_link_mode = .static, // or .dynamic
+    // });
+    // const sdl_lib = sdl_dep.artifact("SDL3");
+    // exe.root_module.linkLibrary(sdl_lib);
 
     // SDL_ttf Dependency
     const sdl_ttf_dep = b.dependency("sdl_ttf", .{
@@ -45,10 +50,10 @@ pub fn build(b: *std.Build) void {
     const sdl_ttf_lib = sdl_ttf_dep.artifact("SDL_ttf");
     exe.root_module.linkLibrary(sdl_ttf_lib);
     // const sdl_test_lib = sdl_dep.artifact("SDL3_test");
-    exe.linkLibC();
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
+    exe.installLibraryHeaders(sdl_ttf_lib);
     b.installArtifact(exe);
 
     
@@ -79,9 +84,12 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const exe_unit_tests = b.addTest(.{
-        .root_source_file  = b.path("src/tests.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+                .root_source_file = b.path("src/tests.zig"),
+                .target = target,
+                .optimize = optimize
+            }
+        )
     });
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
