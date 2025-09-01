@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
                     .link_libc = true,
                 },
             ),
-            // .use_llvm = true
+            .use_llvm = true
     });
     // const tracy_enable =
     //     b.option(bool, "tracy_enable", "Enable profiling") orelse
