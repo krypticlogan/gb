@@ -7,16 +7,15 @@ pub fn build(b: *std.Build) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
-
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
     const exe = b.addExecutable(.{
             .name = "gb",
-            .root_module = b.createModule(.{
-                    .root_source_file = b.path("src/main.zig"),
-                    .target = target,
-                    .optimize = optimize,
-                    .link_libc = true,
-                },
-            ),
+            .root_module = exe_mod,
             .use_llvm = true
     });
     // const tracy_enable =
@@ -85,12 +84,15 @@ pub fn build(b: *std.Build) void {
     // but does not run it.
     const exe_unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-                .root_source_file = b.path("src/tests.zig"),
-                .target = target,
-                .optimize = optimize
-            }
-        )
+            .root_source_file = b.path("src/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }
+        ),
     });
+    exe_unit_tests.root_module.linkLibrary(sdl_ttf_lib);
+    exe_unit_tests.installLibraryHeaders(sdl_ttf_lib);
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");

@@ -50,6 +50,26 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 2;
     }
+    fn INCSP(gb: *GB, _: InstrArgs) u8 { // TODO TEST
+        // const zone = tracy.beginZone(@src(), .{ .name = "INCr16" });
+        // defer zone.end();
+        const value = gb.cpu.sp;
+        const res = @addWithOverflow(value, 1)[0];
+        gb.cpu.pushToExecutionChain(fmtInsDebug("INCSP | 0x{X} + 1 = 0x{X}", .{value, res}));
+        gb.cpu.sp = res;
+        gb.cpu.pc += 1;
+        return 2;
+    }
+    fn INCHL(gb: *GB, _: InstrArgs) u8 { // increment the value of the byte pointed to by hl
+        // const zone = tracy.beginZone(@src(), .{ .name = "INCr16" });
+        // defer zone.end();
+        const mem_place = gb.cpu.get_word(regID.h);
+        const value = gb.readByte(mem_place);
+        const res = @addWithOverflow(value, 1)[0];
+        gb.cpu.pushToExecutionChain(fmtInsDebug("INCHL | mem@hl: 0x{X} + 1 = 0x{X}", .{value, res}));
+        gb.cpu.pc += 1;
+        return 2;
+    }
     fn DECr8(gb: *GB, args: InstrArgs) u8 { // TODO TEST -- overflow? r16 too
         // const zone = tracy.beginZone(@src(), .{ .name = "DECr8" });
         // defer zone.end();
@@ -65,12 +85,31 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 1;
     }
-    fn DECr16(gb: *GB, args: InstrArgs) u8 { // TODO TEST
+    fn DECr16(gb: *GB, args: InstrArgs) u8 { // decrement any 16 bit register
         // const zone = tracy.beginZone(@src(), .{ .name = "DECr16" });
         // defer zone.end();
         const value = gb.cpu.get_word(args.target);
         gb.cpu.pushToExecutionChain(fmtInsDebug("DECr16 | target: {any}", .{args.target}));
         gb.cpu.set_word(args.target, @subWithOverflow(value, 1)[0]);
+        gb.cpu.pc += 1;
+        return 2;
+    }
+    fn DECSP(gb: *GB, args: InstrArgs) u8 { // decrement the stack pointer
+        // const zone = tracy.beginZone(@src(), .{ .name = "DECr16" });
+        // defer zone.end();
+        const value = gb.cpu.sp;
+        gb.cpu.pushToExecutionChain(fmtInsDebug("DECSP | target: {any}", .{args.target}));
+        gb.cpu.set_word(args.target, @subWithOverflow(value, 1)[0]);
+        gb.cpu.pc += 1;
+        return 2;
+    }
+     fn DECHL(gb: *GB, _: InstrArgs) u8 { // decrement the value of the byte pointed to by hl
+        // const zone = tracy.beginZone(@src(), .{ .name = "INCr16" });
+        // defer zone.end();
+        const mem_place = gb.cpu.get_word(regID.h);
+        const value = gb.readByte(mem_place);
+        const res = @subWithOverflow(value, 1)[0];
+        gb.cpu.pushToExecutionChain(fmtInsDebug("DECHL | mem@hl: 0x{X} - 1 = 0x{X}", .{value, res}));
         gb.cpu.pc += 1;
         return 2;
     }
@@ -116,16 +155,45 @@ const InstructionSet = struct {
         // const zone = tracy.beginZone(@src(), .{ .name = "LDSP16" });
         // defer zone.end();
         const n: u16 = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
-        gb.cpu.pushToExecutionChain(fmtInsDebug("LD16SP | n (0x{X})", .{ n }));
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDSP16 | n (0x{X})", .{ n }));
         // gb.cpu.pushToExecutionChain(fmtInsDebug(", .{ gb.cpu.pc + 1, gb.readByte(gb.cpu.pc + 1) }));
         gb.cpu.sp = n;
         // print("after op: sp: {d}\n", .{gb.cpu.sp});
         gb.cpu.pc += 3;
         return 3;
     }
-    fn LDHL8(gb: *GB, _: InstrArgs) u8 { // LD[HL], n8
-        // const zone = tracy.beginZone(@src(), .{ .name = "LDHL8" });
+    fn LDSPHL(gb: *GB, _: InstrArgs) u8 { // LD r16, n16, 0x31
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDSP16" });
         // defer zone.end();
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDSPHL", .{}));
+        // gb.cpu.pushToExecutionChain(fmtInsDebug(", .{ gb.cpu.pc + 1, gb.readByte(gb.cpu.pc + 1) }));
+        gb.cpu.sp = gb.cpu.get_word(.h);
+        // print("after op: sp: {d}\n", .{gb.cpu.sp});
+        gb.cpu.pc += 1;
+        return 2;
+    }
+    fn LDHLSPn8(gb: *GB, _: InstrArgs) u8 { // LD r16, n16, 0x31
+        // const zone = tracy.beginZone(@src(), .{ .name = "LDSP16" });
+        // defer zone.end();
+        const n: i8 = @bitCast(gb.readByte(gb.cpu.pc + 1));
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDHLSPn8 | n (0x{X})", .{ n }));
+        // gb.cpu.pushToExecutionChain(fmtInsDebug(", .{ gb.cpu.pc + 1, gb.readByte(gb.cpu.pc + 1) }));
+        gb.cpu.set_word(.h, @intCast(@addWithOverflow(@as(i17, gb.cpu.sp), n)[0]));
+        // print("after op: sp: {d}\n", .{gb.cpu.sp});
+        gb.cpu.pc += 2;
+        return 3;
+    }
+    fn LDn16SP(gb: *GB, _:InstrArgs) u8 { // Store SP & $FF at address n16 and SP >> 8 at address n16 + 1.
+        const high: u8 = @truncate(gb.cpu.sp >> 8);
+        const low: u8 = @truncate(gb.cpu.sp);
+        const mem_place: u16 = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
+        gb.writeByte(mem_place, low);
+        gb.writeByte(mem_place + 1, high);
+        gb.cpu.pc += 3;
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDn16SP | SP:0x{X} --> mem@0x{X}{X}", .{gb.cpu.sp, high, low}));
+        return 5;
+    }
+    fn LDHL8(gb: *GB, _: InstrArgs) u8 { // LD[HL], n8
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.readByte(gb.cpu.pc + 1);
         gb.cpu.pushToExecutionChain(fmtInsDebug("LDHL8 | hl:0x{X}, value:0x{x}, mem@hl: 0x{x}", .{ hl, value, gb.readByte(hl) }));
@@ -133,9 +201,7 @@ const InstructionSet = struct {
         gb.cpu.pc += 2;
         return 3;
     }
-    fn LDHLR(gb: *GB, args: InstrArgs) u8 { // LD[HL],r8
-        // const zone = tracy.beginZone(@src(), .{ .name = "LDHLR" });
-        // defer zone.end();
+    fn LDHLr8(gb: *GB, args: InstrArgs) u8 { // LD[HL],r8
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(args.target);
         gb.cpu.pushToExecutionChain(fmtInsDebug("LDHLR | mem@0x{X}: 0x{X} --> 0x{X}", .{ hl, gb.readByte(hl), value }));
@@ -143,9 +209,15 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 2;
     }
+    fn LDr8HL(gb: *GB, args: InstrArgs) u8 { // LDr8,[HL]
+        const hl = gb.cpu.get_word(regID.h);
+        const value = gb.readByte(hl);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("LDr8HL | HL <-- 0x{X}", .{ value }));
+        gb.cpu.set_word(args.target, value);
+        gb.cpu.pc += 1;
+        return 2;
+    }
     fn LDHLIA(gb: *GB, _: InstrArgs) u8 { // LD [HLI],A
-        // const zone = tracy.beginZone(@src(), .{ .name = "LDHLIA" });
-        // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_byte(regID.a);
         gb.cpu.pushToExecutionChain(fmtInsDebug("LDHLIA | mem@0x{X}: 0x{X} --> 0x{X}", .{ hl, gb.readByte(hl), value }));
@@ -265,6 +337,15 @@ const InstructionSet = struct {
         gb.cpu.pc += 2;
         return 2;
     }
+    fn ORHL(gb: *GB, _: InstrArgs) u8 {
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ORHL", .{}));
+        const a = gb.cpu.get_byte(.a);
+        const value = gb.readByte(gb.cpu.get_word(.h));
+        gb.cpu.set_byte(.a, a | value);
+        gb.cpu.f.write(a == 0, false, false, false);
+        gb.cpu.pc += 1;
+        return 2;
+    }
     fn XORr8(gb: *GB, args: InstrArgs) u8 {
         // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
         // defer zone.end();
@@ -274,6 +355,26 @@ const InstructionSet = struct {
         gb.cpu.f.write(a == 0, false, false, false);
         gb.cpu.pc += 1;
         return 1;
+    }
+    fn XORn8(gb: *GB, _: InstrArgs) u8 {
+        // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
+        // defer zone.end();
+        const value = gb.readByte(gb.cpu.pc + 1);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("XORn8", .{}));
+        const a = gb.cpu.get_byte(.a);
+        gb.cpu.set_byte(.a, a ^ value);
+        gb.cpu.f.write(a == 0, false, false, false);
+        gb.cpu.pc += 2;
+        return 2;
+    }
+    fn XORHL(gb: *GB, _: InstrArgs) u8 {
+        gb.cpu.pushToExecutionChain(fmtInsDebug("XORHL", .{}));
+        const a = gb.cpu.get_byte(.a);
+        const value = gb.readByte(gb.cpu.get_word(.h));
+        gb.cpu.set_byte(.a, a ^ value);
+        gb.cpu.f.write(a == 0, false, false, false);
+        gb.cpu.pc += 1;
+        return 2;
     }
     fn ANDn8(gb: *GB, _: InstrArgs) u8 {
         // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
@@ -286,6 +387,17 @@ const InstructionSet = struct {
         gb.cpu.pc += 2;
         return 2;
     }
+    fn ANDHL(gb: *GB, _: InstrArgs) u8 {
+        // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
+        // defer zone.end();
+        const reg = gb.readByte(gb.cpu.get_word(.h));
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ANDr8 | A & HL", .{}));
+        const a = gb.cpu.get_byte(.a);
+        gb.cpu.set_byte(.a, a & reg);
+        gb.cpu.f.write(a == 0, false, true, false);
+        gb.cpu.pc += 1;
+        return 2;
+    }
     fn ANDr8(gb: *GB, args: InstrArgs) u8 {
         // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
         // defer zone.end();
@@ -294,10 +406,9 @@ const InstructionSet = struct {
         const a = gb.cpu.get_byte(.a);
         gb.cpu.set_byte(.a, a & reg);
         gb.cpu.f.write(a == 0, false, true, false);
-        gb.cpu.pc += 2;
-        return 2;
+        gb.cpu.pc += 1;
+        return 1;
     }
-
     fn ADDAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
         // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
         // defer zone.end();
@@ -313,6 +424,80 @@ const InstructionSet = struct {
         gb.cpu.set_byte(regID.a, res[0]);
         gb.cpu.pc += 1;
         return 1;
+    }
+    fn ADDAn8(gb: *GB, _: InstrArgs) u8 { //
+        // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
+        // defer zone.end();
+        const value = gb.readByte(gb.cpu.pc + 1);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADDAn8 | A + 0x{X}", .{ value }));
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @addWithOverflow(a, value);
+        const s = false;
+        const c = res[1] == 1;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 2;
+        return 2;
+    }
+    fn ADDSPn8(gb: *GB, _: InstrArgs) u8 {
+        const value: i8 = @bitCast(gb.readByte(gb.cpu.pc + 1));
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADDAn8 | SP + 0x{X}", .{ value }));
+        const res: struct { i17, u1 } = @addWithOverflow(@as(i17, gb.cpu.sp), value);
+        const val: u8 = @intCast(res[0]);
+        const s = false;
+        const c = res[1] == 1;
+        const h = (val & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = false;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.sp = val;
+        gb.cpu.pc += 2;
+        return 4;
+    }
+    fn ADCAr8(gb: *GB, args: InstrArgs) u8 { // add a to a register, plus the carry
+        const value = gb.cpu.get_byte(args.target);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADCAr8 | target: {any}, value: {d}", .{ args.target, value }));
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @addWithOverflow(@intFromBool(gb.cpu.f.cFlag()), @addWithOverflow(a, value)[0]);
+        const s = false;
+        const c = res[1] == 1;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 1;
+        return 1;
+    }
+    fn ADCAn8(gb: *GB, _: InstrArgs) u8 { // add a to a register, plus the carry
+        const value = gb.readByte(gb.cpu.pc + 1);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADCAn8 | value: {d}", .{ value }));
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @addWithOverflow(@intFromBool(gb.cpu.f.cFlag()), @addWithOverflow(a, value)[0]);
+        const s = false;
+        const c = res[1] == 1;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 2;
+        return 2;
+    }
+    fn ADCAHL(gb: *GB, _: InstrArgs) u8 { // add the byte pointed to by hl to a, plus the carry
+        // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
+        // defer zone.end();
+        const value = gb.readByte(gb.cpu.get_word(.h));
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADCAHL | mem@hl: {d}", .{ value }));
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @addWithOverflow(@intFromBool(gb.cpu.f.cFlag()), @addWithOverflow(a, value)[0]);
+        const s = false;
+        const c = res[1] == 1;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 1;
+        return 2;
     }
     fn SUBAr8(gb: *GB, args: InstrArgs) u8 { // TODO finish, TEST, flags
         // const zone = tracy.beginZone(@src(), .{ .name = "SUBAr8" });
@@ -330,9 +515,86 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 1;
     }
-    fn ADDAHL(gb: *GB, _: InstrArgs) u8 { // TODO Add the byte pointed to by HL to A.
-        // const zone = tracy.beginZone(@src(), .{ .name = "ADDAHL" });
+    fn SUBAn8(gb: *GB, _: InstrArgs) u8 {
+        const value = gb.readByte(gb.cpu.pc + 1);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("SUBAn8 | value: {d}", .{ value }));
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @subWithOverflow(a, value);
+        const c = value > a;
+        const s = true;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 2;
+        return 2;
+    }
+    fn SUBAHL(gb: *GB, _: InstrArgs) u8 { // TODO finish, TEST, flags
+        // const zone = tracy.beginZone(@src(), .{ .name = "SUBAr8" });
         // defer zone.end();
+        const mem_place = gb.cpu.get_word(regID.h);
+        const value = gb.readByte(mem_place);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("SUBAHL | A - mem@0x{X}: value: {d}", .{ mem_place, value }));
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @subWithOverflow(a, value);
+        const c = value > a;
+        const s = true;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 1;
+        return 2;
+    }
+    fn SBCAr8(gb: *GB, args: InstrArgs) u8 { // add a to a register, plus the carry
+        // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
+        // defer zone.end();
+        const value = gb.cpu.get_byte(args.target);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("SBCAr8 | target: {any}, value: {d}", .{ args.target, value }));
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @subWithOverflow(@subWithOverflow(a, value)[0], @intFromBool(gb.cpu.f.cFlag()));
+        const s = true;
+        const c = res[1] == 1;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 1;
+        return 1;
+    }
+    fn SBCAn8(gb: *GB, _: InstrArgs) u8 { // add a to a register, plus the carry
+        // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
+        // defer zone.end();
+        const value = gb.readByte(gb.cpu.pc + 1);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("SBCAn8 | value: {d}", .{ value }));
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @subWithOverflow(@subWithOverflow(a, value)[0], @intFromBool(gb.cpu.f.cFlag()));
+        const s = true;
+        const c = res[1] == 1;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 2;
+        return 2;
+    }
+    fn SBCAHL(gb: *GB, _: InstrArgs) u8 { // add the byte pointed to by hl to a, plus the carry
+        // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
+        // defer zone.end();
+        const value = gb.readByte(gb.cpu.get_word(.h));
+        gb.cpu.pushToExecutionChain(fmtInsDebug("SBCAHL | mem@hl: {d}", .{ value }));
+        const a = gb.cpu.get_byte(regID.a);
+        const res: struct { u8, u1 } = @subWithOverflow(@subWithOverflow(a, value)[0], @intFromBool(gb.cpu.f.cFlag()));
+        const s = true;
+        const c = res[1] == 1;
+        const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+        const z = res[0] == 0;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(regID.a, res[0]);
+        gb.cpu.pc += 1;
+        return 2;
+    }
+    fn ADDAHL(gb: *GB, _: InstrArgs) u8 { // TODO Add the byte pointed to by HL to A.
         const mem_place = gb.cpu.get_word(regID.h);
         const value = gb.readByte(mem_place);
         gb.cpu.pushToExecutionChain(fmtInsDebug("ADDAHL | A + mem@0x{X}: value: {d}", .{ mem_place, value }));
@@ -352,7 +614,23 @@ const InstructionSet = struct {
         // defer zone.end();
         const hl = gb.cpu.get_word(regID.h);
         const value = gb.cpu.get_word(args.target);
-        gb.cpu.pushToExecutionChain(fmtInsDebug("ADDHL | {any} + hl, {d} + {d}", .{ args.target, value, hl }));
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADDHLr16 | {any} + hl, {d} + {d}", .{ args.target, value, hl }));
+        const res: u16 = @addWithOverflow(hl, value)[0];
+        const s = false;
+        const h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
+        const c = (((hl + value) >> 12) & 0xF) & 0x10 == 0x10;
+        const z = gb.cpu.f.zFlag();
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_word(regID.h, res);
+        gb.cpu.pc += 1;
+        return 2;
+    }
+    fn ADDHLSP(gb: *GB, args: InstrArgs) u8 { // TODO 
+        // const zone = tracy.beginZone(@src(), .{ .name = "ADDHLr16" });
+        // defer zone.end();
+        const hl = gb.cpu.get_word(regID.h);
+        const value = gb.cpu.sp;
+        gb.cpu.pushToExecutionChain(fmtInsDebug("ADDHLSP | {any} + hl, {d} + {d}", .{ args.target, value, hl }));
         const res: u16 = @addWithOverflow(hl, value)[0];
         const s = false;
         const h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
@@ -369,6 +647,12 @@ const InstructionSet = struct {
         gb.cpu.pc += 1;
         return 1;
     }
+    fn CCF(gb: *GB, _: InstrArgs) u8 { // complement carry flag
+        gb.cpu.pushToExecutionChain(fmtInsDebug("SCF", .{}));
+        gb.cpu.f.write(gb.cpu.f.zFlag(), !gb.cpu.f.cFlag(), false, false);
+        gb.cpu.pc += 1;
+        return 1;
+    }
     fn CPL(gb: *GB, _: InstrArgs) u8 { // sets the value in register A to its complement
         gb.cpu.pushToExecutionChain(fmtInsDebug("CPL", .{}));
         gb.cpu.set_byte(.a, gb.cpu.get_byte(.a) ^ 0xFF);
@@ -380,11 +664,12 @@ const InstructionSet = struct {
         // const zone = tracy.beginZone(@src(), .{ .name = "EI" });
         // defer zone.end();
         gb.cpu.pushToExecutionChain(fmtInsDebug("EI", .{}));
+        print("EI!\n\n pc = 0x{X}\n", .{gb.cpu.pc});
         gb.cpu.pc += 1;
         return 1;
     }
     fn DI(gb: *GB, _: InstrArgs) u8 { // TODO TEST
-        // print("EI\n", .{});
+        print("DI!\n\n", .{});
         gb.cpu.pushToExecutionChain(fmtInsDebug("DI", .{}));
         gb.cpu.pc += 1;
         return 1;
@@ -396,16 +681,30 @@ const InstructionSet = struct {
         gb.cpu.pc = args.where;
         return 4;
     }
+    fn RRA(gb: *GB, _: InstrArgs) u8 { // C -> [7 -> 0] -> C into A
+        // const zone = tracy.beginZone(@src(), .{ .name = "RRCA" });
+        // defer zone.end();
+        const a = gb.cpu.get_byte(regID.a);
+        gb.cpu.pushToExecutionChain(fmtInsDebug("RRA", .{}));
+        gb.cpu.set_byte(regID.a, @as(u8, @intFromBool(gb.cpu.f.cFlag())) << 7 | a >> 1);
+        const c = (@as(u1, @truncate(a)) == 1);
+        const s = false;
+        const h = false;
+        const z = false;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.pc += 1;
+        return 1;
+    }
     fn RRCA(gb: *GB, _: InstrArgs) u8 { // TODO TEST
         // const zone = tracy.beginZone(@src(), .{ .name = "RRCA" });
         // defer zone.end();
         const a = gb.cpu.get_byte(regID.a);
         gb.cpu.pushToExecutionChain(fmtInsDebug("RRCA", .{}));
-        gb.cpu.set_byte(regID.a, a << 7 | a >> 1);
+        gb.cpu.set_byte(regID.a, a >> 1);
         const c = (@as(u1, @truncate(a)) == 1);
-        const s = gb.cpu.f.sFlag();
-        const h = gb.cpu.f.hFlag();
-        const z = gb.cpu.f.zFlag();
+        const s = false;
+        const h = false;
+        const z = false;
         gb.cpu.f.write(z, c, h, s);
         gb.cpu.pc += 1;
         return 1;
@@ -423,6 +722,19 @@ const InstructionSet = struct {
         gb.cpu.f.write(z, c, h, s);
         gb.cpu.set_byte(regID.a, rotated);
         // print("rotated: 0b{b}\n", .{rotated});
+        gb.cpu.pc += 1;
+        return 1;
+    }
+    fn RLCA(gb: *GB, _:InstrArgs) u8 { //Rotate register A left.
+        gb.cpu.pushToExecutionChain((fmtInsDebug("RLCA | regID.a << 1", .{})));
+        const a = gb.cpu.get_byte(.a);
+        const c = (a >> 7) == 1;
+        const z = false;
+        const h = false;
+        const s = false;
+        gb.cpu.f.write( z, c, h, s);
+        const shifted = a << 1;
+        gb.cpu.set_byte(.a, shifted | @intFromBool(c));
         gb.cpu.pc += 1;
         return 1;
     }
@@ -477,9 +789,6 @@ const InstructionSet = struct {
         return .{low, high};
     }
     fn JP(gb: *GB, args: InstrArgs) u8 {
-        // const zone = tracy.beginZone(@src(), .{ .name = "JP" });
-        // defer zone.end();
-        // print("JP", .{});
         const jump = gb.cpu.f.check(args.flagConditions);
         if (jump) {
             const n = @as(u16, gb.readByte(gb.cpu.pc + 2)) << 8 | gb.readByte(gb.cpu.pc + 1);
@@ -562,14 +871,22 @@ const InstructionSet = struct {
             return 2; // 2 cycles when not taken
         }
     }
+    fn RETI(gb: *GB, args: InstrArgs) u8 { // TODO set IME FLAG!!!!
+        const low = gb.readByte(gb.cpu.sp);
+        gb.cpu.sp += 1;
+        const high = gb.readByte(gb.cpu.sp);
+        const jumpto = @as(u16, high) << 8 | low;
+        gb.cpu.pushToExecutionChain(fmtInsDebug("RET | {any} met, jumpto pc[{X:04}]", .{args.flagConditions, jumpto}));
+        gb.cpu.sp += 1;
+        gb.cpu.pc = jumpto;
+        return switch (args.flagConditions) {
+            .none => 4,
+            else =>  5 // 5 cycles if condition met
+        };
+    }
     fn CPAn8(gb: *GB, _: InstrArgs) u8 { // TODO TEST;
-        // // const zone = tracy.beginZone(@src(), .{ .name = "CPAn8", .color = 0x00FF00 });
-        // // defer zone.end();
-        // print("CPAn8, pc:[0x{X}] \n", .{gb.cpu.pc});
         const n = gb.readByte(gb.cpu.pc + 1);
         const reg = gb.cpu.get_byte(regID.a);
-        // print("n b1: [pc]0x{X} \t(0x{X}), A: 0x{X}\n", .{ gb.cpu.pc + 1, n, gb.cpu.get_byte(regID.a) });
-        // const res = @subWithOverflow(reg, n);
         const z = reg == n;
         const s = true;
         const h = (reg & 0xF) < (n & 0xF); // half carry conditions
@@ -610,6 +927,32 @@ const InstructionSet = struct {
         gb.cpu.pushToExecutionChain(fmtInsDebug("CPAHL | reg.A, mem[X.{X:04}] := {d}, {d}", .{hl, reg, byte}));
         gb.cpu.pc += 1;
         return 2;
+    }
+
+    fn DAA(gb: *GB, _:InstrArgs) u8 {
+        var a = gb.cpu.get_byte(.a);
+        var offset: u8 = 0;
+        if ((!gb.cpu.f.sFlag() and a & 0xF > 0x9) or gb.cpu.f.hFlag())  {
+            offset |= 0x6;
+        }
+        if ((!gb.cpu.f.sFlag() and a & 0xFF > 0x90) or gb.cpu.f.cFlag()) {
+            offset |= 0x60;
+        }
+
+        if (gb.cpu.f.sFlag()) {
+            a = @subWithOverflow(a, offset)[0];
+        } else {
+            a = @addWithOverflow(a, offset)[0];
+        }
+        
+        const z = a == 0;
+        const c = a > 0x99;
+        const s = gb.cpu.f.sFlag();
+        const h = false;
+        gb.cpu.f.write(z, c, h, s);
+        gb.cpu.set_byte(.a, a);
+        gb.cpu.pc += 1;
+        return 1;
     }
 
     // PREFIX INSTRUCTIONS
@@ -673,23 +1016,23 @@ const InstructionSet = struct {
             false => switch (gb.cpu.executing_byte) {
                 0x00 => NOP(gb, .{ .none = {} }),
                 0x01 => LD16(gb, .{ .target = regID.b }),
-                0x02 => UNDEF(gb, .{ .none = {} }),
-                0x03 => UNDEF(gb, .{ .none = {} }),
+                0x02 => LDr16A(gb, .{ .target = regID.b }),
+                0x03 => INCr16(gb, .{ .target = regID.b }),
                 0x04 => INCr8(gb, .{ .target = regID.b }),
                 0x05 => DECr8(gb, .{ .target = regID.b }),
                 0x06 => LD8(gb, .{ .target = regID.b }),
-                0x07 => UNDEF(gb, .{ .none = {} }),
-                0x08 => UNDEF(gb, .{ .none = {} }),
-                0x09 => UNDEF(gb, .{ .none = {} }),
-                0x0A => UNDEF(gb, .{ .none = {} }),
+                0x07 => RLCA(gb, .{ .none = {} }),
+                0x08 => LDn16SP(gb, .{ .none = {} }),
+                0x09 => ADDHLr16(gb, .{ .target = regID.b }),
+                0x0A => LDAr16(gb, .{ .target = regID.b }),
                 0x0B => DECr16(gb, .{ .target = regID.b }),
                 0x0C => INCr8(gb, .{ .target = regID.c }),
                 0x0D => DECr8(gb, .{ .target = regID.c }),
                 0x0E => LD8(gb, .{ .target = regID.c }),
                 0x0F => RRCA(gb, .{ .none = {} }),
-                0x10 => UNDEF(gb, .{ .none = {} }),
+                0x10 => UNDEF(gb, .{ .none = {} }), // STOP
                 0x11 => LD16(gb, .{ .target = regID.d }),
-                0x12 => UNDEF(gb, .{ .none = {} }),
+                0x12 => LDr16A(gb, .{ .target = regID.d }),
                 0x13 => INCr16(gb, .{ .target = regID.d }),
                 0x14 => INCr8(gb, .{ .target = regID.d }),
                 0x15 => DECr8(gb, .{ .target = regID.d }),
@@ -702,101 +1045,101 @@ const InstructionSet = struct {
                 0x1C => INCr8(gb, .{ .target = regID.e }),
                 0x1D => DECr8(gb, .{ .target = regID.e }),
                 0x1E => LD8(gb, .{ .target = regID.e }),
-                0x1F => UNDEF(gb, .{ .none = {} }),
+                0x1F => RRA(gb, .{ .none = {} }),
                 0x20 => JR(gb, .{ .flagConditions = .nz }),
                 0x21 => LD16(gb, .{ .target = regID.h }),
                 0x22 => LDHLIA(gb, .{ .none = {} }),
                 0x23 => INCr16(gb, .{ .target = regID.h }),
                 0x24 => INCr8(gb, .{ .target = regID.h }),
-                0x25 => UNDEF(gb, .{ .none = {} }),
-                0x26 => UNDEF(gb, .{ .none = {} }),
-                0x27 => UNDEF(gb, .{ .none = {} }),
+                0x25 => DECr8(gb, .{ .target = regID.h }),
+                0x26 => LD8(gb, .{ .target = regID.h }),
+                0x27 => DAA(gb, .{ .none = {} }),
                 0x28 => JR(gb, .{ .flagConditions = .z }),
-                0x29 => UNDEF(gb, .{ .none = {} }),
+                0x29 => ADDHLr16(gb, .{ .target = regID.h }),
                 0x2A => LDAHL(gb, .{ .hl_mod = 1 }),
-                0x2B => UNDEF(gb, .{ .none = {} }),
-                0x2C => UNDEF(gb, .{ .none = {} }),
-                0x2D => UNDEF(gb, .{ .none = {} }),
+                0x2B => DECr16(gb, .{ .target = regID.h }),
+                0x2C => INCr8(gb, .{ .target = regID.l }),
+                0x2D => DECr8(gb, .{ .target = regID.l }),
                 0x2E => LD8(gb, .{ .target = regID.l }),
                 0x2F => CPL(gb, .{ .none = {} }),
-                0x30 => UNDEF(gb, .{ .none = {} }),
+                0x30 => JR(gb, .{ .flagConditions = .nc }),
                 0x31 => LDSP16(gb, .{ .none = {} }),
                 0x32 => LDHLDA(gb, .{ .none = {} }),
-                0x33 => UNDEF(gb, .{ .none = {} }),
-                0x34 => UNDEF(gb, .{ .none = {} }),
-                0x35 => UNDEF(gb, .{ .none = {} }),
+                0x33 => INCSP(gb, .{ .none = {} }),
+                0x34 => INCHL(gb, .{ .none = {} }),
+                0x35 => DECHL(gb, .{ .none = {} }),
                 0x36 => LDHL8(gb, .{ .none = {} }),
                 0x37 => SCF(gb, .{ .none = {} }),
-                0x38 => UNDEF(gb, .{ .none = {} }),
-                0x39 => UNDEF(gb, .{ .none = {} }),
-                0x3A => UNDEF(gb, .{ .none = {} }),
-                0x3B => UNDEF(gb, .{ .none = {} }),
-                0x3C => UNDEF(gb, .{ .none = {} }),
+                0x38 => JR(gb, .{ .flagConditions = .c }),
+                0x39 => ADDHLSP(gb, .{ .none = {} }),
+                0x3A => LDAHL(gb, .{ .hl_mod = 0 }),
+                0x3B => DECSP(gb, .{ .none = {} }),
+                0x3C => INCr8(gb, .{ .target = regID.a }),
                 0x3D => DECr8(gb, .{ .target = regID.a }),
                 0x3E => LD8(gb, .{ .target = regID.a }),
-                0x3F => UNDEF(gb, .{ .none = {} }),
-                0x40 => UNDEF(gb, .{ .none = {} }),
-                0x41 => UNDEF(gb, .{ .none = {} }),
-                0x42 => UNDEF(gb, .{ .none = {} }),
-                0x43 => UNDEF(gb, .{ .none = {} }),
-                0x44 => UNDEF(gb, .{ .none = {} }),
-                0x45 => UNDEF(gb, .{ .none = {} }),
-                0x46 => UNDEF(gb, .{ .none = {} }),
-                0x47 => UNDEF(gb, .{ .none = {} }),
-                0x48 => UNDEF(gb, .{ .none = {} }),
-                0x49 => UNDEF(gb, .{ .none = {} }),
-                0x4A => UNDEF(gb, .{ .none = {} }),
-                0x4B => UNDEF(gb, .{ .none = {} }),
-                0x4C => UNDEF(gb, .{ .none = {} }),
-                0x4D => UNDEF(gb, .{ .none = {} }),
-                0x4E => UNDEF(gb, .{ .none = {} }),
-                0x4F => LDr8(gb, .{ .targets = .{ .to = regID.c, .from = regID.a } }),
-                0x50 => UNDEF(gb, .{ .none = {} }),
-                0x51 => UNDEF(gb, .{ .none = {} }),
-                0x52 => UNDEF(gb, .{ .none = {} }),
-                0x53 => UNDEF(gb, .{ .none = {} }),
-                0x54 => UNDEF(gb, .{ .none = {} }),
-                0x55 => UNDEF(gb, .{ .none = {} }),
-                0x56 => UNDEF(gb, .{ .none = {} }),
-                0x57 => LDr8(gb, .{ .targets = .{ .to = regID.d, .from = regID.a } }),
-                0x58 => UNDEF(gb, .{ .none = {} }),
-                0x59 => UNDEF(gb, .{ .none = {} }),
-                0x5A => UNDEF(gb, .{ .none = {} }),
-                0x5B => UNDEF(gb, .{ .none = {} }),
-                0x5C => UNDEF(gb, .{ .none = {} }),
-                0x5D => UNDEF(gb, .{ .none = {} }),
-                0x5E => UNDEF(gb, .{ .none = {} }),
-                0x5F => UNDEF(gb, .{ .none = {} }),
-                0x60 => UNDEF(gb, .{ .none = {} }),
-                0x61 => UNDEF(gb, .{ .none = {} }),
-                0x62 => UNDEF(gb, .{ .none = {} }),
-                0x63 => UNDEF(gb, .{ .none = {} }),
-                0x64 => UNDEF(gb, .{ .none = {} }),
-                0x65 => UNDEF(gb, .{ .none = {} }),
-                0x66 => UNDEF(gb, .{ .none = {} }),
-                0x67 => LDr8(gb, .{ .targets = .{ .to = regID.h, .from = regID.a } }),
-                0x68 => UNDEF(gb, .{ .none = {} }),
-                0x69 => UNDEF(gb, .{ .none = {} }),
-                0x6A => UNDEF(gb, .{ .none = {} }),
-                0x6B => UNDEF(gb, .{ .none = {} }),
-                0x6C => UNDEF(gb, .{ .none = {} }),
-                0x6D => UNDEF(gb, .{ .none = {} }),
-                0x6E => UNDEF(gb, .{ .none = {} }),
-                0x6F => UNDEF(gb, .{ .none = {} }),
-                0x70 => UNDEF(gb, .{ .none = {} }),
-                0x71 => UNDEF(gb, .{ .none = {} }),
-                0x72 => UNDEF(gb, .{ .none = {} }),
-                0x73 => UNDEF(gb, .{ .none = {} }),
-                0x74 => UNDEF(gb, .{ .none = {} }),
-                0x75 => UNDEF(gb, .{ .none = {} }),
-                0x76 => UNDEF(gb, .{ .none = {} }),
-                0x77 => LDHLR(gb, .{ .target = regID.a }),
-                0x78 => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.b } }),
-                0x79 => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.c } }),
-                0x7A => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.d } }),
-                0x7B => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.e } }),
-                0x7C => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.h } }),
-                0x7D => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.l } }),
+                0x3F => CCF(gb, .{ .none = {} }),
+                0x40 => LDr8(gb, .{ .targets = .{.to = .b, .from = .b} }),
+                0x41 => LDr8(gb, .{ .targets = .{.to = .b, .from = .c} }),
+                0x42 => LDr8(gb, .{ .targets = .{.to = .b, .from = .d} }),
+                0x43 => LDr8(gb, .{ .targets = .{.to = .b, .from = .e} }),
+                0x44 => LDr8(gb, .{ .targets = .{.to = .b, .from = .h} }),
+                0x45 => LDr8(gb, .{ .targets = .{.to = .b, .from = .l} }),
+                0x46 => LDr8HL(gb, .{ .target =  regID.b }),
+                0x47 => LDr8(gb, .{ .targets = .{.to = .b, .from = .a} }),
+                0x48 => LDr8(gb, .{ .targets = .{.to = .c, .from = .b} }),
+                0x49 => LDr8(gb, .{ .targets = .{.to = .c, .from = .c} }),
+                0x4A => LDr8(gb, .{ .targets = .{.to = .c, .from = .d} }),
+                0x4B => LDr8(gb, .{ .targets = .{.to = .c, .from = .e} }),
+                0x4C => LDr8(gb, .{ .targets = .{.to = .c, .from = .h} }),
+                0x4D => LDr8(gb, .{ .targets = .{.to = .c, .from = .l} }),
+                0x4E => LDr8HL(gb, .{ .target = regID.c }),
+                0x4F => LDr8(gb, .{ .targets = .{.to = .c, .from = .a} }),
+                0x50 => LDr8(gb, .{ .targets = .{.to = .d, .from = .b} }),
+                0x51 => LDr8(gb, .{ .targets = .{.to = .d, .from = .c} }),
+                0x52 => LDr8(gb, .{ .targets = .{.to = .d, .from = .d} }),
+                0x53 => LDr8(gb, .{ .targets = .{.to = .d, .from = .e} }),
+                0x54 => LDr8(gb, .{ .targets = .{.to = .d, .from = .h} }),
+                0x55 => LDr8(gb, .{ .targets = .{.to = .d, .from = .l} }),
+                0x56 => LDr8HL(gb, .{ .target = regID.d }),
+                0x57 => LDr8(gb, .{ .targets = .{.to = .d, .from = .a } }),
+                0x58 => LDr8(gb, .{ .targets = .{.to = .e, .from = .b} }),
+                0x59 => LDr8(gb, .{ .targets = .{.to = .e, .from = .c} }),
+                0x5A => LDr8(gb, .{ .targets = .{.to = .e, .from = .d} }),
+                0x5B => LDr8(gb, .{ .targets = .{.to = .e, .from = .e} }),
+                0x5C => LDr8(gb, .{ .targets = .{.to = .e, .from = .h} }),
+                0x5D => LDr8(gb, .{ .targets = .{.to = .e, .from = .l} }),
+                0x5E => LDr8HL(gb, .{ .target = regID.e }),
+                0x5F => LDr8(gb, .{ .targets = .{.to = .e, .from = .a} }),
+                0x60 => LDr8(gb, .{ .targets = .{.to = .h, .from = .b} }),
+                0x61 => LDr8(gb, .{ .targets = .{.to = .h, .from = .c} }),
+                0x62 => LDr8(gb, .{ .targets = .{.to = .h, .from = .d} }),
+                0x63 => LDr8(gb, .{ .targets = .{.to = .h, .from = .e} }),
+                0x64 => LDr8(gb, .{ .targets = .{.to = .h, .from = .h} }),
+                0x65 => LDr8(gb, .{ .targets = .{.to = .h, .from = .l} }),
+                0x66 => LDr8HL(gb, .{ .target = regID.h }),
+                0x67 => LDr8(gb, .{ .targets = .{.to = .h, .from = .a} }),
+                0x68 => LDr8(gb, .{ .targets = .{.to = .l, .from = .b} }),
+                0x69 => LDr8(gb, .{ .targets = .{.to = .l, .from = .c} }),
+                0x6A => LDr8(gb, .{ .targets = .{.to = .l, .from = .d} }),
+                0x6B => LDr8(gb, .{ .targets = .{.to = .l, .from = .e} }),
+                0x6C => LDr8(gb, .{ .targets = .{.to = .l, .from = .h} }),
+                0x6D => LDr8(gb, .{ .targets = .{.to = .l, .from = .l} }),
+                0x6E => LDr8HL(gb, .{ .target = regID.l }),
+                0x6F => LDr8(gb, .{ .targets = .{.to = .l, .from = .a} }),
+                0x70 => LDHLr8(gb, .{ .target = regID.b }),
+                0x71 => LDHLr8(gb, .{ .target = regID.c }),
+                0x72 => LDHLr8(gb, .{ .target = regID.d }),
+                0x73 => LDHLr8(gb, .{ .target = regID.e }),
+                0x74 => LDHLr8(gb, .{ .target = regID.h }),
+                0x75 => LDHLr8(gb, .{ .target = regID.l }),
+                0x76 => UNDEF(gb, .{ .none = {} }), // HALT
+                0x77 => LDHLr8(gb, .{ .target = regID.a }),
+                0x78 => LDr8(gb, .{ .targets = .{.to = .a, .from = .b } }),
+                0x79 => LDr8(gb, .{ .targets = .{.to = .a, .from = .c } }),
+                0x7A => LDr8(gb, .{ .targets = .{.to = .a, .from = .d } }),
+                0x7B => LDr8(gb, .{ .targets = .{.to = .a, .from = .e } }),
+                0x7C => LDr8(gb, .{ .targets = .{.to = .a, .from = .h } }),
+                0x7D => LDr8(gb, .{ .targets = .{.to = .a, .from = .l } }),
                 0x7E => LDAHL(gb, .{ .none = {} }),
                 0x7F => LDr8(gb, .{ .targets = .{ .to = regID.a, .from = regID.a } }),
                 0x80 => ADDAr8(gb, .{ .target = regID.b }),
@@ -806,125 +1149,125 @@ const InstructionSet = struct {
                 0x84 => ADDAr8(gb, .{ .target = regID.h }),
                 0x85 => ADDAr8(gb, .{ .target = regID.l }),
                 0x86 => ADDAHL(gb, .{ .none = {} }),
-                0x87 => UNDEF(gb, .{ .none = {} }),
-                0x88 => UNDEF(gb, .{ .none = {} }),
-                0x89 => UNDEF(gb, .{ .none = {} }),
-                0x8A => UNDEF(gb, .{ .none = {} }),
-                0x8B => UNDEF(gb, .{ .none = {} }),
-                0x8C => UNDEF(gb, .{ .none = {} }),
-                0x8D => UNDEF(gb, .{ .none = {} }),
-                0x8E => UNDEF(gb, .{ .none = {} }),
-                0x8F => UNDEF(gb, .{ .none = {} }),
+                0x87 => ADDAr8(gb, .{ .target = regID.a }),
+                0x88 => ADCAr8(gb, .{ .target = regID.b }),
+                0x89 => ADCAr8(gb, .{ .target = regID.c }),
+                0x8A => ADCAr8(gb, .{ .target = regID.d }),
+                0x8B => ADCAr8(gb, .{ .target = regID.e }),
+                0x8C => ADCAr8(gb, .{ .target = regID.h }),
+                0x8D => ADCAr8(gb, .{ .target = regID.l }),
+                0x8E => ADCAHL(gb, .{ .none = {} }),
+                0x8F => ADCAr8(gb, .{ .target = regID.a }),
                 0x90 => SUBAr8(gb, .{ .target = regID.b }),
                 0x91 => SUBAr8(gb, .{ .target = regID.c }),
                 0x92 => SUBAr8(gb, .{ .target = regID.d }),
                 0x93 => SUBAr8(gb, .{ .target = regID.e }),
                 0x94 => SUBAr8(gb, .{ .target = regID.h }),
                 0x95 => SUBAr8(gb, .{ .target = regID.l }),
-                0x96 => UNDEF(gb, .{ .none = {} }),
+                0x96 => SUBAHL(gb, .{ .none = {} }),
                 0x97 => SUBAr8(gb, .{ .target = regID.a }),
-                0x98 => UNDEF(gb, .{ .none = {} }),
-                0x99 => UNDEF(gb, .{ .none = {} }),
-                0x9A => UNDEF(gb, .{ .none = {} }),
-                0x9B => UNDEF(gb, .{ .none = {} }),
-                0x9C => UNDEF(gb, .{ .none = {} }),
-                0x9D => UNDEF(gb, .{ .none = {} }),
-                0x9E => UNDEF(gb, .{ .none = {} }),
-                0x9F => UNDEF(gb, .{ .none = {} }),
-                0xA0 => UNDEF(gb, .{ .none = {} }),
-                0xA1 => ANDr8(gb, .{ .target = .c }),
-                0xA2 => UNDEF(gb, .{ .none = {} }),
-                0xA3 => UNDEF(gb, .{ .none = {} }),
-                0xA4 => UNDEF(gb, .{ .none = {} }),
-                0xA5 => UNDEF(gb, .{ .none = {} }),
-                0xA6 => UNDEF(gb, .{ .none = {} }),
-                0xA7 => UNDEF(gb, .{ .none = {} }),
-                0xA8 => UNDEF(gb, .{ .none = {} }),
-                0xA9 => XORr8(gb, .{ .target = .c }),
-                0xAA => UNDEF(gb, .{ .none = {} }),
-                0xAB => UNDEF(gb, .{ .none = {} }),
-                0xAC => UNDEF(gb, .{ .none = {} }),
-                0xAD => UNDEF(gb, .{ .none = {} }),
-                0xAE => UNDEF(gb, .{ .none = {} }),
+                0x98 => SBCAr8(gb, .{ .target = regID.b }),
+                0x99 => SBCAr8(gb, .{ .target = regID.c }),
+                0x9A => SBCAr8(gb, .{ .target = regID.d }),
+                0x9B => SBCAr8(gb, .{ .target = regID.e }),
+                0x9C => SBCAr8(gb, .{ .target = regID.h }),
+                0x9D => SBCAr8(gb, .{ .target = regID.l }),
+                0x9E => SBCAHL(gb, .{ .none = {} }),
+                0x9F => SBCAr8(gb, .{ .target = regID.a }),
+                0xA0 => ANDr8(gb, .{ .target = regID.b }),
+                0xA1 => ANDr8(gb, .{ .target = regID.c }),
+                0xA2 => ANDr8(gb, .{ .target = regID.d }),
+                0xA3 => ANDr8(gb, .{ .target = regID.e }),
+                0xA4 => ANDr8(gb, .{ .target = regID.h }),
+                0xA5 => ANDr8(gb, .{ .target = regID.l }),
+                0xA6 => ANDHL(gb, .{ .none = {} }),
+                0xA7 => ANDr8(gb, .{ .target = regID.a }),
+                0xA8 => XORr8(gb, .{ .target = regID.b }),
+                0xA9 => XORr8(gb, .{ .target = regID.c }),
+                0xAA => XORr8(gb, .{ .target = regID.d }),
+                0xAB => XORr8(gb, .{ .target = regID.e }),
+                0xAC => XORr8(gb, .{ .target = regID.h }),
+                0xAD => XORr8(gb, .{ .target = regID.l }),
+                0xAE => XORHL(gb, .{ .none = {} }),
                 0xAF => XORr8(gb, .{ .target = regID.a }),
-                0xB0 => ORr8(gb, .{ .target = .b }),
+                0xB0 => ORr8(gb, .{ .target = regID.b }),
                 0xB1 => ORr8(gb, .{ .target = regID.c }),
-                0xB2 => UNDEF(gb, .{ .none = {} }),
-                0xB3 => UNDEF(gb, .{ .none = {} }),
-                0xB4 => UNDEF(gb, .{ .none = {} }),
-                0xB5 => UNDEF(gb, .{ .none = {} }),
-                0xB6 => UNDEF(gb, .{ .none = {} }),
-                0xB7 => UNDEF(gb, .{ .none = {} }),
-                0xB8 => UNDEF(gb, .{ .none = {} }),
-                0xB9 => UNDEF(gb, .{ .none = {} }),
-                0xBA => UNDEF(gb, .{ .none = {} }),
-                0xBB => UNDEF(gb, .{ .none = {} }),
-                0xBC => UNDEF(gb, .{ .none = {} }),
-                0xBD => UNDEF(gb, .{ .none = {} }),
+                0xB2 => ORr8(gb, .{ .target = regID.d }),
+                0xB3 => ORr8(gb, .{ .target = regID.e }),
+                0xB4 => ORr8(gb, .{ .target = regID.h }),
+                0xB5 => ORr8(gb, .{ .target = regID.l }),
+                0xB6 => ORHL(gb, .{ .none = {} }),
+                0xB7 => ORr8(gb, .{ .target = regID.a }),
+                0xB8 => CPAr8(gb, .{ .target = regID.b }),
+                0xB9 => CPAr8(gb, .{ .target = regID.c }),
+                0xBA => CPAr8(gb, .{ .target = regID.d }),
+                0xBB => CPAr8(gb, .{ .target = regID.e }),
+                0xBC => CPAr8(gb, .{ .target = regID.h }),
+                0xBD => CPAr8(gb, .{ .target = regID.l }),
                 0xBE => CPAHL(gb, .{ .none = {} }),
-                0xBF => UNDEF(gb, .{ .none = {} }),
-                0xC0 => UNDEF(gb, .{ .none = {} }),
+                0xBF => CPAr8(gb, .{ .target = regID.a }),
+                0xC0 => RET(gb, .{ .flagConditions = .nz }),
                 0xC1 => POP(gb, .{ .target = regID.b }),
-                0xC2 => UNDEF(gb, .{ .none = {} }),
+                0xC2 => JP(gb, .{ .flagConditions = .nz }),
                 0xC3 => JP(gb, .{ .flagConditions = .none }),
-                0xC4 => UNDEF(gb, .{ .none = {} }),
+                0xC4 => CALLn16(gb, .{ .flagConditions = .nz }),
                 0xC5 => PUSH(gb, .{ .target = regID.b }),
-                0xC6 => UNDEF(gb, .{ .none = {} }),
-                0xC7 => UNDEF(gb, .{ .none = {} }),
-                0xC8 => UNDEF(gb, .{ .none = {} }),
+                0xC6 => ADDAn8(gb, .{ .none = {} }),
+                0xC7 => RST(gb, .{ .where = 0x0 }),
+                0xC8 => RET(gb, .{ .flagConditions = .z }),
                 0xC9 => RET(gb, .{ .flagConditions = .none }),
-                0xCA => UNDEF(gb, .{ .none = {} }),
-                0xCB => UNDEF(gb, .{ .none = {} }),
-                0xCC => UNDEF(gb, .{ .none = {} }),
+                0xCA => JP(gb, .{ .flagConditions = .z }),
+                0xCB => UNDEF(gb, .{ .none = {} }), // cb prefix
+                0xCC => CALLn16(gb, .{ .flagConditions = .z }),
                 0xCD => CALLn16(gb, .{ .flagConditions = .none }),
-                0xCE => UNDEF(gb, .{ .none = {} }),
-                0xCF => UNDEF(gb, .{ .none = {} }),
-                0xD0 => UNDEF(gb, .{ .none = {} }),
-                0xD1 => UNDEF(gb, .{ .none = {} }),
-                0xD2 => UNDEF(gb, .{ .none = {} }),
-                0xD3 => UNDEF(gb, .{ .none = {} }),
-                0xD4 => UNDEF(gb, .{ .none = {} }),
-                0xD5 => UNDEF(gb, .{ .none = {} }),
-                0xD6 => UNDEF(gb, .{ .none = {} }),
-                0xD7 => UNDEF(gb, .{ .none = {} }),
-                0xD8 => UNDEF(gb, .{ .none = {} }),
-                0xD9 => UNDEF(gb, .{ .none = {} }),
-                0xDA => UNDEF(gb, .{ .none = {} }),
-                0xDB => UNDEF(gb, .{ .none = {} }),
-                0xDC => UNDEF(gb, .{ .none = {} }),
-                0xDD => UNDEF(gb, .{ .none = {} }),
-                0xDE => UNDEF(gb, .{ .none = {} }),
-                0xDF => UNDEF(gb, .{ .none = {} }),
+                0xCE => ADCAn8(gb, .{ .none = {} }),
+                0xCF => RST(gb, .{ .where = 0x08 }),
+                0xD0 => RET(gb, .{ .flagConditions = .nc }),
+                0xD1 => POP(gb, .{ .target = regID.d }),
+                0xD2 => JP(gb, .{ .flagConditions = .nc }),
+                0xD3 => UNDEF(gb, .{ .none = {} }), // no op
+                0xD4 => CALLn16(gb, .{ .flagConditions = .nc }),
+                0xD5 => PUSH(gb, .{ .target = regID.d }),
+                0xD6 => SUBAn8(gb, .{ .none = {} }),
+                0xD7 => RST(gb, .{ .where = 0x10 }),
+                0xD8 => RET(gb, .{ .flagConditions = .c }),
+                0xD9 => RETI(gb, .{ .none = {} }),
+                0xDA => JP(gb, .{ .flagConditions = .c }),
+                0xDB => UNDEF(gb, .{ .none = {} }), // no op
+                0xDC => CALLn16(gb, .{ .flagConditions = .c }),
+                0xDD => UNDEF(gb, .{ .none = {} }), // no op
+                0xDE => SBCAn8(gb, .{ .none = {} }),
+                0xDF => RST(gb, .{ .where = 0x18 }),
                 0xE0 => LDHn16A(gb, .{ .none = {} }),
-                0xE1 => UNDEF(gb, .{ .none = {} }),
+                0xE1 => POP(gb, .{ .target = regID.h }),
                 0xE2 => LDHCA(gb, .{ .none = {} }),
-                0xE3 => UNDEF(gb, .{ .none = {} }),
-                0xE4 => UNDEF(gb, .{ .none = {} }),
-                0xE5 => UNDEF(gb, .{ .none = {} }),
+                0xE3 => UNDEF(gb, .{ .none = {} }), // no op
+                0xE4 => UNDEF(gb, .{ .none = {} }), // no op
+                0xE5 => PUSH(gb, .{ .target = regID.h }),
                 0xE6 => ANDn8(gb, .{ .none = {} }),
-                0xE7 => UNDEF(gb, .{ .none = {} }),
-                0xE8 => UNDEF(gb, .{ .none = {} }),
+                0xE7 => RST(gb, .{ .where = 0x20 }),
+                0xE8 => ADDSPn8(gb, .{ .none = {} }),
                 0xE9 => JPHL(gb, .{ .none = {} }),
                 0xEA => LDn16A(gb, .{ .none = {} }),
-                0xEB => UNDEF(gb, .{ .none = {} }),
-                0xEC => UNDEF(gb, .{ .none = {} }),
-                0xED => UNDEF(gb, .{ .none = {} }),
-                0xEE => UNDEF(gb, .{ .none = {} }),
-                0xEF => RST(gb, .{ .where = 0x18 }),
+                0xEB => UNDEF(gb, .{ .none = {} }), // no op
+                0xEC => UNDEF(gb, .{ .none = {} }), // no op
+                0xED => UNDEF(gb, .{ .none = {} }), // no op
+                0xEE => XORn8(gb, .{ .none = {} }),
+                0xEF => RST(gb, .{ .where = 0x28 }),
                 0xF0 => LDHAn16(gb, .{ .none = {} }),
-                0xF1 => UNDEF(gb, .{ .none = {} }),
+                0xF1 => POP(gb, .{ .target = regID.a }),
                 0xF2 => LDHAC(gb, .{ .none = {} }),
                 0xF3 => DI(gb, .{ .none = {} }),
-                0xF4 => UNDEF(gb, .{ .none = {} }),
-                0xF5 => UNDEF(gb, .{ .none = {} }),
+                0xF4 => UNDEF(gb, .{ .none = {} }), // no op
+                0xF5 => PUSH(gb, .{ .target = regID.a }),
                 0xF6 => ORn8(gb, .{ .none = {} }),
-                0xF7 => UNDEF(gb, .{ .none = {} }),
-                0xF8 => UNDEF(gb, .{ .none = {} }),
-                0xF9 => UNDEF(gb, .{ .none = {} }),
+                0xF7 => RST(gb, .{ .where = 0x30 }),
+                0xF8 => LDHLSPn8(gb, .{ .none = {} }),
+                0xF9 => LDSPHL(gb, .{ .none = {} }),
                 0xFA => LDAn16(gb, .{ .none = {} }),
                 0xFB => EI(gb, .{ .none = {} }),
-                0xFC => UNDEF(gb, .{ .none = {} }),
-                0xFD => UNDEF(gb, .{ .none = {} }),
+                0xFC => UNDEF(gb, .{ .none = {} }), // no op
+                0xFD => UNDEF(gb, .{ .none = {} }), // no op
                 0xFE => CPAn8(gb, .{ .none = {} }),
                 0xFF => RST(gb, .{ .where = 0x38 }),
             },
@@ -1216,6 +1559,7 @@ const CPU = struct {
     // cpu execution
     pub fn execute(self: *@This(), gb: *GB) !u8 {
         // const ei = self.executing_byte == 0xFB;
+
         self.executing_byte = gb.readByte(self.pc);
         var prefixed = false;
         if (self.executing_byte == 0xCB) { // prefix byte
@@ -1223,7 +1567,11 @@ const CPU = struct {
             self.pc += 1;
             self.executing_byte = gb.readByte(self.pc);
         }
-        else if (self.executing_byte == 0xFF) {
+        const cycles_spent = InstructionSet.exe_from_byte(gb, prefixed);
+        if (cycles_spent == 255) {
+            print("crashed @[pc]0x{X}\tbyte:(0x{X}), prefixed? {any}\n", .{ self.pc, self.executing_byte, prefixed});
+            return error.UNDEF_INSTRUCTION;
+        } else if (self.executing_byte == 0xFF) {
             print("tried to execute RST 38 @ 0x{X}... shouldn't happen,\ntraceback: \n", .{self.pc});
             for (self.log.log) |info| {
                 if (info != null) {
@@ -1231,11 +1579,6 @@ const CPU = struct {
                 }
             }
             return error.NO_RST;
-        }
-        const cycles_spent = InstructionSet.exe_from_byte(gb, prefixed);
-        if (cycles_spent == 255) {
-            print("crashed @[pc]0x{X}\tbyte:(0x{X}), prefixed? {any}\n", .{ self.pc, self.executing_byte, prefixed});
-            return error.UNDEF_INSTRUCTION;
         }
         // print("\n", .{});
         // if (ei == 0xFB) { // set IME flag after previous instruction
@@ -1260,31 +1603,29 @@ const CPU = struct {
     }
     pub fn get_word(self: *@This(), reg1: regID) u16 {
         return (@as(u16, self.registers[@intFromEnum(reg1)]) << 8) | self.registers[@intFromEnum(reg1) + 1];
-    }
-    
-    
+    } 
     // types & context
     const FlagRegister = struct {
         value: u8 = 0,
-        inline fn cFlag(self: *FlagRegister) bool {
+        pub inline fn cFlag(self: *FlagRegister) bool {
             return self.value & (1 << 4) != 0;
         }
-        inline fn zFlag(self: *FlagRegister) bool {
+        pub inline fn zFlag(self: *FlagRegister) bool {
             return self.value & (1 << 7) != 0;
         }
-        inline fn hFlag(self: *FlagRegister) bool {
+        pub inline fn hFlag(self: *FlagRegister) bool {
             return self.value & (1 << 5) != 0;
         }
-        inline fn sFlag(self: *FlagRegister) bool {
+        pub inline fn sFlag(self: *FlagRegister) bool {
             return self.value & (1 << 6) != 0;
         }
-        inline fn write(self: *FlagRegister, z: bool, c: bool, h: bool, s: bool) void {
-            self.value = (@as(u8, @intFromBool(z)) << 7) | // Z
-                (@as(u8, @intFromBool(s)) << 6) | // N always set
-                (@as(u8, @intFromBool(h)) << 5) |
-                (@as(u8, @intFromBool(c)) << 4);
+        pub inline fn write(self: *FlagRegister, z: bool, c: bool, h: bool, s: bool) void {
+            self.value = (@as(u8, @intFromBool(z)) << 7) |
+                        (@as(u8, @intFromBool(s)) << 6) | 
+                        (@as(u8, @intFromBool(h)) << 5) |
+                        (@as(u8, @intFromBool(c)) << 4);
         }
-        inline fn check(self: *FlagRegister, cond: InstructionSet.Condition) bool {
+        pub inline fn check(self: *FlagRegister, cond: InstructionSet.Condition) bool {
             return switch (cond) {
                 .z => self.zFlag(), // Z
                 .nz => !self.zFlag(),
@@ -1491,7 +1832,6 @@ const GPU = struct {
         const lo = @as(u1, @truncate(low >> shift));
         const color_code: u2 = (@as(u2, hi) << 1) | lo;
         const bgp = self.getSpecialRegister(.bgp); // get the right color pallete (dmg)
-        print("color_code: {d}\n", .{color_code});
         const pallete_color: u2 = @truncate(bgp >> @as(u3, @intCast(color_code)) * 2); // selecting color
         return @as(Color, @enumFromInt(pallete_color));
     }
@@ -1980,7 +2320,7 @@ pub const GB = struct {
     cycles_spent: usize = 0,
     clock: Clock = Clock{},
     last_frame: std.time.Instant = undefined,
-    const BUS_SIZE = 0xFFFF; 
+    const BUS_SIZE = 0xFFFF + 1; 
     // containers
     const interrupts = enum {};
     /// nintendo logo
@@ -1991,7 +2331,7 @@ pub const GB = struct {
         @memset(&self.memory, 0);
         // @memcpy(self.memory[0x104 .. 0x133 + 1], &LOGO);
         // self.init_header_checksum(); // from loaded cartridge
-        try self.load_game("roms/tetris.gb");
+        try self.load_game("roms/cpu_instrs.gb");
         try initRandom(); // init random before gpu init
         try self.gpu.init(self);
         self.timer.init(self);
@@ -2030,13 +2370,14 @@ pub const GB = struct {
         for (0..bootFileBuf.len) |i| {
             self.memory[i] = bootFileBuf[i];
         }
+
     }
     pub fn load_game(self: *@This(), game_path: []const u8) !void {
         const rom = try std.fs.cwd().openFile(game_path, .{});
         defer rom.close();
         const stats = try rom.stat();
         const buf: []u8 = try rom.readToEndAlloc(allocator, stats.size);
-        print("Reading bytes...\n", .{});
+        print("Reading {d} bytes...\n", .{buf.len});
         if (self.booted) {
             for (0x0..0x100) |i| { // replace the bootrom after completed
                 self.memory[i] = buf[i];
@@ -2058,7 +2399,7 @@ pub const GB = struct {
                     self.crashed = true;
                 };
             }
-            if (self.crashed) {
+            if (self.crashed) { // debug
                 self.gpu.randomStatic();
             }
             try self.getEvents(); // poll events once per frame
@@ -2074,7 +2415,8 @@ pub const GB = struct {
         self.gpu.tick(cycles_spent * 4);
         if (self.cpu.pc > 0xFF and !self.booted) {
             self.booted = true;
-            try self.load_game("roms/Tetris.gb");
+            try self.load_game("roms/tetris.gb");
+            // try self.load_game("roms/cpu_instrs.gb");
         }
     }
     // helper
@@ -2186,7 +2528,7 @@ pub fn main() !void {
         return;
     };
     defer {
-        print("exiting gameboy...\nlast instruction: 0x{X}\n", .{gb.cpu.executing_byte});
+        print("exiting gameboy...\nlast instruction: 0x{X} @ 0x{X}\n", .{gb.cpu.executing_byte, gb.cpu.pc});
         gb.endGB();
     }
     gb.go() catch |err| {
