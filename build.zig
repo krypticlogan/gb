@@ -1,8 +1,6 @@
 const std = @import("std");
-
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-
     // Standard optimization options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
@@ -18,29 +16,6 @@ pub fn build(b: *std.Build) void {
             .root_module = exe_mod,
             .use_llvm = true
     });
-    // const tracy_enable =
-    //     b.option(bool, "tracy_enable", "Enable profiling") orelse
-    //         if (optimize == .Debug) true else false;
-
-    // const tracy = b.dependency("tracy", .{
-    //     .target = target,
-    //     .optimize = optimize,
-    //     .tracy_enable = tracy_enable,
-    // });
-
-    // exe.root_module.addImport("tracy", tracy.module("tracy"));
-    // if (tracy_enable) {
-    //     exe.root_module.linkLibrary(tracy.artifact("tracy"));
-    //     exe.root_module.link_libcpp = true;
-    // }
-    // const sdl_dep = b.dependency("sdl", .{
-    // .target = target,
-    // .optimize = optimize,
-    // //.preferred_link_mode = .static, // or .dynamic
-    // });
-    // const sdl_lib = sdl_dep.artifact("SDL3");
-    // exe.root_module.linkLibrary(sdl_lib);
-
     // SDL_ttf Dependency
     const sdl_ttf_dep = b.dependency("sdl_ttf", .{
         .target = target,

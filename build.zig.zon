@@ -27,6 +27,10 @@
             .url = "git+https://github.com/krypticlogan/SDL_ttf.git#84e85c0fca4c033d04c3d4193f9fc8d6b6b2084f",
             .hash = "sdl_ttf-3.2.0-Uao3FWcLBwAKEXACC6cpXrf--wx3E3VF5XA0OXRlqzxk",
         },
+        // .ztracy = .{
+        //     .url = "git+https://github.com/zig-gamedev/ztracy.git#3cc6a4a1502fdea2e4d3869099e39d9c5e8b98a5",
+        //     .hash = "ztracy-0.14.0-dev-zHJSq8SJGADr475eGiGJzmX_-P5sDoU564IQSVfZxmYC",
+        // },
     },
     .paths = .{
         "build.zig",
