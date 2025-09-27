@@ -6,7 +6,7 @@ pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer {
         const mem_leaks = gpa.deinit();
-        print("Memory leaks: {any}", .{mem_leaks});
+        print("Memory leaks: {any}\n", .{mem_leaks});
     }
     const allocator = gpa.allocator();
 

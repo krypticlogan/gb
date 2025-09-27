@@ -1,18 +1,54 @@
 const InstrFn = fn (*CPU, InstrArgs) u8;
 pub const InstrArgs = union(enum) { none: void, target: regID, bit: u3, bit_target: struct { bit: u3, target: regID }, flagConditions: Condition, targets: struct { to: regID, from: regID }, hl_mod: i2, where: u16 };
 pub const Condition = union(enum) { none, z, c, nz, nc };
+fn INVALID(cpu: *CPU, _: InstrArgs) u8 {
+    // This instruction should never be called
+    _ = cpu;
+    return 0;
+}
 fn NOP(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("NOP", .{});
     cpu.pc += 1;
     return 1;
 }
-fn UNDEF(cpu: *CPU, _: InstrArgs) u8 {
-    cpu.pushToExecutionChain("UNDEFINED INSTRUCTION", .{});
-    return 255;
+fn STOP(cpu: *CPU, _: InstrArgs) u8 {
+    cpu.pushToExecutionChain("STOP", .{});
+    cpu.halted = true;
+    cpu.pc += 2;
+    return 0;
 }
-fn INVALID(cpu: *CPU, _: InstrArgs) u8 {
-    // This instruction should never be called
-    _ = cpu;
+fn HALT(cpu: *CPU, _: InstrArgs) u8 {
+    const debug = "HALT";
+    print(debug ++ "\n", .{});
+    cpu.pushToExecutionChain(debug, .{});
+    switch(cpu.halted) {
+        false => { // first entry
+            cpu.halted = true; 
+            return 1;
+        },
+        true => { // still halted, we have returned 
+            switch (cpu.bus.handler.ime) {
+                true => {
+                    if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
+                        // cpu.pc += 1;
+                        cpu.bus.handler.handle(cpu);
+                        cpu.halted = false;
+                    }
+                },
+                false => {
+                    if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
+                        cpu.halt_bug = true;
+                        cpu.halted = false;
+                        cpu.pc += 1;
+                    } else {
+                        cpu.halted = false;
+                        cpu.pc += 1;
+                    }
+                }
+            }
+        }   
+    }
+    return 1;
 }
 // LOAD
 // 8 bit
@@ -627,16 +663,18 @@ fn CPL(cpu: *CPU, _: InstrArgs) u8 { // sets the value in register A to its comp
     return 1;
 }
 fn EI(cpu: *CPU, _: InstrArgs) u8 {
-    // const zone = tracy.beginZone(@src(), .{ .name = "EI" });
-    // defer zone.end();
     cpu.pushToExecutionChain("EI", .{});
     print("EI!\n\n pc = 0x{X}\n", .{cpu.pc});
     cpu.pc += 1;
     return 1;
 }
 fn DI(cpu: *CPU, _: InstrArgs) u8 {
-    print("DI!\n\n", .{});
-    cpu.pushToExecutionChain("DI", .{});
+    // print("DI!\n\n", .{});
+    const prior = cpu.bus.handler.ime;
+    const debug = "DI | ime prior: {any}, ime post op: {any}";
+    print(debug ++ "\n", .{prior, cpu.bus.handler.ime});
+    cpu.bus.handler.ime = false;
+    cpu.pushToExecutionChain(debug, .{prior, cpu.bus.handler.ime});
     cpu.pc += 1;
     return 1;
 }
@@ -654,12 +692,12 @@ fn PUSH(cpu: *CPU, args: InstrArgs) u8 {
         low = @truncate(value);
         cpu.pushToExecutionChain("PUSH 0x{X} from {any}, hi 0x{X} lo 0x{X}", .{ value, args.target, high, low });
     }
-    pushStack(cpu, (@as(u16, high) << 8) | low);
+    cpu.push_stack((@as(u16, high) << 8) | low);
     cpu.pc += 1;
     return 4;
 }
 fn POP(cpu: *CPU, args: InstrArgs) u8 {
-    const popped = popStack(cpu);
+    const popped = cpu.pop_stack();
     const low = popped[0];
     const high = popped[1];
     // print("[pc]:0x{X}\t", .{cpu.pc});
@@ -994,7 +1032,7 @@ fn RES(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 0
 }
 fn RESHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to by hl to 0.
     const bit: u3 = args.bit_target.bit;
-    const hl = cpu.get_word(.hl);
+    const hl = cpu.get_word(.h);
     const byte = cpu.bus.readByte(hl);
     const res = byte & ~(@as(u8, 1) << bit); // target and everything but this bit
     cpu.bus.writeByte(hl, res);
@@ -1013,7 +1051,7 @@ fn SET(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 1. Bit 0
 }
 fn SETHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to by hl to 1.
     const bit: u3 = args.bit_target.bit;
-    const hl = cpu.get_word(.hl);
+    const hl = cpu.get_word(.h);
     const byte = cpu.bus.readByte(hl);
     const res = byte | (@as(u8, 1) << bit); // everything and this bit
     cpu.bus.writeByte(hl, res);
@@ -1082,7 +1120,7 @@ fn CALLn16(cpu: *CPU, args: InstrArgs) u8 { //
 // RESTART
 fn RST(cpu: *CPU, args: InstrArgs) u8 {
     const ret = cpu.pc + 1;
-    pushStack(cpu, ret);
+    cpu.push_stack(ret);
     cpu.pushToExecutionChain("RST | to 0x{X}, later RET to 0x{X}", .{ args.where, ret });
     cpu.pc = args.where;
     return 4;
@@ -1108,33 +1146,17 @@ fn RET(cpu: *CPU, args: InstrArgs) u8 {
         return 2; // 2 cycles when not taken
     }
 }
-fn RETI(cpu: *CPU, args: InstrArgs) u8 { // TODO set IME FLAG!!!!
-    const low = cpu.bus.readByte(cpu.sp);
-    cpu.sp += 1;
-    const high = cpu.bus.readByte(cpu.sp);
+fn RETI(cpu: *CPU, _: InstrArgs) u8 {
+    print("reti\n", .{});
+    const popped = cpu.pop_stack();
+    const low = popped[0];
+    const high = popped[1];
     const jumpto = @as(u16, high) << 8 | low;
-    cpu.pushToExecutionChain("RETI | {any} met, jumpto pc[{X:04}]", .{ args.flagConditions, jumpto });
+    cpu.pushToExecutionChain("RETI | jumpto pc[{X:04}]", .{ jumpto });
     cpu.sp += 1;
     cpu.pc = jumpto;
-    return switch (args.flagConditions) {
-        .none => 4,
-        else => 5, // 5 cycles if condition met
-    };
-}
-//helpers
-//
-inline fn pushStack(cpu: *CPU, val: u16) void {
-    cpu.sp = @subWithOverflow(cpu.sp, 1)[0];
-    cpu.bus.writeByte(cpu.sp, @truncate(val >> 8));
-    cpu.sp = @subWithOverflow(cpu.sp, 1)[0];
-    cpu.bus.writeByte(cpu.sp, @truncate(val));
-}
-inline fn popStack(cpu: *CPU) struct { u8, u8 } {
-    const low = cpu.bus.readByte(cpu.sp);
-    cpu.sp = @addWithOverflow(cpu.sp, 1)[0];
-    const high = cpu.bus.readByte(cpu.sp);
-    cpu.sp = @addWithOverflow(cpu.sp, 1)[0];
-    return .{ low, high };
+    cpu.bus.handler.ime = true;
+    return 4;
 }
 pub const DEBUG = true;
 pub inline fn fmtInsDebug(string: []const u8, args: anytype) []const u8 {
@@ -1162,7 +1184,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0x0D => DECr8(cpu, .{ .target = regID.c }),
             0x0E => LD8(cpu, .{ .target = regID.c }),
             0x0F => RRCA(cpu, .{ .none = {} }),
-            0x10 => UNDEF(cpu, .{ .none = {} }), // STOP
+            0x10 => STOP(cpu, .{ .none = {} }), // STOP
             0x11 => LD16(cpu, .{ .target = regID.d }),
             0x12 => LDr16A(cpu, .{ .target = regID.d }),
             0x13 => INCr16(cpu, .{ .target = regID.d }),
@@ -1264,7 +1286,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0x73 => LDHLr8(cpu, .{ .target = regID.e }),
             0x74 => LDHLr8(cpu, .{ .target = regID.h }),
             0x75 => LDHLr8(cpu, .{ .target = regID.l }),
-            0x76 => UNDEF(cpu, .{ .none = {} }), // HALT
+            0x76 => HALT(cpu, .{ .none = {} }), // HALT
             0x77 => LDHLr8(cpu, .{ .target = regID.a }),
             0x78 => LDr8(cpu, .{ .targets = .{ .to = .a, .from = .b } }),
             0x79 => LDr8(cpu, .{ .targets = .{ .to = .a, .from = .c } }),
@@ -1349,7 +1371,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xC8 => RET(cpu, .{ .flagConditions = .z }),
             0xC9 => RET(cpu, .{ .flagConditions = .none }),
             0xCA => JP(cpu, .{ .flagConditions = .z }),
-            0xCB => UNDEF(cpu, .{ .none = {} }), // cb prefix
+            0xCB => INVALID(cpu, .{ .none = {} }), // cb prefix
             0xCC => CALLn16(cpu, .{ .flagConditions = .z }),
             0xCD => CALLn16(cpu, .{ .flagConditions = .none }),
             0xCE => ADCAn8(cpu, .{ .none = {} }),
@@ -1357,7 +1379,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xD0 => RET(cpu, .{ .flagConditions = .nc }),
             0xD1 => POP(cpu, .{ .target = regID.d }),
             0xD2 => JP(cpu, .{ .flagConditions = .nc }),
-            0xD3 => UNDEF(cpu, .{ .none = {} }), // no op
+            0xD3 => INVALID(cpu, .{ .none = {} }), // undefined instruction
             0xD4 => CALLn16(cpu, .{ .flagConditions = .nc }),
             0xD5 => PUSH(cpu, .{ .target = regID.d }),
             0xD6 => SUBAn8(cpu, .{ .none = {} }),
@@ -1365,32 +1387,32 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xD8 => RET(cpu, .{ .flagConditions = .c }),
             0xD9 => RETI(cpu, .{ .none = {} }),
             0xDA => JP(cpu, .{ .flagConditions = .c }),
-            0xDB => UNDEF(cpu, .{ .none = {} }), // no op
+            0xDB => INVALID(cpu, .{ .none = {} }), // undefined instruction
             0xDC => CALLn16(cpu, .{ .flagConditions = .c }),
-            0xDD => UNDEF(cpu, .{ .none = {} }), // no op
+            0xDD => INVALID(cpu, .{ .none = {} }), // undefined instruction
             0xDE => SBCAn8(cpu, .{ .none = {} }),
             0xDF => RST(cpu, .{ .where = 0x18 }),
             0xE0 => LDHn16A(cpu, .{ .none = {} }),
             0xE1 => POP(cpu, .{ .target = regID.h }),
             0xE2 => LDHCA(cpu, .{ .none = {} }),
-            0xE3 => UNDEF(cpu, .{ .none = {} }), // no op
-            0xE4 => UNDEF(cpu, .{ .none = {} }), // no op
+            0xE3 => INVALID(cpu, .{ .none = {} }), // undefined instruction
+            0xE4 => INVALID(cpu, .{ .none = {} }), // undefined instruction
             0xE5 => PUSH(cpu, .{ .target = regID.h }),
             0xE6 => ANDn8(cpu, .{ .none = {} }),
             0xE7 => RST(cpu, .{ .where = 0x20 }),
             0xE8 => ADDSPn8(cpu, .{ .none = {} }),
             0xE9 => JPHL(cpu, .{ .none = {} }),
             0xEA => LDn16A(cpu, .{ .none = {} }),
-            0xEB => UNDEF(cpu, .{ .none = {} }), // no op
-            0xEC => UNDEF(cpu, .{ .none = {} }), // no op
-            0xED => UNDEF(cpu, .{ .none = {} }), // no op
+            0xEB => INVALID(cpu, .{ .none = {} }), // undefined instruction
+            0xEC => INVALID(cpu, .{ .none = {} }), // undefined instruction
+            0xED => INVALID(cpu, .{ .none = {} }), // undefined instruction
             0xEE => XORn8(cpu, .{ .none = {} }),
             0xEF => RST(cpu, .{ .where = 0x28 }),
             0xF0 => LDHAn16(cpu, .{ .none = {} }),
             0xF1 => POP(cpu, .{ .target = regID.a }),
             0xF2 => LDHAC(cpu, .{ .none = {} }),
             0xF3 => DI(cpu, .{ .none = {} }),
-            0xF4 => UNDEF(cpu, .{ .none = {} }), // no op
+            0xF4 => INVALID(cpu, .{ .none = {} }), // undefined instruction
             0xF5 => PUSH(cpu, .{ .target = regID.a }),
             0xF6 => ORn8(cpu, .{ .none = {} }),
             0xF7 => RST(cpu, .{ .where = 0x30 }),
@@ -1398,8 +1420,8 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xF9 => LDSPHL(cpu, .{ .none = {} }),
             0xFA => LDAn16(cpu, .{ .none = {} }),
             0xFB => EI(cpu, .{ .none = {} }),
-            0xFC => UNDEF(cpu, .{ .none = {} }), // no op
-            0xFD => UNDEF(cpu, .{ .none = {} }), // no op
+            0xFC => INVALID(cpu, .{ .none = {} }), // undefined instruction
+            0xFD => INVALID(cpu, .{ .none = {} }), // undefined instruction
             0xFE => CPAn8(cpu, .{ .none = {} }),
             0xFF => RST(cpu, .{ .where = 0x38 }),
         },
@@ -1538,7 +1560,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0x83 => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 0 } }),
             0x84 => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 0 } }),
             0x85 => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 0 } }),
-            0x86 => RES(cpu, .{ .bit = 0 }),
+            0x86 => RESHL(cpu, .{ .bit = 0 }),
             0x87 => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 0 } }),
             0x88 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 1 } }),
             0x89 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 1 } }),
@@ -1546,7 +1568,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0x8B => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 1 } }),
             0x8C => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 1 } }),
             0x8D => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 1 } }),
-            0x8E => RES(cpu, .{ .bit = 1 }),
+            0x8E => RESHL(cpu, .{ .bit = 1 }),
             0x8F => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 1 } }),
             0x90 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 2 } }),
             0x91 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 2 } }),
@@ -1554,7 +1576,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0x93 => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 2 } }),
             0x94 => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 2 } }),
             0x95 => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 2 } }),
-            0x96 => RES(cpu, .{ .bit = 2 }),
+            0x96 => RESHL(cpu, .{ .bit = 2 }),
             0x97 => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 2 } }),
             0x98 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 3 } }),
             0x99 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 3 } }),
@@ -1562,7 +1584,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0x9B => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 3 } }),
             0x9C => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 3 } }),
             0x9D => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 3 } }),
-            0x9E => RES(cpu, .{ .bit = 3 }),
+            0x9E => RESHL(cpu, .{ .bit = 3 }),
             0x9F => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 3 } }),
             0xA0 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 4 } }),
             0xA1 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 4 } }),
@@ -1570,7 +1592,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xA3 => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 4 } }),
             0xA4 => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 4 } }),
             0xA5 => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 4 } }),
-            0xA6 => RES(cpu, .{ .bit = 4 }),
+            0xA6 => RESHL(cpu, .{ .bit = 4 }),
             0xA7 => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 4 } }),
             0xA8 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 5 } }),
             0xA9 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 5 } }),
@@ -1578,7 +1600,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xAB => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 5 } }),
             0xAC => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 5 } }),
             0xAD => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 5 } }),
-            0xAE => RES(cpu, .{ .bit = 5 }),
+            0xAE => RESHL(cpu, .{ .bit = 5 }),
             0xAF => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 5 } }),
             0xB0 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 6 } }),
             0xB1 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 6 } }),
@@ -1586,7 +1608,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xB3 => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 6 } }),
             0xB4 => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 6 } }),
             0xB5 => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 6 } }),
-            0xB6 => RES(cpu, .{ .bit = 6 }),
+            0xB6 => RESHL(cpu, .{ .bit = 6 }),
             0xB7 => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 6 } }),
             0xB8 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 7 } }),
             0xB9 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 7 } }),
@@ -1594,9 +1616,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xBB => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 7 } }),
             0xBC => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 7 } }),
             0xBD => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 7 } }),
-            0xBE => RES(cpu, .{
-                .bit = 7,
-            }),
+            0xBE => RESHL(cpu, .{.bit = 7,}),
             0xBF => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 7 } }),
             0xC0 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 0 } }),
             0xC1 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 0 } }),
@@ -1604,7 +1624,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xC3 => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 0 } }),
             0xC4 => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 0 } }),
             0xC5 => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 0 } }),
-            0xC6 => SET(cpu, .{ .bit = 0 }),
+            0xC6 => SETHL(cpu, .{ .bit = 0 }),
             0xC7 => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 0 } }),
             0xC8 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 1 } }),
             0xC9 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 1 } }),
@@ -1612,7 +1632,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xCB => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 1 } }),
             0xCC => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 1 } }),
             0xCD => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 1 } }),
-            0xCE => SET(cpu, .{ .bit = 1 }),
+            0xCE => SETHL(cpu, .{ .bit = 1 }),
             0xCF => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 1 } }),
             0xD0 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 2 } }),
             0xD1 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 2 } }),
@@ -1620,7 +1640,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xD3 => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 2 } }),
             0xD4 => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 2 } }),
             0xD5 => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 2 } }),
-            0xD6 => SET(cpu, .{ .bit = 2 }),
+            0xD6 => SETHL(cpu, .{ .bit = 2 }),
             0xD7 => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 2 } }),
             0xD8 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 3 } }),
             0xD9 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 3 } }),
@@ -1628,7 +1648,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xDB => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 3 } }),
             0xDC => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 3 } }),
             0xDD => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 3 } }),
-            0xDE => SET(cpu, .{ .bit = 3 }),
+            0xDE => SETHL(cpu, .{ .bit = 3 }),
             0xDF => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 3 } }),
             0xE0 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 4 } }),
             0xE1 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 4 } }),
@@ -1636,7 +1656,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xE3 => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 4 } }),
             0xE4 => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 4 } }),
             0xE5 => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 4 } }),
-            0xE6 => SET(cpu, .{ .bit = 4 }),
+            0xE6 => SETHL(cpu, .{ .bit = 4 }),
             0xE7 => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 4 } }),
             0xE8 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 5 } }),
             0xE9 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 5 } }),
@@ -1644,7 +1664,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xEB => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 5 } }),
             0xEC => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 5 } }),
             0xED => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 5 } }),
-            0xEE => SET(cpu, .{ .bit = 5 }),
+            0xEE => SETHL(cpu, .{ .bit = 5 }),
             0xEF => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 5 } }),
             0xF0 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 6 } }),
             0xF1 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 6 } }),
@@ -1652,7 +1672,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xF3 => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 6 } }),
             0xF4 => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 6 } }),
             0xF5 => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 6 } }),
-            0xF6 => SET(cpu, .{ .bit = 6 }),
+            0xF6 => SETHL(cpu, .{ .bit = 6 }),
             0xF7 => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 6 } }),
             0xF8 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 7 } }),
             0xF9 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 7 } }),
@@ -1660,7 +1680,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0xFB => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 7 } }),
             0xFC => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 7 } }),
             0xFD => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 7 } }),
-            0xFE => SET(cpu, .{ .bit = 7 }),
+            0xFE => SETHL(cpu, .{ .bit = 7 }),
             0xFF => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 7 } }),
         },
     };

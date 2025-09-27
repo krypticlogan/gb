@@ -3,6 +3,7 @@
 pub const GPU = struct {
     vram: *[VRAM_SIZE]u8 = undefined,
     oam: *[OAM_SIZE]u8 = undefined,
+    bus: *Bus = undefined,
     // Stores sprite attributes (position, tile index, attributes).
     // Cannot be accessed during scanline rendering. -- writeOAM & read
     // Control rendering behavior.
@@ -33,6 +34,7 @@ pub const GPU = struct {
     pub fn init(self: *@This(), gb: *GB) !void {
         self.vram = gb.bus.memory[VRAM_BEGIN .. VRAM_END + 1];
         self.oam = gb.bus.memory[OAM_BEGIN .. OAM_END + 1];
+        self.bus = &gb.bus;
         self.special_registers = gb.bus.memory[LCD.special_registers.start .. LCD.special_registers.end + 1];
         self.mode = .SCAN;
         self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
@@ -105,7 +107,7 @@ pub const GPU = struct {
                 var x = self.scanline_progress;
                 while (x < self.scanline.len and cycles_to_spend > 0) {
                     const bg_y: u16 = (@as(u16, ly) + scy) & 0xFF; // wraps at 256
-                    const bg_x: u16 = @intCast((x + scx) & 0xFF);
+                    const bg_x: u16 = (@as(u16, x) + scx) & 0xFF;
 
                     const tile_y: u16 = bg_y / 8;
                     const tile_x: u16 = bg_x / 8;
@@ -163,7 +165,8 @@ pub const GPU = struct {
                 // Increment LY register
                 self.setSpecialRegister(.ly, ly + 1);
                 if (ly + 1 == 144) {
-                    // tracy.frameMark();
+                    // send vblank interrupt
+                    self.bus.handler.set(.flag, .vblank);
                     self.mode = .VBLANK;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)]; // per scanline
                 } else {
@@ -254,9 +257,9 @@ pub const GPU = struct {
     // context & types
     const Mode = enum { // modes specifying number of cycles per scanline
         HBLANK,
-    VBLANK,
-    SCAN,
-    RENDER,
+        VBLANK,
+        SCAN,
+        RENDER,
     const cycles: [4]u16 = .{ 204, 456, 80, 172 };
     };
     const Color = enum(u2) { black, dgray, lgray, white };
@@ -366,7 +369,7 @@ pub const LCD = struct {
             return error.TTF_Init;
         }
 
-        const font_path = try std.fs.path.join(self.allocator, &.{ self.root_path, "fonts", "Minecraft.ttf" });
+        const font_path = try std.fs.path.join(self.allocator, &.{ self.root_path, "assets", "fonts", "Minecraft.ttf" });
         defer self.allocator.free(font_path);
 
         const font = g.TTF_OpenFont(font_path.ptr, 18);
@@ -505,6 +508,7 @@ pub const LCD = struct {
 };
 const GB = @import("gb.zig");
 const Clock = GB.Clock;
+const Bus = GB.Bus;
 const std = @import("std");
 const print = std.debug.print;
 pub const g = @cImport({

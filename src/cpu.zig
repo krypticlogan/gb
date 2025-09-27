@@ -1,27 +1,27 @@
 /// Defines a GameBoy CPU: i8080 & Z80 hybrid chip
 const mode = enum { DMG, CGB };
-bus: *Bus = undefined,
-registers: [7]u8 = undefined,
+bus: *Bus = undefined, // memory
+registers: [7]u8 = undefined, // registers vv
 f: FlagRegister = FlagRegister{},
-pc: u16 = undefined,
-sp: u16 = undefined,
-ime: bool = false,
-halted: bool = false,
-handler: InterruptHandler = InterruptHandler{},
+pc: u16 = undefined, // program counter
+sp: u16 = undefined, // stack pointer
+halted: bool = false, // stops all execution when true
+halt_bug: bool = false,
 executing_byte: u8 = 0x0,
 log: Log = Log{},
 // TODO instruction cache?
-pub fn init(self: *@This(), gb: *GB) !void { // TODO MOVE THE BUS INTO HERE
+pub fn init(self: *@This(), gb: *GB) !void {
     @memset(&self.registers, 0);
     self.pc = 0;
     self.sp = 0;
     self.bus = &gb.bus;
-    self.handler.init(self.bus.memory[0xFFFF..0xFFFF+1], self.bus.memory[0xFF0F..0xFF0F+1]);
 }
 // cpu execution
 pub fn execute(self: *@This()) !u8 {
     const set_ime = self.executing_byte == 0xFB; // set the ime flag after this instruction
-    self.executing_byte = self.bus.readByte(self.pc);
+    if (!self.halt_bug) {
+        self.executing_byte = self.bus.readByte(self.pc);
+    }
 
     var prefixed = false;
     if (self.executing_byte == 0xCB) { // prefix byte
@@ -30,22 +30,12 @@ pub fn execute(self: *@This()) !u8 {
         self.executing_byte = self.bus.readByte(self.pc);
     }
     const cycles_spent = InstructionSet.exe_from_byte(self, prefixed);
-    if (set_ime) { // set ime flag if needed
-        self.ime = true;
-    }
+    self.bus.handler.ime = set_ime;
 
-    if (cycles_spent == 255) {
-        print("crashed @[pc]0x{X}\tbyte:(0x{X}), prefixed? {any}\n", .{ self.pc, self.executing_byte, prefixed });
-        return error.UNDEF_INSTRUCTION;
-    } else if (self.executing_byte == 0xFF) {
-        print("tried to execute RST 38 @ 0x{X}... shouldn't happen,\ntraceback: \n", .{self.pc});
-        self.log.dump();
-        // return error.NO_RST;
-    }
     return cycles_spent;
 }
 
-pub inline fn pushToExecutionChain(self: *@This(), debug: []const u8, args: anytype) void {
+pub inline fn pushToExecutionChain(self: *@This(), comptime debug: []const u8, args: anytype) void {
     if (InstructionSet.DEBUG) {
         const fmt = InstructionSet.fmtInsDebug(debug, args);
         self.log.write(.{ fmt, self.pc, self.executing_byte });
@@ -65,11 +55,18 @@ pub fn set_word(self: *@This(), reg1: regID, value: u16) void {
 pub fn get_word(self: *@This(), reg1: regID) u16 {
     return (@as(u16, self.registers[@intFromEnum(reg1)]) << 8) | self.registers[@intFromEnum(reg1) + 1];
 }
-pub fn read_imm_16(self: *@This()) u16 {
-    return @as(u16, self.bus.memory[self.pc + 2]) << 8 | self.bus[self.pc + 1];
+pub inline fn push_stack(cpu: *CPU, val: u16) void {
+    cpu.sp = @subWithOverflow(cpu.sp, 1)[0];
+    cpu.bus.writeByte(cpu.sp, @truncate(val >> 8));
+    cpu.sp = @subWithOverflow(cpu.sp, 1)[0];
+    cpu.bus.writeByte(cpu.sp, @truncate(val));
 }
-pub fn read_imm_8(self: *@This()) u16 {
-    return self.bus.memory[self.pc + 1];
+pub inline fn pop_stack(cpu: *CPU) struct { u8, u8 } {
+    const low = cpu.bus.readByte(cpu.sp);
+    cpu.sp = @addWithOverflow(cpu.sp, 1)[0];
+    const high = cpu.bus.readByte(cpu.sp);
+    cpu.sp = @addWithOverflow(cpu.sp, 1)[0];
+    return .{ low, high };
 }
 /// Dumps all register values, previous instruction and program counter to the command line
 pub fn state_dump(self: *@This()) void {
@@ -77,9 +74,7 @@ pub fn state_dump(self: *@This()) void {
     for (register_labels, self.registers) |label, register| {
         print("REGISTER {s}: {s}", .{ label, register });
     }
-
     // print("Register values: a, b, c, d, e, h, l", .{});
-
 }
 // types & context
 pub const regID = enum(u3) {
@@ -119,14 +114,6 @@ const FlagRegister = struct {
             .nc => !self.cFlag(),
             .none => true,
         };
-    }
-};
-const InterruptHandler = struct {
-    iE: []u8 = undefined,
-    iF: []u8 = undefined,
-    fn init(self: *InterruptHandler, ie_ptr: []u8, if_ptr: []u8) void {
-        self.iE = ie_ptr;
-        self.iF = if_ptr;
     }
 };
 pub const Log = struct {
@@ -174,5 +161,6 @@ pub const WRAM_END = 0xDFFF;
 const std = @import("std");
 const GB = @import("gb.zig");
 const Bus = GB.Bus;
+const CPU = @This();
 const InstructionSet = GB.InstructionSet;
 const print = std.debug.print;

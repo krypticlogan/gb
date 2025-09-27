@@ -1,10 +1,12 @@
 /// Gameboy Machine, defer endGB
-const GB = *@This();
+const GB = @This();
 cpu: CPU = CPU{},
 gpu: GPU = GPU{},
 apu: APU = APU{},
 timer: Timer = Timer{},
 bus: Bus = Bus{},
+mbc: ?MBC = null,
+rom: []u8 = undefined,
 rom_file_path: []const u8 = undefined,
 running: bool = undefined,
 booted: bool = false,
@@ -21,8 +23,9 @@ const interrupts = enum {};
 const LOGO: [48]u8 = .{ 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E };
 // startup
 pub var prng: std.Random.Xoshiro256 = undefined;
-pub fn init(self: *@This()) !void {
+pub fn init(self: *GB) !void {
     self.bus.init(self);
+    // @memset(self.rom, 0);
     try initRandom(); // init random before gpu init
     try self.gpu.init(self);
     self.timer.init(self);
@@ -31,10 +34,10 @@ pub fn init(self: *@This()) !void {
     self.cpu.pc -= 1;
     self.running = true;
 }
-pub fn load_game(self: *@This()) !void {
+pub fn load_game(self: *GB) !void {
     var args = try std.process.argsWithAllocator(self.allocator);
     defer args.deinit();
-    _ = args.next();
+    _ = args.next(); // skip past the first arg
     const rom_file = try std.mem.concat(self.allocator, u8, &[_][]const u8{args.next() orelse "cpu_instrs", ".gb" });
     const rom_file_path = try std.fs.path.join(self.allocator, &.{self.root_path, "roms", rom_file});
     defer {
@@ -43,10 +46,12 @@ pub fn load_game(self: *@This()) !void {
     }
     const rom = try std.fs.openFileAbsolute(rom_file_path, .{});
     defer rom.close();
+
     const stats = try rom.stat();
     const buf: []u8 = try rom.readToEndAlloc(self.allocator, stats.size);
     defer self.allocator.free(buf);
     print("Reading {d} bytes...\n", .{buf.len});
+    // load rom
     if (self.booted) {
         for (0x0..0x100) |i| { // replace the bootrom after completed
             self.bus.memory[i] = buf[i];
@@ -57,8 +62,8 @@ pub fn load_game(self: *@This()) !void {
         }
     }
 }
-/// Loads gameboy bootrom and the rom to be used
-pub fn boot(self: *@This()) !void {
+/// Loads GameBoy bootrom and the rom to be used
+pub fn boot(self: *GB) !void {
     const bootFilePath = try std.fs.path.join(self.allocator, &.{self.root_path, "roms", "dmg_boot.bin"});
     defer self.allocator.free(bootFilePath);
     const bootFile = try std.fs.openFileAbsolute(bootFilePath, .{});
@@ -72,20 +77,19 @@ pub fn boot(self: *@This()) !void {
     try self.load_game();
 }
 // gb execution
-pub fn go(self: *@This()) !void {
+pub fn go(self: *GB) !void {
     print("GO!\n", .{});
     try self.clock.Start();
     while (self.running) {
         self.clock.last_frame_time = Clock.Now();
-        if (!self.cpu.halted) {
-            while (self.gpu.frame_cycles_spent < Clock.cycles_per_frame and !self.crashed) {
-                self.do() catch {
-                    self.crashed = true;
-                };
-            }
-            if (self.crashed) { // debug
-                self.gpu.randomStatic();
-            }
+        while (self.gpu.frame_cycles_spent < Clock.cycles_per_frame and !self.crashed) {
+            self.do() catch {
+                self.crashed = true;
+            };
+        }
+        // debug
+        if (self.crashed) {
+            self.gpu.randomStatic();
         }
         try self.getEvents(); // poll events once per frame
         self.clock.tick();
@@ -94,10 +98,11 @@ pub fn go(self: *@This()) !void {
         self.gpu.frame_cycles_spent = 0;
     }
 }
-fn do(self: *@This()) !void {
+fn do(self: *GB) !void {
     const cycles_spent = try self.cpu.execute();
     self.cycles_spent += cycles_spent;
-    self.gpu.tick(cycles_spent * 4);
+    const gpu_cycles: u8 = @max(1, cycles_spent);
+    self.gpu.tick(gpu_cycles * 4);
     if (self.cpu.pc > 0xFF and !self.booted) {
         self.booted = true;
         try self.load_game();
@@ -111,7 +116,7 @@ fn initRandom() !void {
 }
 // universal callers
 
-pub fn getEvents(self: *@This()) !void {
+pub fn getEvents(self: *GB) !void {
     var event: g.SDL_Event = undefined;
     while (g.SDL_PollEvent(&event)) {
         switch (event.type) {
@@ -128,7 +133,7 @@ pub fn getEvents(self: *@This()) !void {
     }
 }
 // memspace dumps
-pub fn mem_dump(self: *@This(), start: u16, end: u16) void {
+pub fn mem_dump(self: *GB, start: u16, end: u16) void {
     print("printing bytes:\n", .{});
     for (self.memory[start..end], start..end) |value, i| {
         if (i != 0 and i % 16 == 0) print("\n", .{});
@@ -136,7 +141,7 @@ pub fn mem_dump(self: *@This(), start: u16, end: u16) void {
     }
     print("\n", .{});
 }
-pub fn gfx_dump(self: *@This()) void {
+pub fn gfx_dump(self: *GB) void {
     print("Actual memspace dump: \n", .{});
     for (self.memory[0x8000 .. 0x97FF + 1], 0..(0x97FF - 0x8000 + 1)) |value, i| {
         print("0x{x}", .{value});
@@ -144,7 +149,7 @@ pub fn gfx_dump(self: *@This()) void {
     }
     print("\n", .{});
 }
-pub fn reg_dump(self: *@This()) void {
+pub fn reg_dump(self: *GB) void {
     print("Actual memspace dump:\n", .{});
     for (self.memory[LCD.special_registers.start .. LCD.special_registers.end + 1], LCD.special_registers.start..LCD.special_registers.end + 1) |value, i| {
         print("register@0x{x}: 0x{x}\n", .{ i, value });
@@ -154,7 +159,7 @@ pub fn reg_dump(self: *@This()) void {
     // println("register@0x{x}: 0x{x} ", .{i, value});
     print("\n", .{});
 }
-pub fn endGB(self: *@This()) void {
+pub fn endGB(self: *GB) void {
     self.gpu.lcd.endSDL();
 }
 
@@ -166,15 +171,17 @@ pub const Bus = struct {
     gpu: *GPU = undefined,
     apu: *APU = undefined,
     timer: *Timer = undefined,
+    handler: InterruptHandler = InterruptHandler{},
 
-    pub fn init(self: *@This(), gb: GB) void {
+    pub fn init(self: *@This(), gb: *GB) void {
         @memset(&self.memory, 0);
+        self.handler.init(self);
         self.cpu = &gb.cpu;
         self.gpu = &gb.gpu;
         self.apu = &gb.apu;
         self.timer = &gb.timer;
     }
-    pub fn readByte(self: *@This(), address: u16) u8 {
+    pub fn readByte(self: *Bus, address: u16) u8 {
         @setRuntimeSafety(false);
         // if (address >= 0xFF00) return self.memory[address];
         if (address >= Timer.START and address <= Timer.END) {
@@ -194,7 +201,7 @@ pub const Bus = struct {
         }
         return self.memory[address];
     }
-    pub fn writeByte(self: *@This(), address: u16, value: u8) void {
+    pub fn writeByte(self: *Bus, address: u16, value: u8) void {
         @setRuntimeSafety(false);
         if (address < 0x8000) return; // no writes to ROM
         if (address >= Timer.START and address <= Timer.END) {
@@ -212,6 +219,72 @@ pub const Bus = struct {
             self.gpu.writeVram(address, value);
         } else self.memory[address] = value;
     }
+    /// Handles/Services interrupts sent to the gameboy from various devices
+    const InterruptHandler = struct {
+    const InterruptBit = enum(u3) {
+        vblank,
+        lcd,
+        timer,
+        serial,
+        joypad,
+        _
+    };
+    const Interrupt = struct {
+        bit: InterruptBit,
+        source: u16
+    };
+    const Interrupts = [_]Interrupt{ 
+        .{.bit = .vblank, .source = 40}, // highest priority
+        .{.bit = .lcd, .source = 48},
+        .{.bit = .timer, .source =50},
+        .{.bit = .serial, .source = 58},
+        .{.bit = .joypad, .source = 60} // least priority
+     };
+    iE: *u8 = undefined, // interrupt enable
+    iF: *u8 = undefined, // interrupt flag
+    ime: bool = false, // interrupt master enable
+    fn init(self: *InterruptHandler, bus: *Bus) void {
+        self.iE = &bus.memory[0xFFFF];
+        self.iF = &bus.memory[0xFF0F];
+    }
+    fn check(self: *InterruptHandler, target: enum {enable, flag}, bit: InterruptBit) bool {
+        return switch (target) {
+            .enable => @as(u1, @truncate(self.iE.* >> @intFromEnum(bit))) != 0,
+            .flag => @as(u1, @truncate(self.iF.* >> @intFromEnum(bit))) != 0
+        };
+    }
+    pub fn set(self: *InterruptHandler, target: enum {enable, flag}, bit: InterruptBit) void {
+        const mask = @as(u8, 1) << @intFromEnum(bit);
+        switch (target) {
+            .enable => self.iE.* |= mask,
+            .flag => self.iF.* |= mask
+        }
+    }
+    pub fn clear(self: *InterruptHandler, target: enum {enable, flag}, bit: InterruptBit) void {
+        const mask: u8 = ~(@as(u8, 1) << @intFromEnum(bit));
+        switch (target) {
+            .enable => self.iE.* &= mask,
+            .flag => self.iF.* &= mask
+        }
+    }
+    pub fn handle(self: *InterruptHandler, cpu: *CPU) void {
+        // which interrupt do we need to handle (highest priority first)
+        for (Interrupts) |interrupt| {
+            if (self.check(.enable, interrupt.bit) and self.check(.flag, interrupt.bit)) {
+                self.ime = false;
+                self.clear(.flag, interrupt.bit);
+                cpu.push_stack(cpu.pc);
+                cpu.pc = interrupt.source;
+                break;
+            }
+        } // 5 M cycles
+    }
+};
+};
+
+/// Joypad logic
+pub const InputHandler = struct {
+
 };
 
 pub const Clock = struct {
@@ -268,6 +341,7 @@ pub const Clock = struct {
 };
 const Timer = struct {
     registers: *[4]u8 = undefined,
+    bus: *Bus = undefined,
     counter: u16 = 0,
     prev_enabled: bool = false,
     cycles_since_overflow: ?u8 = null,
@@ -284,8 +358,9 @@ const Timer = struct {
         // 0b10 : CPU Clock / 64
         // 0b11 : CPU Clock / 256
     };
-    fn init(self: *Timer, gb: GB) void {
+    fn init(self: *Timer, gb: *GB) void {
         self.registers = gb.bus.memory[START .. END + 1];
+        self.bus = &gb.bus;
     }
     fn tick(self: *Timer, cycles: u8) void {
         const timer_enable: u1 = @truncate(self.registers[@intFromEnum(.tac)] >> 2 & 1);
@@ -299,10 +374,11 @@ const Timer = struct {
         const cycles_ticked = 0;
         while (cycles_ticked < cycles) : (cycles_ticked += 1) {
             self.counter += 1;
-            if (self.cycles_since_overflow) |*cycles_since| {
+            if (self.cycles_since_overflow) |cycles_since| {
                 cycles_since += 1;
                 if (cycles_since == 4) {
-                    // TODO timer interrupt
+                    // timer interrupt
+                    self.bus.handler.set(.flag, .timer);
                     self.registers[@intFromEnum(.tima)];
                 }
             }
@@ -318,19 +394,24 @@ const Timer = struct {
         }
     }
     fn read(self: *Timer, address: u16) u8 {
-        const fixed_address = address - 0xFF04;
-        return if (@as(timer_reg, @enumFromInt(fixed_address)) == .div)
-            @truncate(self.counter >> 8)
-        else
-            self.registers[fixed_address];
+        const fixed_address: u3 = @intCast(address - START);
+        return switch (@as(timer_reg, @enumFromInt(fixed_address))) {
+            .div => @truncate(self.counter >> 8),
+            else => self.registers[fixed_address]
+        };
     }
     fn write(self: *Timer, address: u16, value: u8) void {
-        const fixed_address: u3 = @intCast(address - 0xFF04);
+        const fixed_address: u3 = @intCast(address - START);
         // print("timer reg len: {d}, index: {d}", .{self.registers.len, fixed_address});
-        if (@as(timer_reg, @enumFromInt(fixed_address)) == .div) { // writing here resets the counter to 0
-            self.counter = 0;
-        } else self.registers[fixed_address] = value;
+        switch (@as(timer_reg, @enumFromInt(fixed_address))) { // writing here resets the counter to 0
+            .div => self.counter = 0,
+            else => self.registers[fixed_address] = value
+        }
     }
+};
+/// Memory Bank Controller
+const MBC = struct {
+
 };
 pub const InstructionSet = @import("instruction_set.zig");
 pub const CPU = @import("cpu.zig");
