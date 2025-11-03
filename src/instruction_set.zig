@@ -428,12 +428,12 @@ pub fn ADCAr8(cpu: *CPU, args: InstrArgs) u8 { // add a to a register, plus the 
     const value = cpu.get_byte(args.target);
     cpu.pushToExecutionChain("ADCAr8 | target: {any}, value: {d}", .{ args.target, value });
     const a = cpu.get_byte(regID.a);
-    const half_add: u8 = @addWithOverflow(a, value)[0];
+    const half_add = @addWithOverflow(a, value);
     const carry = @intFromBool(cpu.f.cFlag());
-    const res: struct { u8, u1 } = @addWithOverflow(carry, half_add);
+    const res: struct { u8, u1 } = @addWithOverflow(half_add[0], carry);
     const s = false;
-    const c = res[1] == 1;
-    const h = detectHalfCarry(half_add, @as(u8, @intCast(carry)), .add);
+    const c = res[1] == 1 or half_add[1] == 1;
+    const h = detectHalfCarry(a, value, .add) or detectHalfCarry(half_add[0], @as(u8, @intCast(carry)), .add);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
@@ -461,11 +461,11 @@ pub fn ADCAHL(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("ADCAHL | mem@hl: {d}", .{value});
     const a = cpu.get_byte(regID.a);
     const carry = @intFromBool(cpu.f.cFlag());
-    const half_add = @addWithOverflow(a, value)[0];
-    const res: struct { u8, u1 } = @addWithOverflow(carry, half_add);
+    const half_add = @addWithOverflow(a, value);
+    const res: struct { u8, u1 } = @addWithOverflow(carry, half_add[0]);
     const s = false;
-    const c = res[1] == 1;
-    const h = detectHalfCarry(half_add, @as(u8, @intCast(carry)), .add);
+    const c = res[1] == 1 or half_add[1] == 1;
+    const h = detectHalfCarry(a, value, .add) or detectHalfCarry(half_add[0], @as(u8, @intCast(carry)), .add);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
@@ -520,11 +520,11 @@ pub fn SBCAr8(cpu: *CPU, args: InstrArgs) u8 {
     cpu.pushToExecutionChain("SBCAr8 | target: {any}, value: {d}", .{ args.target, value });
     const a = cpu.get_byte(regID.a);
     const carry = @intFromBool(cpu.f.cFlag());
-    const half_sub = @subWithOverflow(a, value)[0];
-    const res: struct { u8, u1 } = @subWithOverflow(carry, half_sub);
+    const half_sub = @subWithOverflow(a, value);
+    const res: struct { u8, u1 } = @subWithOverflow(half_sub[0], carry);
     const s = true;
-    const c = res[1] == 1;
-    const h = detectHalfCarry(half_sub, @as(u8, @intCast(carry)), .sub);
+    const c = res[1] == 1 or half_sub[1] == 1;
+    const h = detectHalfCarry(a, value, .sub) or detectHalfCarry(half_sub[0], @as(u8, @intCast(carry)), .sub);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
@@ -552,11 +552,11 @@ pub fn SBCAHL(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("SBCAHL | mem@hl: {d}", .{value});
     const a = cpu.get_byte(regID.a);
     const carry = @intFromBool(cpu.f.cFlag());
-    const half_sub = @subWithOverflow(a, value)[0];
-    const res: struct { u8, u1 } = @subWithOverflow(carry, half_sub);
+    const half_sub = @subWithOverflow(a, value);
+    const res: struct { u8, u1 } = @subWithOverflow(half_sub[0], carry);
     const s = true;
-    const c = res[1] == 1;
-    const h = detectHalfCarry(half_sub, @as(u8, @intCast(carry)), .sub);
+    const c = res[1] == 1 or half_sub[1] == 1;
+    const h = detectHalfCarry(a, value, .sub) or detectHalfCarry(half_sub[0], @as(u8, @intCast(carry)), .sub);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
@@ -637,9 +637,9 @@ pub fn INCHL(cpu: *CPU, _: InstrArgs) u8 { // increment the value of the byte po
     const res = @addWithOverflow(value, 1)[0];
     cpu.bus.writeByte(mem_place, res);
     cpu.pushToExecutionChain("INCHL | mem@hl: 0x{X} + 1 = 0x{X}", .{ value, res });
-    const h = detectHalfCarry(value, 1, .sub);
+    const h = detectHalfCarry(value, 1, .add);
     const z = res == 0;
-    const s = true;
+    const s = false;
     const c = cpu.f.cFlag();
     cpu.f.write(z, c, h, s);
     cpu.pc += 1;
@@ -874,14 +874,15 @@ pub fn RLCr8(cpu: *CPU, args: InstrArgs) u8 { //Rotate register left. C <- [7 <-
     cpu.pushToExecutionChain("RLCr8 | regID.a << 1", .{});
     const reg = cpu.get_byte(args.target);
     const rotated = reg << 1;
+    const res = rotated | (reg >> 7);
     // const msb = reg >> 7;
     // print("RLC msb: {d}, rotated: 0b{b}\n", .{msb, rotated});
     const c = (reg >> 7) == 1;
-    const z = rotated == 0;
+    const z = res == 0;
     const h = false;
     const s = false;
     cpu.f.write(z, c, h, s);
-    cpu.set_byte(args.target, rotated | (reg >> 7));
+    cpu.set_byte(args.target, res);
     cpu.pc += 1;
     return 2;
 }
@@ -890,12 +891,13 @@ pub fn RLCHL(cpu: *CPU, _: InstrArgs) u8 { //Rotate byte pointed to by hl left. 
     const mem_address = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_address);
     const rotated = (byte << 1) | (byte >> 7);
+    const res = rotated | (byte >> 7);
     const c = (byte >> 7) == 1;
     const z = rotated == 0;
     const h = false;
     const s = false;
     cpu.f.write(z, c, h, s);
-    cpu.bus.writeByte(mem_address, rotated);
+    cpu.bus.writeByte(mem_address, res);
     cpu.pc += 1;
     return 4;
 }
@@ -932,12 +934,13 @@ pub fn RRCr8(cpu: *CPU, args: InstrArgs) u8 { //Rotate register right. 0 -> [7 -
     cpu.pushToExecutionChain("RRCr8 | target {any} << 1", .{args.target});
     const reg = cpu.get_byte(args.target);
     const rotated = reg >> 1;
+    const res = rotated | ((reg & 1) << 7);
     const c = (reg & 1) == 1;
-    const z = rotated == 0;
+    const z = res == 0;
     const h = false;
     const s = false;
     cpu.f.write(z, c, h, s);
-    cpu.set_byte(args.target, rotated | ((reg & 1) << 7));
+    cpu.set_byte(args.target, res);
     cpu.pc += 1;
     return 2;
 }
@@ -946,12 +949,13 @@ pub fn RRCHL(cpu: *CPU, _: InstrArgs) u8 { //Rotate byte pointed to by hl right.
     const mem_address = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_address);
     const rotated = byte >> 1;
+    const res = rotated | (byte & 1) << 7;
     const c = (byte & 1) == 1;
-    const z = rotated == 0;
+    const z = res == 0;
     const h = false;
     const s = false;
     cpu.f.write(z, c, h, s);
-    cpu.bus.writeByte(mem_address, rotated | (byte & 1) << 7);
+    cpu.bus.writeByte(mem_address, res);
     cpu.pc += 1;
     return 4;
 }
@@ -1052,6 +1056,11 @@ pub fn SWAPr8(cpu: *CPU, args: InstrArgs) u8 { // Swap the upper 4 bits in regis
     const high: u4 = @truncate(reg >> 4);
     const low: u4 = @truncate(reg);
     cpu.set_byte(args.target, (@as(u8, low) << 4) | high);
+    const z = reg == 0;
+    const c = false;
+    const s = false;
+    const h = false;
+    cpu.f.write(z, c, h, s);
     cpu.pc += 1;
     return 2;
 }
@@ -1061,6 +1070,11 @@ pub fn SWAPHL(cpu: *CPU, _: InstrArgs) u8 { // Swap the upper 4 bits in register
     const high: u4 = @truncate(byte >> 4);
     const low: u4 = @truncate(byte);
     cpu.bus.writeByte(mem_address, (@as(u8, low) << 4) | high);
+    const z = byte == 0;
+    const c = false;
+    const s = false;
+    const h = false;
+    cpu.f.write(z, c, h, s);
     cpu.pc += 1;
     return 4;
 }
@@ -1077,7 +1091,7 @@ pub fn BITTESTr8(cpu: *CPU, args: InstrArgs) u8 {
     return 2;
 }
 pub fn BITTESTHL(cpu: *CPU, args: InstrArgs) u8 {
-    const bit: u3 = args.bit_target.bit;
+    const bit: u3 = args.bit;
     const hl = cpu.get_word(.h);
     const byte = cpu.bus.readByte(hl);
     const z = @as(u1, @truncate(byte >> bit)) == 0;
@@ -1097,7 +1111,7 @@ pub fn RES(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 0
     return 2;
 }
 pub fn RESHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to by hl to 0.
-    const bit: u3 = args.bit_target.bit;
+    const bit: u3 = args.bit;
     const hl = cpu.get_word(.h);
     const byte = cpu.bus.readByte(hl);
     const res = byte & ~(@as(u8, 1) << bit); // target and everything but this bit
@@ -1116,7 +1130,7 @@ pub fn SET(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 1. B
     return 2;
 }
 pub fn SETHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to by hl to 1.
-    const bit: u3 = args.bit_target.bit;
+    const bit: u3 = args.bit;
     const hl = cpu.get_word(.h);
     const byte = cpu.bus.readByte(hl);
     const res = byte | (@as(u8, 1) << bit); // everything and this bit
@@ -1219,7 +1233,6 @@ pub fn RETI(cpu: *CPU, _: InstrArgs) u8 {
     const high = popped[1];
     const jumpto = @as(u16, high) << 8 | low;
     cpu.pushToExecutionChain("RETI | jumpto pc[{X:04}]", .{ jumpto });
-    cpu.sp += 1;
     cpu.pc = jumpto;
     cpu.bus.handler.ime = true;
     return 4;
@@ -1539,7 +1552,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0x2C => SRAr8(cpu, .{ .target = regID.h }),
             0x2D => SRAr8(cpu, .{ .target = regID.l }),
             0x2E => SRAHL(cpu, .{ .none = {} }),
-            0x2F => SWAPr8(cpu, .{ .target = regID.a }),
+            0x2F => SRAr8(cpu, .{ .target = regID.a }),
             0x30 => SWAPr8(cpu, .{ .target = regID.b }),
             0x31 => SWAPr8(cpu, .{ .target = regID.c }),
             0x32 => SWAPr8(cpu, .{ .target = regID.d }),
@@ -1766,7 +1779,7 @@ fn detectHalfCarry(target: anytype, b: anytype, sign: union(enum(u1)){add, sub})
                 .sub => @subWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1
             };
             if (lower_byte_carried) {
-                print("Lower byte carried\n", .{});
+                // print("Lower byte carried\n", .{});
                 if (target_high_byte.?&0xF == 0xF) {
                     print("detected 0xF after carry\n", .{});
                     return true;

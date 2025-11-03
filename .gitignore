@@ -1,5 +1,4 @@
 .zig-cache
 .vscode
+.idea
 roms
-gameboy-doctor/gb.log
-gameboy-doctor
