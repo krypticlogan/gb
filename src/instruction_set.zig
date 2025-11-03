@@ -1,23 +1,23 @@
 const InstrFn = fn (*CPU, InstrArgs) u8;
 pub const InstrArgs = union(enum) { none: void, target: regID, bit: u3, bit_target: struct { bit: u3, target: regID }, flagConditions: Condition, targets: struct { to: regID, from: regID }, hl_mod: i2, where: u16 };
 pub const Condition = union(enum) { none, z, c, nz, nc };
-fn INVALID(cpu: *CPU, _: InstrArgs) u8 {
+pub fn INVALID(cpu: *CPU, _: InstrArgs) u8 {
     // This instruction should never be called
     _ = cpu;
     return 0;
 }
-fn NOP(cpu: *CPU, _: InstrArgs) u8 {
+pub fn NOP(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("NOP", .{});
     cpu.pc += 1;
     return 1;
 }
-fn STOP(cpu: *CPU, _: InstrArgs) u8 {
+pub fn STOP(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("STOP", .{});
     cpu.halted = true;
     cpu.pc += 2;
     return 0;
 }
-fn HALT(cpu: *CPU, _: InstrArgs) u8 {
+pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
     const debug = "HALT";
     print(debug ++ "\n", .{});
     cpu.pushToExecutionChain(debug, .{});
@@ -53,28 +53,34 @@ fn HALT(cpu: *CPU, _: InstrArgs) u8 {
 // LOAD
 // 8 bit
 //
-fn LD8(cpu: *CPU, args: InstrArgs) u8 { // LD r8, n8
+pub fn LD8(cpu: *CPU, args: InstrArgs) u8 { // LD r8, n8
     const n: u8 = cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("LD r8, n8 | {any} <-- 0x{X}", .{ @as(regID, args.target), n });
     cpu.set_byte(args.target, n);
+    // if (args.target == .a and n == 0x1b) cpu.break_exe();
     cpu.pc += 2;
     return 2;
 }
-fn LDr8(cpu: *CPU, args: InstrArgs) u8 { // LD r8, r8
+pub fn LDr8(cpu: *CPU, args: InstrArgs) u8 { // LD r8, r8
     cpu.pushToExecutionChain("LDr8 | {any} --> {any}", .{ args.targets.from, args.targets.to });
     cpu.set_byte(args.targets.to, cpu.get_byte(args.targets.from));
     cpu.pc += 1;
     return 1;
 }
-fn LDr8HL(cpu: *CPU, args: InstrArgs) u8 { // LD r8, [HL] TODO: trying to encode ld [hl], [hl] instead yields the halt instruction:
-    const hl = cpu.get_word(regID.h);
-    const value = cpu.bus.readByte(hl);
+pub fn LDr8HL(cpu: *CPU, args: InstrArgs) u8 { // LD r8, [HL] TODO: trying to encode ld [hl], [hl] instead yields the halt instruction:
+    // const hl = cpu.get_word(regID.h);
+    const value = cpu.bus.readByte(cpu.get_word(regID.h));
+    if (args.target == .l and value == 0x1B) {
+        print("HERE\n\n\t\tLD r8, [HL] | {any} <-- 0x{X} @(0x{X}) pc[{X}]\n", .{args.target, value, cpu.get_word(regID.h), cpu.pc});
+        // cpu.break_exe();
+    }
+
     cpu.pushToExecutionChain("LD r8, [HL] | {any} <-- 0x{X}", .{args.target, value});
     cpu.set_byte(args.target, value);
     cpu.pc += 1;
     return 2;
 }
-fn LDHLIA(cpu: *CPU, _: InstrArgs) u8 { // LD [HLI],A
+pub fn LDHLIA(cpu: *CPU, _: InstrArgs) u8 { // LD [HLI],A
     const hl = cpu.get_word(regID.h);
     const value = cpu.get_byte(regID.a);
     cpu.pushToExecutionChain("LD [HL+], A |  mem@0x{X} <-- 0x{X}", .{ hl, value });
@@ -83,7 +89,7 @@ fn LDHLIA(cpu: *CPU, _: InstrArgs) u8 { // LD [HLI],A
     cpu.pc += 1;
     return 2;
 }
-fn LDHLDA(cpu: *CPU, _: InstrArgs) u8 { // LD [HLD], A
+pub fn LDHLDA(cpu: *CPU, _: InstrArgs) u8 { // LD [HLD], A
     const hl = cpu.get_word(regID.h);
     const value = cpu.get_byte(regID.a);
     cpu.pushToExecutionChain("LD [HL-], A |  mem@0x{X} <-- 0x{X}", .{ hl, value });
@@ -92,7 +98,7 @@ fn LDHLDA(cpu: *CPU, _: InstrArgs) u8 { // LD [HLD], A
     cpu.pc += 1;
     return 2;
 }
-fn LDHCA(cpu: *CPU, _: InstrArgs) u8 {
+pub fn LDHCA(cpu: *CPU, _: InstrArgs) u8 {
     const c = cpu.get_byte(regID.c);
     const a = cpu.get_byte(regID.a);
     const mem_place = 0xFF00 + @as(u16, c);
@@ -101,7 +107,7 @@ fn LDHCA(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pc += 1;
     return 2;
 }
-fn LDHAC(cpu: *CPU, _: InstrArgs) u8 { // Load value in register A from the byte at address $FF00+c
+pub fn LDHAC(cpu: *CPU, _: InstrArgs) u8 { // Load value in register A from the byte at address $FF00+c
     const c = cpu.get_byte(regID.c);
     const byte = cpu.bus.readByte(0xFF00 + @as(u16, c));
     cpu.pushToExecutionChain("LDH A, [C] | A <-- 0x{X}", .{byte});
@@ -111,23 +117,26 @@ fn LDHAC(cpu: *CPU, _: InstrArgs) u8 { // Load value in register A from the byte
 }
 // 16 bit
 //
-fn LD16(cpu: *CPU, args: InstrArgs) u8 { // LD r16, n16
+pub fn LD16(cpu: *CPU, args: InstrArgs) u8 { // LD r16, n16
     const n: u16 = @as(u16, cpu.bus.readByte(cpu.pc + 2)) << 8 | cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("LDr16, n16 | {any} <-- Ox{X}", .{ args.target, n });
     cpu.set_word(args.target, n);
     cpu.pc += 3;
     return 3;
 }
-fn LDAHL(cpu: *CPU, args: InstrArgs) u8 { // LD A, HL
+pub fn LDAHL(cpu: *CPU, args: InstrArgs) u8 { // LD A, HL
     const mem_place = cpu.get_word(regID.h);
-    const value = cpu.get_byte(regID.a);
+    const value = cpu.bus.readByte(mem_place);
     cpu.pushToExecutionChain("LD A, [HL], mem@hl:0x{X} --> to A", .{mem_place});
-    cpu.bus.writeByte(mem_place, value);
-    if (args.hl_mod != 0) cpu.set_word(.h, @intCast(@addWithOverflow(args.hl_mod, @as(i17, mem_place))[0]));
+    cpu.set_byte(.a, value);
+    cpu.set_word(.h, @intCast(@addWithOverflow(@as(i17, args.hl_mod), @as(i17, mem_place))[0]));
+    if (!(cpu.get_word(.h) == mem_place + 1 or cpu.get_word(.h) == mem_place - 1)) {
+        @panic("we didnt change h");
+    }
     cpu.pc += 1;
     return 2;
 }
-fn LDSP16(cpu: *CPU, _: InstrArgs) u8 { // LD SP, n16
+pub fn LDSP16(cpu: *CPU, _: InstrArgs) u8 { // LD SP, n16
     const n: u16 = @as(u16, cpu.bus.readByte(cpu.pc + 2)) << 8 | cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("LDSP16 | n (0x{X})", .{n});
     cpu.sp = n;
@@ -135,23 +144,27 @@ fn LDSP16(cpu: *CPU, _: InstrArgs) u8 { // LD SP, n16
     cpu.pc += 3;
     return 3;
 }
-fn LDSPHL(cpu: *CPU, _: InstrArgs) u8 { // LD SP,HL
+pub fn LDSPHL(cpu: *CPU, _: InstrArgs) u8 { // LD SP,HL
     cpu.pushToExecutionChain("LDSPHL", .{});
     cpu.sp = cpu.get_word(.h);
     // print("after op: sp: {d}\n", .{cpu.sp});
     cpu.pc += 1;
     return 2;
 }
-fn LDHLSPn8(cpu: *CPU, _: InstrArgs) u8 { // LD HL,SP+e8
+pub fn LDHLSPn8(cpu: *CPU, _: InstrArgs) u8 { // LD HL,SP+e8
     const n: i8 = @bitCast(cpu.bus.readByte(cpu.pc + 1));
     cpu.pushToExecutionChain("LDHLSPn8 | n (0x{X})", .{n});
     // cpu.pushToExecutionChain(", .{ cpu.pc + 1, cpu.bus.readByte(cpu.pc + 1) });
-    cpu.set_word(.h, @intCast(@addWithOverflow(@as(i17, cpu.sp), n)[0]));
+    cpu.set_word(.h, mixedSignArithmetic(cpu.sp, n, i17)[0]);
     // print("after op: sp: {d}\n", .{cpu.sp});
+    const c = @addWithOverflow(@as(u8, @truncate(cpu.sp)), @as(u8, @bitCast(n)))[1] == 1;
+    const h = detectHalfCarry(@as(u8, @truncate(cpu.sp)), @as(u8, @bitCast(n)), .add);
+    cpu.f.write(false, c, h, false);
+    //
     cpu.pc += 2;
     return 3;
 }
-fn LDn16SP(cpu: *CPU, _: InstrArgs) u8 { // Store SP & $FF at address n16 and SP >> 8 at address n16 + 1.
+pub fn LDn16SP(cpu: *CPU, _: InstrArgs) u8 { // Store SP & $FF at address n16 and SP >> 8 at address n16 + 1.
     const high: u8 = @truncate(cpu.sp >> 8);
     const low: u8 = @truncate(cpu.sp);
     const mem_place: u16 = @as(u16, cpu.bus.readByte(cpu.pc + 2)) << 8 | cpu.bus.readByte(cpu.pc + 1);
@@ -161,7 +174,7 @@ fn LDn16SP(cpu: *CPU, _: InstrArgs) u8 { // Store SP & $FF at address n16 and SP
     cpu.pushToExecutionChain("LDn16SP | SP:0x{X} --> mem@0x{X}{X}", .{ cpu.sp, high, low });
     return 5;
 }
-fn LDAn16(cpu: *CPU, _: InstrArgs) u8 {
+pub fn LDAn16(cpu: *CPU, _: InstrArgs) u8 {
     const memory_place = @as(u16, cpu.bus.readByte(cpu.pc + 2)) << 8 | cpu.bus.readByte(cpu.pc + 1);
     const n = cpu.bus.readByte(memory_place);
     cpu.pushToExecutionChain("LDAn16 | n: Ox{X} --> A", .{n});
@@ -169,7 +182,7 @@ fn LDAn16(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pc += 3;
     return 4;
 }
-fn LDHAn16(cpu: *CPU, _: InstrArgs) u8 { // same as above, provided the address is between $FF00 and $FFFF.
+pub fn LDHAn16(cpu: *CPU, _: InstrArgs) u8 { // same as above, provided the address is between $FF00 and $FFFF.
     // const zone = tracy.beginZone(@src(), .{ .name = "LDHAn16" });
     // defer zone.end();
     const memory_place = 0xFF00 + @as(u16, cpu.bus.readByte(cpu.pc + 1));
@@ -179,17 +192,17 @@ fn LDHAn16(cpu: *CPU, _: InstrArgs) u8 { // same as above, provided the address 
     cpu.pc += 2;
     return 3;
 }
-fn LDn16A(cpu: *CPU, _: InstrArgs) u8 { // Store value in register A into the byte at address n16.
+pub fn LDn16A(cpu: *CPU, _: InstrArgs) u8 { // Store value in register A into the byte at address n16.
     // const zone = tracy.beginZone(@src(), .{ .name = "LDn16A" });
     // defer zone.end();
-    const memory_place = @as(u16, cpu.bus.readByte(cpu.pc + 2)) << 8 | cpu.bus.readByte(cpu.pc + 1);
+    const memory_place = (@as(u16, cpu.bus.readByte(cpu.pc + 2)) << 8) | cpu.bus.readByte(cpu.pc + 1);
     const n = cpu.get_byte(regID.a);
     cpu.bus.writeByte(memory_place, n);
     cpu.pushToExecutionChain("LDn16A | n: Ox{X} --> memplace@{X}", .{ n, memory_place });
     cpu.pc += 3;
     return 4;
 }
-fn LDHn16A(cpu: *CPU, _: InstrArgs) u8 { // same as above, provided the address is between $FF00 and $FFFF.
+pub fn LDHn16A(cpu: *CPU, _: InstrArgs) u8 { // same as above, provided the address is between $FF00 and $FFFF.
     // const zone = tracy.beginZone(@src(), .{ .name = "LDHn16A" });
     // defer zone.end();
     const memory_place = 0xFF00 + @as(u16, cpu.bus.readByte(cpu.pc + 1));
@@ -199,7 +212,7 @@ fn LDHn16A(cpu: *CPU, _: InstrArgs) u8 { // same as above, provided the address 
     cpu.pc += 2;
     return 3;
 }
-fn LDAr16(cpu: *CPU, args: InstrArgs) u8 { // Load value in register A from the byte pointed to by register r16.
+pub fn LDAr16(cpu: *CPU, args: InstrArgs) u8 { // Load value in register A from the byte pointed to by register r16.
     // const zone = tracy.beginZone(@src(), .{ .name = "LDAr16" });
     // defer zone.end();
     const memory_place = cpu.get_word(args.target);
@@ -209,7 +222,7 @@ fn LDAr16(cpu: *CPU, args: InstrArgs) u8 { // Load value in register A from the 
     cpu.pc += 1;
     return 2;
 }
-fn LDr16A(cpu: *CPU, args: InstrArgs) u8 { //  Store value in register A into the byte pointed to by register r16.
+pub fn LDr16A(cpu: *CPU, args: InstrArgs) u8 { //  Store value in register A into the byte pointed to by register r16.
     // const zone = tracy.beginZone(@src(), .{ .name = "LDr16A" });
     // defer zone.end();
     const memory_place = cpu.get_word(args.target);
@@ -219,7 +232,7 @@ fn LDr16A(cpu: *CPU, args: InstrArgs) u8 { //  Store value in register A into th
     cpu.pc += 1;
     return 2;
 }
-fn LDHL8(cpu: *CPU, _: InstrArgs) u8 { // LD[HL], n8
+pub fn LDHL8(cpu: *CPU, _: InstrArgs) u8 { // LD[HL], n8
     const hl = cpu.get_word(regID.h);
     const value = cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("LDHL8 | hl:0x{X}, value:0x{x}, mem@hl: 0x{x}", .{ hl, value, cpu.bus.readByte(hl) });
@@ -227,10 +240,10 @@ fn LDHL8(cpu: *CPU, _: InstrArgs) u8 { // LD[HL], n8
     cpu.pc += 2;
     return 3;
 }
-fn LDHLr8(cpu: *CPU, args: InstrArgs) u8 { // LD[HL],r8
+pub fn LDHLr8(cpu: *CPU, args: InstrArgs) u8 { // LD[HL],r8
     const hl = cpu.get_word(regID.h);
     const value = cpu.get_byte(args.target);
-    cpu.pushToExecutionChain("LDHLR | mem@0x{X}: 0x{X} --> 0x{X}", .{ hl, cpu.bus.readByte(hl), value });
+    cpu.pushToExecutionChain("LDHLR | mem@0x{X} 0:x{X} --> 0x{X}", .{ hl, cpu.bus.readByte(hl), value });
     cpu.bus.writeByte(hl, value);
     cpu.pc += 1;
     return 2;
@@ -238,11 +251,12 @@ fn LDHLr8(cpu: *CPU, args: InstrArgs) u8 { // LD[HL],r8
 // ALU & ARITHMETIC
 // 8 bit
 //
-fn INCr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn INCr8(cpu: *CPU, args: InstrArgs) u8 {
     const value = cpu.get_byte(args.target);
     cpu.pushToExecutionChain("INCr8 | target: {any}", .{args.target});
-    cpu.set_byte(args.target, @addWithOverflow(value, 1)[0]);
-    const h = (value & 0xF + 1) & 0x10 == 0x10; // half carry conditions
+    const res = @addWithOverflow(value, 1);
+    cpu.set_byte(args.target, res[0]);
+    const h = detectHalfCarry(value, 1, .add); // half carry conditions
     const z = cpu.get_byte(args.target) == 0;
     const s = false;
     const c = cpu.f.cFlag();
@@ -250,12 +264,12 @@ fn INCr8(cpu: *CPU, args: InstrArgs) u8 {
     cpu.pc += 1;
     return 1;
 }
-fn DECr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn DECr8(cpu: *CPU, args: InstrArgs) u8 {
     const value = cpu.get_byte(args.target);
     cpu.pushToExecutionChain("DECr8 | target: {any}", .{args.target});
     const res = @subWithOverflow(value, 1)[0];
     cpu.set_byte(args.target, res);
-    const h = (value & 0xF) == 0x00; // half carry conditions
+    const h = detectHalfCarry(value, 1, .sub);
     const z = res == 0;
     const s = true;
     const c = cpu.f.cFlag();
@@ -263,98 +277,107 @@ fn DECr8(cpu: *CPU, args: InstrArgs) u8 {
     cpu.pc += 1;
     return 1;
 }
-fn ORr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn ORr8(cpu: *CPU, args: InstrArgs) u8 {
     cpu.pushToExecutionChain("ORr8 | target {any}", .{args.target});
     const a = cpu.get_byte(.a);
-    cpu.set_byte(.a, a | cpu.get_byte(args.target));
-    cpu.f.write(a == 0, false, false, false);
+    const res = a | cpu.get_byte(args.target);
+    cpu.set_byte(.a, res);
+    cpu.f.write(res == 0, false, false, false);
     cpu.pc += 1;
     return 1;
 }
-fn ORn8(cpu: *CPU, _: InstrArgs) u8 {
+pub fn ORn8(cpu: *CPU, _: InstrArgs) u8 {
     // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
     // defer zone.end();
-    const n = cpu.bus.readByte(cpu.pc);
+    const n = cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("ORn8 | n: {any}", .{n});
     const a = cpu.get_byte(.a);
-    cpu.set_byte(.a, a | n);
-    cpu.f.write(a == 0, false, true, false);
+    const res = a | n;
+    cpu.set_byte(.a, res);
+    cpu.f.write(res == 0, false, false, false);
     cpu.pc += 2;
     return 2;
 }
-fn ORHL(cpu: *CPU, _: InstrArgs) u8 {
+pub fn ORHL(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("ORHL", .{});
     const a = cpu.get_byte(.a);
     const value = cpu.bus.readByte(cpu.get_word(.h));
-    cpu.set_byte(.a, a | value);
-    cpu.f.write(a == 0, false, false, false);
+    const res = a | value;
+    cpu.set_byte(.a, res);
+    cpu.f.write(res == 0, false, false, false);
     cpu.pc += 1;
     return 2;
 }
-fn XORr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn XORr8(cpu: *CPU, args: InstrArgs) u8 {
     // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
     // defer zone.end();
     cpu.pushToExecutionChain("XORr8 | target {any}", .{args.target});
     const a = cpu.get_byte(.a);
-    cpu.set_byte(.a, a ^ cpu.get_byte(args.target));
-    cpu.f.write(a == 0, false, false, false);
+    const res = a ^ cpu.get_byte(args.target);
+    cpu.set_byte(.a, res);
+    cpu.f.write(res == 0, false, false, false);
     cpu.pc += 1;
     return 1;
 }
-fn XORn8(cpu: *CPU, _: InstrArgs) u8 {
+pub fn XORn8(cpu: *CPU, _: InstrArgs) u8 {
     // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
     // defer zone.end();
     const value = cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("XORn8", .{});
     const a = cpu.get_byte(.a);
-    cpu.set_byte(.a, a ^ value);
-    cpu.f.write(a == 0, false, false, false);
+    const res = a ^ value;
+    cpu.set_byte(.a, res);
+    cpu.f.write(res == 0, false, false, false);
     cpu.pc += 2;
     return 2;
 }
-fn XORHL(cpu: *CPU, _: InstrArgs) u8 {
+pub fn XORHL(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("XORHL", .{});
     const a = cpu.get_byte(.a);
     const value = cpu.bus.readByte(cpu.get_word(.h));
-    cpu.set_byte(.a, a ^ value);
-    cpu.f.write(a == 0, false, false, false);
+    const res = a ^ value;
+    cpu.set_byte(.a, res);
+    cpu.f.write(res == 0, false, false, false);
     cpu.pc += 1;
     return 2;
 }
-fn ANDn8(cpu: *CPU, _: InstrArgs) u8 {
+pub fn ANDn8(cpu: *CPU, _: InstrArgs) u8 {
     // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
     // defer zone.end();
-    const n = cpu.bus.readByte(cpu.pc);
+    const n = cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("ANDn8 | n: {any}", .{n});
     const a = cpu.get_byte(.a);
-    cpu.set_byte(.a, a & n);
-    cpu.f.write(a == 0, false, true, false);
+    const res = a & n;
+    cpu.set_byte(.a, res);
+    cpu.f.write(res == 0, false, true, false);
     cpu.pc += 2;
     return 2;
 }
-fn ANDHL(cpu: *CPU, _: InstrArgs) u8 {
+pub fn ANDHL(cpu: *CPU, _: InstrArgs) u8 {
     // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
     // defer zone.end();
     const reg = cpu.bus.readByte(cpu.get_word(.h));
     cpu.pushToExecutionChain("ANDr8 | A & HL", .{});
     const a = cpu.get_byte(.a);
-    cpu.set_byte(.a, a & reg);
-    cpu.f.write(a == 0, false, true, false);
+    const res = a & reg;
+    cpu.set_byte(.a, res);
+    cpu.f.write(res == 0, false, true, false);
     cpu.pc += 1;
     return 2;
 }
-fn ANDr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn ANDr8(cpu: *CPU, args: InstrArgs) u8 {
     // const zone = tracy.beginZone(@src(), .{ .name = "XORA" });
     // defer zone.end();
     const reg = cpu.get_byte(args.target);
     cpu.pushToExecutionChain("ANDr8 | A & {any}", .{args.target});
     const a = cpu.get_byte(.a);
-    cpu.set_byte(.a, a & reg);
-    cpu.f.write(a == 0, false, true, false);
+    const res = a & reg;
+    cpu.set_byte(.a, res);
+    cpu.f.write(res == 0, false, true, false);
     cpu.pc += 1;
     return 1;
 }
-fn ADDAr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn ADDAr8(cpu: *CPU, args: InstrArgs) u8 {
     // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
     // defer zone.end();
     const value = cpu.get_byte(args.target);
@@ -363,14 +386,14 @@ fn ADDAr8(cpu: *CPU, args: InstrArgs) u8 {
     const res: struct { u8, u1 } = @addWithOverflow(a, value);
     const s = false;
     const c = res[1] == 1;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(a, value, .add);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 1;
     return 1;
 }
-fn ADDAn8(cpu: *CPU, _: InstrArgs) u8 { //
+pub fn ADDAn8(cpu: *CPU, _: InstrArgs) u8 { //
     // const zone = tracy.beginZone(@src(), .{ .name = "ADDAr8" });
     // defer zone.end();
     const value = cpu.bus.readByte(cpu.pc + 1);
@@ -379,98 +402,105 @@ fn ADDAn8(cpu: *CPU, _: InstrArgs) u8 { //
     const res: struct { u8, u1 } = @addWithOverflow(a, value);
     const s = false;
     const c = res[1] == 1;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(a, value, .add);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 2;
     return 2;
 }
-fn ADDSPn8(cpu: *CPU, _: InstrArgs) u8 {
+pub fn ADDSPn8(cpu: *CPU, _: InstrArgs) u8 {
     const value: i8 = @bitCast(cpu.bus.readByte(cpu.pc + 1));
-    cpu.pushToExecutionChain("ADDAn8 | SP + 0x{X}", .{value});
-    const res: struct { i17, u1 } = @addWithOverflow(@as(i17, cpu.sp), value);
-    const val: u8 = @intCast(res[0]);
+    const debug = "ADDSPn8 | SP 0x{X} + 0x{X}";
+    cpu.pushToExecutionChain(debug, .{cpu.sp, value});
+    print(debug ++ "\n", .{cpu.sp, value});
+    const res = mixedSignArithmetic(cpu.sp, value, i17);
     const s = false;
-    const c = res[1] == 1;
-    const h = (val & 0xF) & 0x10 == 0x10; // half carry conditions
+    const c = @addWithOverflow(@as(u8, @truncate(cpu.sp)), @as(u8, @bitCast(value)))[1] == 1;
+    const h = detectHalfCarry(@as(u8, @truncate(cpu.sp)), @as(u8, @bitCast(value)), .add);
     const z = false;
     cpu.f.write(z, c, h, s);
-    cpu.sp = val;
+    cpu.sp = res[0];
     cpu.pc += 2;
     return 4;
 }
-fn ADCAr8(cpu: *CPU, args: InstrArgs) u8 { // add a to a register, plus the carry
+pub fn ADCAr8(cpu: *CPU, args: InstrArgs) u8 { // add a to a register, plus the carry
     const value = cpu.get_byte(args.target);
     cpu.pushToExecutionChain("ADCAr8 | target: {any}, value: {d}", .{ args.target, value });
     const a = cpu.get_byte(regID.a);
-    const res: struct { u8, u1 } = @addWithOverflow(@intFromBool(cpu.f.cFlag()), @addWithOverflow(a, value)[0]);
+    const half_add: u8 = @addWithOverflow(a, value)[0];
+    const carry = @intFromBool(cpu.f.cFlag());
+    const res: struct { u8, u1 } = @addWithOverflow(carry, half_add);
     const s = false;
     const c = res[1] == 1;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(half_add, @as(u8, @intCast(carry)), .add);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 1;
     return 1;
 }
-fn ADCAn8(cpu: *CPU, _: InstrArgs) u8 { // add a to a register, plus the carry
+pub fn ADCAn8(cpu: *CPU, _: InstrArgs) u8 { // add a to n8, plus the carry
     const value = cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("ADCAn8 | value: {d}", .{value});
     const a = cpu.get_byte(regID.a);
-    const res: struct { u8, u1 } = @addWithOverflow(@intFromBool(cpu.f.cFlag()), @addWithOverflow(a, value)[0]);
+    const carry = @intFromBool(cpu.f.cFlag());
+    const half_add = @addWithOverflow(a, value);
+    const res: struct { u8, u1 } = @addWithOverflow(carry, half_add[0]);
     const s = false;
-    const c = res[1] == 1;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const c = res[1] == 1 or half_add[1] == 1;
+    const h = detectHalfCarry(a, value, .add) or detectHalfCarry(half_add[0], @as(u8, @intCast(carry)), .add);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 2;
     return 2;
 }
-fn ADCAHL(cpu: *CPU, _: InstrArgs) u8 {
+pub fn ADCAHL(cpu: *CPU, _: InstrArgs) u8 {
     const value = cpu.bus.readByte(cpu.get_word(.h));
     cpu.pushToExecutionChain("ADCAHL | mem@hl: {d}", .{value});
     const a = cpu.get_byte(regID.a);
-    const res: struct { u8, u1 } = @addWithOverflow(@intFromBool(cpu.f.cFlag()), @addWithOverflow(a, value)[0]);
+    const carry = @intFromBool(cpu.f.cFlag());
+    const half_add = @addWithOverflow(a, value)[0];
+    const res: struct { u8, u1 } = @addWithOverflow(carry, half_add);
     const s = false;
     const c = res[1] == 1;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(half_add, @as(u8, @intCast(carry)), .add);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 1;
     return 2;
 }
-fn SUBAr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn SUBAr8(cpu: *CPU, args: InstrArgs) u8 {
     const value = cpu.get_byte(args.target);
     cpu.pushToExecutionChain("SUBA | target: {any}, value: {d}", .{ args.target, value });
     const a = cpu.get_byte(regID.a);
     const res: struct { u8, u1 } = @subWithOverflow(a, value);
     const c = value > a;
     const s = true;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(a, value, .sub);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 1;
     return 1;
 }
-fn SUBAn8(cpu: *CPU, _: InstrArgs) u8 {
+pub fn SUBAn8(cpu: *CPU, _: InstrArgs) u8 {
     const value = cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("SUBAn8 | value: {d}", .{value});
     const a = cpu.get_byte(regID.a);
     const res: struct { u8, u1 } = @subWithOverflow(a, value);
     const c = value > a;
     const s = true;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(a, value, .sub);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 2;
     return 2;
 }
-fn SUBAHL(cpu: *CPU, _: InstrArgs) u8 {
+pub fn SUBAHL(cpu: *CPU, _: InstrArgs) u8 {
     const mem_place = cpu.get_word(regID.h);
     const value = cpu.bus.readByte(mem_place);
     cpu.pushToExecutionChain("SUBAHL | A - mem@0x{X}: value: {d}", .{ mem_place, value });
@@ -478,56 +508,62 @@ fn SUBAHL(cpu: *CPU, _: InstrArgs) u8 {
     const res: struct { u8, u1 } = @subWithOverflow(a, value);
     const c = value > a;
     const s = true;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(a, value, .sub);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 1;
     return 2;
 }
-fn SBCAr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn SBCAr8(cpu: *CPU, args: InstrArgs) u8 {
     const value = cpu.get_byte(args.target);
     cpu.pushToExecutionChain("SBCAr8 | target: {any}, value: {d}", .{ args.target, value });
     const a = cpu.get_byte(regID.a);
-    const res: struct { u8, u1 } = @subWithOverflow(@subWithOverflow(a, value)[0], @intFromBool(cpu.f.cFlag()));
+    const carry = @intFromBool(cpu.f.cFlag());
+    const half_sub = @subWithOverflow(a, value)[0];
+    const res: struct { u8, u1 } = @subWithOverflow(carry, half_sub);
     const s = true;
     const c = res[1] == 1;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(half_sub, @as(u8, @intCast(carry)), .sub);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 1;
     return 1;
 }
-fn SBCAn8(cpu: *CPU, _: InstrArgs) u8 {
+pub fn SBCAn8(cpu: *CPU, _: InstrArgs) u8 {
     const value = cpu.bus.readByte(cpu.pc + 1);
     cpu.pushToExecutionChain("SBCAn8 | value: {d}", .{value});
     const a = cpu.get_byte(regID.a);
-    const res: struct { u8, u1 } = @subWithOverflow(@subWithOverflow(a, value)[0], @intFromBool(cpu.f.cFlag()));
+    const carry = @intFromBool(cpu.f.cFlag());
+    const half_sub = @subWithOverflow(a, value);
+    const res: struct { u8, u1 } = @subWithOverflow(half_sub[0], carry);
     const s = true;
-    const c = res[1] == 1;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const c = res[1] == 1 or half_sub[1] == 1;
+    const h = detectHalfCarry(a, value, .sub) or detectHalfCarry(half_sub[0], @as(u8, @intCast(carry)), .sub);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 2;
     return 2;
 }
-fn SBCAHL(cpu: *CPU, _: InstrArgs) u8 {
+pub fn SBCAHL(cpu: *CPU, _: InstrArgs) u8 {
     const value = cpu.bus.readByte(cpu.get_word(.h));
     cpu.pushToExecutionChain("SBCAHL | mem@hl: {d}", .{value});
     const a = cpu.get_byte(regID.a);
-    const res: struct { u8, u1 } = @subWithOverflow(@subWithOverflow(a, value)[0], @intFromBool(cpu.f.cFlag()));
+    const carry = @intFromBool(cpu.f.cFlag());
+    const half_sub = @subWithOverflow(a, value)[0];
+    const res: struct { u8, u1 } = @subWithOverflow(carry, half_sub);
     const s = true;
     const c = res[1] == 1;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(half_sub, @as(u8, @intCast(carry)), .sub);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 1;
     return 2;
 }
-fn ADDAHL(cpu: *CPU, _: InstrArgs) u8 {
+pub fn ADDAHL(cpu: *CPU, _: InstrArgs) u8 {
     const mem_place = cpu.get_word(regID.h);
     const value = cpu.bus.readByte(mem_place);
     cpu.pushToExecutionChain("ADDAHL | A + mem@0x{X}: value: {d}", .{ mem_place, value });
@@ -535,40 +571,51 @@ fn ADDAHL(cpu: *CPU, _: InstrArgs) u8 {
     const res: struct { u8, u1 } = @addWithOverflow(a, value);
     const s = false;
     const c = res[1] == 1;
-    const h = (res[0] & 0xF) & 0x10 == 0x10; // half carry conditions
+    const h = detectHalfCarry(a, value, .add);
     const z = res[0] == 0;
     cpu.f.write(z, c, h, s);
     cpu.set_byte(regID.a, res[0]);
     cpu.pc += 1;
     return 2;
 }
-fn DAA(cpu: *CPU, _: InstrArgs) u8 {
+pub fn DAA(cpu: *CPU, _: InstrArgs) u8 {
     var a = cpu.get_byte(.a);
     var offset: u8 = 0;
-    if ((!cpu.f.sFlag() and a & 0xF > 0x9) or cpu.f.hFlag()) {
-        offset |= 0x6;
+    var c = cpu.f.cFlag();
+    if (!cpu.f.sFlag()) {
+        if ((a & 0xF > 0x9) or cpu.f.hFlag()) {
+            offset |= 0x6;
+        }
+        if ((a > 0x99) or cpu.f.cFlag()) {
+            offset |= 0x60;
+            c = true;
+        }
+    } else {
+        if (cpu.f.cFlag()) {
+            offset |= 0x60;
+        }
+        if (cpu.f.hFlag()) {
+            offset |= 0x6;
+        }
     }
-    if ((!cpu.f.sFlag() and a & 0xFF > 0x90) or cpu.f.cFlag()) {
-        offset |= 0x60;
-    }
-
-    if (cpu.f.sFlag()) {
+    const s = cpu.f.sFlag();
+    // const c = !s and (a > 0x99 or cpu.f.cFlag()); // must check this before modification
+    if (s) {
         a = @subWithOverflow(a, offset)[0];
     } else {
         a = @addWithOverflow(a, offset)[0];
     }
 
     const z = a == 0;
-    const c = a > 0x99;
-    const s = cpu.f.sFlag();
     const h = false;
+
     cpu.f.write(z, c, h, s);
     cpu.set_byte(.a, a);
     cpu.pc += 1;
     return 1;
 }
 // 16 bit
-fn INCr16(cpu: *CPU, args: InstrArgs) u8 {
+pub fn INCr16(cpu: *CPU, args: InstrArgs) u8 {
     const value = cpu.get_word(args.target);
     const res = @addWithOverflow(value, 1)[0];
     cpu.pushToExecutionChain("INCr16 | target: {any}, 0x{X} + 1 = 0x{X}", .{ args.target, value, res });
@@ -576,7 +623,7 @@ fn INCr16(cpu: *CPU, args: InstrArgs) u8 {
     cpu.pc += 1;
     return 2;
 }
-fn INCSP(cpu: *CPU, _: InstrArgs) u8 {
+pub fn INCSP(cpu: *CPU, _: InstrArgs) u8 {
     const value = cpu.sp;
     const res = @addWithOverflow(value, 1)[0];
     cpu.pushToExecutionChain("INCSP | 0x{X} + 1 = 0x{X}", .{ value, res });
@@ -584,91 +631,110 @@ fn INCSP(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pc += 1;
     return 2;
 }
-fn INCHL(cpu: *CPU, _: InstrArgs) u8 { // increment the value of the byte pointed to by hl
+pub fn INCHL(cpu: *CPU, _: InstrArgs) u8 { // increment the value of the byte pointed to by hl
     const mem_place = cpu.get_word(regID.h);
     const value = cpu.bus.readByte(mem_place);
     const res = @addWithOverflow(value, 1)[0];
+    cpu.bus.writeByte(mem_place, res);
     cpu.pushToExecutionChain("INCHL | mem@hl: 0x{X} + 1 = 0x{X}", .{ value, res });
+    const h = detectHalfCarry(value, 1, .sub);
+    const z = res == 0;
+    const s = true;
+    const c = cpu.f.cFlag();
+    cpu.f.write(z, c, h, s);
     cpu.pc += 1;
     return 2;
 }
-fn DECr16(cpu: *CPU, args: InstrArgs) u8 { // decrement any 16 bit register;
+pub fn DECr16(cpu: *CPU, args: InstrArgs) u8 { // decrement any 16 bit register;
     const value = cpu.get_word(args.target);
     cpu.pushToExecutionChain("DECr16 | target: {any}", .{args.target});
     cpu.set_word(args.target, @subWithOverflow(value, 1)[0]);
     cpu.pc += 1;
     return 2;
 }
-fn DECSP(cpu: *CPU, args: InstrArgs) u8 { // decrement the stack pointer
+pub fn DECSP(cpu: *CPU, _: InstrArgs) u8 { // decrement the stack pointer
+    cpu.pushToExecutionChain("DECSP", .{});
     const value = cpu.sp;
-    cpu.pushToExecutionChain("DECSP | target: {any}", .{args.target});
-    cpu.set_word(args.target, @subWithOverflow(value, 1)[0]);
+    cpu.sp = @subWithOverflow(value, 1)[0];
     cpu.pc += 1;
     return 2;
 }
-fn DECHL(cpu: *CPU, _: InstrArgs) u8 { // decrement the value of the byte pointed to by hl
+pub fn DECHL(cpu: *CPU, _: InstrArgs) u8 { // decrement the value of the byte pointed to by hl
     const mem_place = cpu.get_word(regID.h);
     const value = cpu.bus.readByte(mem_place);
     const res = @subWithOverflow(value, 1)[0];
+    cpu.bus.writeByte(mem_place, res);
+    const h = detectHalfCarry(value, 1, .sub);
+    const z = res == 0;
+    const s = true;
+    const c = cpu.f.cFlag();
+    cpu.f.write(z, c, h, s);
     cpu.pushToExecutionChain("DECHL | mem@hl: 0x{X} - 1 = 0x{X}", .{ value, res });
     cpu.pc += 1;
     return 2;
 }
-fn ADDHLr16(cpu: *CPU, args: InstrArgs) u8 {
+pub fn ADDHLr16(cpu: *CPU, args: InstrArgs) u8 {
     const hl = cpu.get_word(regID.h);
     const value = cpu.get_word(args.target);
-    cpu.pushToExecutionChain("ADDHLr16 | {any} + hl, {d} + {d}", .{ args.target, value, hl });
-    const res: u16 = @addWithOverflow(hl, value)[0];
+    const debug = "ADDHLr16 | {any} + hl, {d} + {d}";
+    cpu.pushToExecutionChain(debug, .{ args.target, value, hl });
+    // print(debug, .{ args.target, value, hl });
+    const res: struct {u16, u1} = @addWithOverflow(hl, value);
     const s = false;
-    const h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
-    const c = (((hl + value) >> 12) & 0xF) & 0x10 == 0x10;
+    const h = detectHalfCarry(hl, value, .add);
+    const c = res[1] == 1;
     const z = cpu.f.zFlag();
     cpu.f.write(z, c, h, s);
-    cpu.set_word(regID.h, res);
+    cpu.set_word(regID.h, res[0]);
     cpu.pc += 1;
     return 2;
 }
-fn ADDHLSP(cpu: *CPU, args: InstrArgs) u8 {
+pub fn ADDHLSP(cpu: *CPU, _: InstrArgs) u8 {
+    //  0  0  0  0 _  0  0 0 0 _ 0 0 0 0 _ 0 0 0 0
+    // 15 14 13 12   11 10
     const hl = cpu.get_word(regID.h);
     const value = cpu.sp;
-    cpu.pushToExecutionChain("ADDHLSP | {any} + hl, {d} + {d}", .{ args.target, value, hl });
-    const res: u16 = @addWithOverflow(hl, value)[0];
+    const debug = "ADDHLSP | SP + hl, 0x{X} + 0x{X}";
+    cpu.pushToExecutionChain(debug, .{ value, hl });
+    // print(debug, .{ value, hl });
+    const res: struct {u16, u1} = @addWithOverflow(hl, value);
     const s = false;
-    const h = (((hl + value) >> 8) & 0xF) & 0x10 == 0x10; // half carry conditions
-    const c = (((hl + value) >> 12) & 0xF) & 0x10 == 0x10;
+    const h = detectHalfCarry(hl, value, .add);
+    const c = res[1] == 1;
     const z = cpu.f.zFlag();
     cpu.f.write(z, c, h, s);
-    cpu.set_word(regID.h, res);
+    cpu.set_word(regID.h, res[0]);
     cpu.pc += 1;
     return 2;
 }
 // MISC
-fn SCF(cpu: *CPU, _: InstrArgs) u8 { // set carry flag
+pub fn SCF(cpu: *CPU, _: InstrArgs) u8 { // set carry flag
     cpu.pushToExecutionChain("SCF", .{});
     cpu.f.write(cpu.f.zFlag(), true, false, false);
     cpu.pc += 1;
     return 1;
 }
-fn CCF(cpu: *CPU, _: InstrArgs) u8 { // complement carry flag
+pub fn CCF(cpu: *CPU, _: InstrArgs) u8 { // complement carry flag
     cpu.pushToExecutionChain("SCF", .{});
     cpu.f.write(cpu.f.zFlag(), !cpu.f.cFlag(), false, false);
     cpu.pc += 1;
     return 1;
 }
-fn CPL(cpu: *CPU, _: InstrArgs) u8 { // sets the value in register A to its complement
+pub fn CPL(cpu: *CPU, _: InstrArgs) u8 { // sets the value in register A to its complement
     cpu.pushToExecutionChain("CPL", .{});
     cpu.set_byte(.a, cpu.get_byte(.a) ^ 0xFF);
     cpu.f.write(cpu.f.zFlag(), cpu.f.cFlag(), true, true);
     cpu.pc += 1;
     return 1;
 }
-fn EI(cpu: *CPU, _: InstrArgs) u8 {
+pub fn EI(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("EI", .{});
     print("EI!\n\n pc = 0x{X}\n", .{cpu.pc});
+    // cpu.break_exe();
     cpu.pc += 1;
     return 1;
 }
-fn DI(cpu: *CPU, _: InstrArgs) u8 {
+pub fn DI(cpu: *CPU, _: InstrArgs) u8 {
     // print("DI!\n\n", .{});
     const prior = cpu.bus.handler.ime;
     const debug = "DI | ime prior: {any}, ime post op: {any}";
@@ -678,7 +744,7 @@ fn DI(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pc += 1;
     return 1;
 }
-fn PUSH(cpu: *CPU, args: InstrArgs) u8 {
+pub fn PUSH(cpu: *CPU, args: InstrArgs) u8 { // TODO fix this for speed
     var high: u8 = undefined;
     var low: u8 = undefined;
     // print("[pc]:0x{X}\t", .{cpu.pc});
@@ -696,7 +762,7 @@ fn PUSH(cpu: *CPU, args: InstrArgs) u8 {
     cpu.pc += 1;
     return 4;
 }
-fn POP(cpu: *CPU, args: InstrArgs) u8 {
+pub fn POP(cpu: *CPU, args: InstrArgs) u8 {
     const popped = cpu.pop_stack();
     const low = popped[0];
     const high = popped[1];
@@ -710,40 +776,40 @@ fn POP(cpu: *CPU, args: InstrArgs) u8 {
     cpu.pc += 1;
     return 3;
 }
-fn CPAn8(cpu: *CPU, _: InstrArgs) u8 {
+pub fn CPAn8(cpu: *CPU, _: InstrArgs) u8 {
     const n = cpu.bus.readByte(cpu.pc + 1);
     const reg = cpu.get_byte(regID.a);
     const z = reg == n;
     const s = true;
-    const h = (reg & 0xF) < (n & 0xF); // half carry conditions
+    const h = detectHalfCarry(reg, n, .sub);
     const c = reg < n;
     cpu.f.write(z, c, h, s);
     cpu.pushToExecutionChain("CPAn8 | := reg.A, n := {d}, {d}", .{ reg, n });
     cpu.pc += 2;
     return 2;
 }
-fn CPAr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn CPAr8(cpu: *CPU, args: InstrArgs) u8 {
     const n = cpu.get_byte(args.target);
     // print("CPAr8, target = {any}\n", .{args.target});
     const reg = cpu.get_byte(regID.a);
     // const res = @subWithOverflow(reg, n);
     const z = reg == n;
     const s = true;
-    const h = (reg & 0xF) < (n & 0xF); // half carry conditions
+    const h = detectHalfCarry(reg, n, .sub);
     const c = reg < n;
     cpu.f.write(z, c, h, s);
     cpu.pushToExecutionChain("CPAr8 | reg.A, {any} := {d}, {d}", .{ args.target, reg, n });
     cpu.pc += 1;
     return 1;
 }
-fn CPAHL(cpu: *CPU, _: InstrArgs) u8 {
+pub fn CPAHL(cpu: *CPU, _: InstrArgs) u8 {
     const hl = cpu.get_word(regID.h);
     const reg = cpu.get_byte(regID.a);
     const byte = cpu.bus.readByte(hl);
     // print("CPAHL, compare mem_place: 0x{X} ({d}) to A:{d}\n", .{ hl, cpu.bus.readByte(hl), reg });
     const z = reg == byte;
     const s = true;
-    const h = (reg & 0xF) < (byte & 0xF); // half carry conditions
+    const h = detectHalfCarry(reg, byte, .sub);
     const c = reg < byte;
     cpu.f.write(z, c, h, s);
     cpu.pushToExecutionChain("CPAHL | reg.A, mem[X.{X:04}] := {d}, {d}", .{ hl, reg, byte });
@@ -751,7 +817,7 @@ fn CPAHL(cpu: *CPU, _: InstrArgs) u8 {
     return 2;
 }
 // ROTATES & SHIFTS
-fn RRA(cpu: *CPU, _: InstrArgs) u8 { // C -> [7 -> 0] -> C into A
+pub fn RRA(cpu: *CPU, _: InstrArgs) u8 { // C -> [7 -> 0] -> C into A
     const a = cpu.get_byte(regID.a);
     cpu.pushToExecutionChain("RRA", .{});
     cpu.set_byte(regID.a, @as(u8, @intFromBool(cpu.f.cFlag())) << 7 | a >> 1);
@@ -763,7 +829,7 @@ fn RRA(cpu: *CPU, _: InstrArgs) u8 { // C -> [7 -> 0] -> C into A
     cpu.pc += 1;
     return 1;
 }
-fn RRCA(cpu: *CPU, _: InstrArgs) u8 {
+pub fn RRCA(cpu: *CPU, _: InstrArgs) u8 {
     const a = cpu.get_byte(regID.a);
     cpu.pushToExecutionChain("RRCA", .{});
     cpu.set_byte(regID.a, (a << 7) | (a >> 1));
@@ -775,7 +841,7 @@ fn RRCA(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pc += 1;
     return 1;
 }
-fn RLA(cpu: *CPU, _: InstrArgs) u8 { // C <- [7 <- 0] <- C
+pub fn RLA(cpu: *CPU, _: InstrArgs) u8 { // C <- [7 <- 0] <- C
     const carried = cpu.f.cFlag();
     const reg = cpu.get_byte(regID.a);
     cpu.pushToExecutionChain("RLA | prior: 0b{b}, carried = {d}", .{ reg, @intFromBool(carried) });
@@ -789,7 +855,7 @@ fn RLA(cpu: *CPU, _: InstrArgs) u8 { // C <- [7 <- 0] <- C
     cpu.pc += 1;
     return 1;
 }
-fn RLCA(cpu: *CPU, _: InstrArgs) u8 { //Rotate register A left.
+pub fn RLCA(cpu: *CPU, _: InstrArgs) u8 { //Rotate register A left.
     cpu.pushToExecutionChain("RLCA | regID.a << 1", .{});
     const a = cpu.get_byte(.a);
     const c = (a >> 7) == 1;
@@ -804,7 +870,7 @@ fn RLCA(cpu: *CPU, _: InstrArgs) u8 { //Rotate register A left.
 }
 // prefixed
 //
-fn RLCr8(cpu: *CPU, args: InstrArgs) u8 { //Rotate register left. C <- [7 <- 0] <- [7]
+pub fn RLCr8(cpu: *CPU, args: InstrArgs) u8 { //Rotate register left. C <- [7 <- 0] <- [7]
     cpu.pushToExecutionChain("RLCr8 | regID.a << 1", .{});
     const reg = cpu.get_byte(args.target);
     const rotated = reg << 1;
@@ -819,7 +885,7 @@ fn RLCr8(cpu: *CPU, args: InstrArgs) u8 { //Rotate register left. C <- [7 <- 0] 
     cpu.pc += 1;
     return 2;
 }
-fn RLCHL(cpu: *CPU, _: InstrArgs) u8 { //Rotate byte pointed to by hl left. C <- [7 <- 0] <- [7]
+pub fn RLCHL(cpu: *CPU, _: InstrArgs) u8 { //Rotate byte pointed to by hl left. C <- [7 <- 0] <- [7]
     cpu.pushToExecutionChain("RLCHL | regID.a << 1", .{});
     const mem_address = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_address);
@@ -847,7 +913,7 @@ pub fn RLr8(cpu: *CPU, args: InstrArgs) u8 { // C <- [7 <- 0] <- C Rotate bits i
     cpu.pc += 1;
     return 2;
 }
-fn RLHL(cpu: *CPU, _: InstrArgs) u8 { // C <- [7 <- 0] <- C Rotate bits in register r8 left through carry.
+pub fn RLHL(cpu: *CPU, _: InstrArgs) u8 { // C <- [7 <- 0] <- C Rotate bits in register r8 left through carry.
     const carried = cpu.f.cFlag();
     const mem_place = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_place);
@@ -862,7 +928,7 @@ fn RLHL(cpu: *CPU, _: InstrArgs) u8 { // C <- [7 <- 0] <- C Rotate bits in regis
     cpu.pc += 1;
     return 2;
 }
-fn RRCr8(cpu: *CPU, args: InstrArgs) u8 { //Rotate register right. 0 -> [7 -> 0] -> C
+pub fn RRCr8(cpu: *CPU, args: InstrArgs) u8 { //Rotate register right. 0 -> [7 -> 0] -> C
     cpu.pushToExecutionChain("RRCr8 | target {any} << 1", .{args.target});
     const reg = cpu.get_byte(args.target);
     const rotated = reg >> 1;
@@ -875,7 +941,7 @@ fn RRCr8(cpu: *CPU, args: InstrArgs) u8 { //Rotate register right. 0 -> [7 -> 0]
     cpu.pc += 1;
     return 2;
 }
-fn RRCHL(cpu: *CPU, _: InstrArgs) u8 { //Rotate byte pointed to by hl right. 0 -> [7 -> 0] -> C
+pub fn RRCHL(cpu: *CPU, _: InstrArgs) u8 { //Rotate byte pointed to by hl right. 0 -> [7 -> 0] -> C
     cpu.pushToExecutionChain("RRCHL | HL >> 1", .{});
     const mem_address = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_address);
@@ -889,7 +955,7 @@ fn RRCHL(cpu: *CPU, _: InstrArgs) u8 { //Rotate byte pointed to by hl right. 0 -
     cpu.pc += 1;
     return 4;
 }
-fn RRr8(cpu: *CPU, args: InstrArgs) u8 { // C -> [7 -> 0] -> C Rotate bits in register r8 left through carry.
+pub fn RRr8(cpu: *CPU, args: InstrArgs) u8 { // C -> [7 -> 0] -> C Rotate bits in register r8 left through carry.
     const carried = cpu.f.cFlag();
     const reg = cpu.get_byte(args.target);
     const c = reg & 1 == 1;
@@ -903,7 +969,7 @@ fn RRr8(cpu: *CPU, args: InstrArgs) u8 { // C -> [7 -> 0] -> C Rotate bits in re
     cpu.pc += 1;
     return 2;
 }
-fn RRHL(cpu: *CPU, _: InstrArgs) u8 { // C -> [7 -> 0] -> C Rotate bits in register r8 left through carry.
+pub fn RRHL(cpu: *CPU, _: InstrArgs) u8 { // C -> [7 -> 0] -> C Rotate bits in register r8 left through carry.
     const carried = cpu.f.cFlag();
     const mem_place = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_place);
@@ -918,7 +984,7 @@ fn RRHL(cpu: *CPU, _: InstrArgs) u8 { // C -> [7 -> 0] -> C Rotate bits in regis
     cpu.pc += 1;
     return 2;
 }
-fn SLAr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Left Arithmetic register r8. C <- [7 <- 0] <- 0
+pub fn SLAr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Left Arithmetic register r8. C <- [7 <- 0] <- 0
     const reg = cpu.get_byte(args.target);
     const shifted = reg << 1;
     const z = shifted == 0;
@@ -928,7 +994,7 @@ fn SLAr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Left Arithmetic register r8. 
     cpu.pc += 1;
     return 2;
 }
-fn SLAHL(cpu: *CPU, _: InstrArgs) u8 { // Shift Left Arithmetic byte pointed to by hl. C <- [7 <- 0] <- 0
+pub fn SLAHL(cpu: *CPU, _: InstrArgs) u8 { // Shift Left Arithmetic byte pointed to by hl. C <- [7 <- 0] <- 0
     const mem_address = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_address);
     const shifted = byte << 1;
@@ -939,7 +1005,7 @@ fn SLAHL(cpu: *CPU, _: InstrArgs) u8 { // Shift Left Arithmetic byte pointed to 
     cpu.pc += 1;
     return 4;
 }
-fn SRAr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Right Arithmetic register r8. 7 -> [7 -> 0] -> C
+pub fn SRAr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Right Arithmetic register r8. 7 -> [7 -> 0] -> C
     const reg = cpu.get_byte(args.target);
     const shifted = ((reg >> 7 & 1) << 7) | reg >> 1;
     const z = shifted == 0;
@@ -949,7 +1015,7 @@ fn SRAr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Right Arithmetic register r8.
     cpu.pc += 1;
     return 2;
 }
-fn SRAHL(cpu: *CPU, _: InstrArgs) u8 { // Shift Right Arithmetic byte pointed to by hl. 0 -> [7 -> 0] -> C
+pub fn SRAHL(cpu: *CPU, _: InstrArgs) u8 { // Shift Right Arithmetic byte pointed to by hl. 0 -> [7 -> 0] -> C
     const mem_address = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_address);
     const shifted = ((byte >> 7 & 1) << 7) | byte >> 1;
@@ -960,7 +1026,7 @@ fn SRAHL(cpu: *CPU, _: InstrArgs) u8 { // Shift Right Arithmetic byte pointed to
     cpu.pc += 1;
     return 4;
 }
-fn SRLr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Right Arithmetic register r8. 7 -> [7 -> 0] -> C
+pub fn SRLr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Right Arithmetic register r8. 7 -> [7 -> 0] -> C
     const reg = cpu.get_byte(args.target);
     const shifted = reg >> 1;
     const z = shifted == 0;
@@ -970,7 +1036,7 @@ fn SRLr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Right Arithmetic register r8.
     cpu.pc += 1;
     return 2;
 }
-fn SRLHL(cpu: *CPU, _: InstrArgs) u8 { // Shift Right Arithmetic byte pointed to by hl. 0 -> [7 -> 0] -> C
+pub fn SRLHL(cpu: *CPU, _: InstrArgs) u8 { // Shift Right Arithmetic byte pointed to by hl. 0 -> [7 -> 0] -> C
     const mem_address = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_address);
     const shifted = byte >> 1;
@@ -981,7 +1047,7 @@ fn SRLHL(cpu: *CPU, _: InstrArgs) u8 { // Shift Right Arithmetic byte pointed to
     cpu.pc += 1;
     return 4;
 }
-fn SWAPr8(cpu: *CPU, args: InstrArgs) u8 { // Swap the upper 4 bits in register r8 and the lower 4 ones.
+pub fn SWAPr8(cpu: *CPU, args: InstrArgs) u8 { // Swap the upper 4 bits in register r8 and the lower 4 ones.
     const reg = cpu.get_byte(args.target);
     const high: u4 = @truncate(reg >> 4);
     const low: u4 = @truncate(reg);
@@ -989,7 +1055,7 @@ fn SWAPr8(cpu: *CPU, args: InstrArgs) u8 { // Swap the upper 4 bits in register 
     cpu.pc += 1;
     return 2;
 }
-fn SWAPHL(cpu: *CPU, _: InstrArgs) u8 { // Swap the upper 4 bits in register r8 and the lower 4 ones.
+pub fn SWAPHL(cpu: *CPU, _: InstrArgs) u8 { // Swap the upper 4 bits in register r8 and the lower 4 ones.
     const mem_address = cpu.get_word(.h);
     const byte = cpu.bus.readByte(mem_address);
     const high: u4 = @truncate(byte >> 4);
@@ -1000,7 +1066,7 @@ fn SWAPHL(cpu: *CPU, _: InstrArgs) u8 { // Swap the upper 4 bits in register r8 
 }
 // BIT MANIPULATION
 //
-fn BITTESTr8(cpu: *CPU, args: InstrArgs) u8 {
+pub fn BITTESTr8(cpu: *CPU, args: InstrArgs) u8 {
     const bit: u3 = args.bit_target.bit;
     const target = cpu.get_byte(args.bit_target.target);
     const z = @as(u1, @truncate(target >> bit)) == 0; // set zero flag if the target bit is not set
@@ -1010,7 +1076,7 @@ fn BITTESTr8(cpu: *CPU, args: InstrArgs) u8 {
     cpu.pc += 1;
     return 2;
 }
-fn BITTESTHL(cpu: *CPU, args: InstrArgs) u8 {
+pub fn BITTESTHL(cpu: *CPU, args: InstrArgs) u8 {
     const bit: u3 = args.bit_target.bit;
     const hl = cpu.get_word(.h);
     const byte = cpu.bus.readByte(hl);
@@ -1021,7 +1087,7 @@ fn BITTESTHL(cpu: *CPU, args: InstrArgs) u8 {
     cpu.pc += 1;
     return 3;
 }
-fn RES(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 0
+pub fn RES(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 0
     const bit: u3 = args.bit_target.bit;
     const target = cpu.get_byte(args.bit_target.target);
     const res = target & ~(@as(u8, 1) << bit); // target and everything but this bit
@@ -1030,7 +1096,7 @@ fn RES(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 0
     cpu.pc += 1;
     return 2;
 }
-fn RESHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to by hl to 0.
+pub fn RESHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to by hl to 0.
     const bit: u3 = args.bit_target.bit;
     const hl = cpu.get_word(.h);
     const byte = cpu.bus.readByte(hl);
@@ -1040,7 +1106,7 @@ fn RESHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to b
     cpu.pc += 1;
     return 4;
 }
-fn SET(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 1. Bit 0 is the rightmost one, bit 7 the leftmost one.
+pub fn SET(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 1. Bit 0 is the rightmost one, bit 7 the leftmost one.
     const bit: u3 = args.bit_target.bit;
     const target = cpu.get_byte(args.bit_target.target);
     const res = target | (@as(u8, 1) << bit); // everything and this bit
@@ -1049,7 +1115,7 @@ fn SET(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in register r8 to 1. Bit 0
     cpu.pc += 1;
     return 2;
 }
-fn SETHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to by hl to 1.
+pub fn SETHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to by hl to 1.
     const bit: u3 = args.bit_target.bit;
     const hl = cpu.get_word(.h);
     const byte = cpu.bus.readByte(hl);
@@ -1061,7 +1127,7 @@ fn SETHL(cpu: *CPU, args: InstrArgs) u8 { // Set bit u3 in the byte pointed to b
 }
 
 // JUMP
-fn JP(cpu: *CPU, args: InstrArgs) u8 {
+pub fn JP(cpu: *CPU, args: InstrArgs) u8 {
     const jump = cpu.f.check(args.flagConditions);
     if (jump) {
         const n = @as(u16, cpu.bus.readByte(cpu.pc + 2)) << 8 | cpu.bus.readByte(cpu.pc + 1);
@@ -1074,19 +1140,19 @@ fn JP(cpu: *CPU, args: InstrArgs) u8 {
         return 3; // 3 cycles when not taken
     }
 }
-fn JPHL(cpu: *CPU, _: InstrArgs) u8 {
+pub fn JPHL(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("JPHL", .{});
     cpu.pc = cpu.get_word(regID.h);
     return 1;
 }
-fn JR(cpu: *CPU, args: InstrArgs) u8 {
+pub fn JR(cpu: *CPU, args: InstrArgs) u8 {
     const dist: i8 = @bitCast(cpu.bus.readByte(cpu.pc + 1));
     const jump = cpu.f.check(args.flagConditions);
 
     if (jump) {
-        const new_mem: u16 = @bitCast(@addWithOverflow(@as(i16, @intCast(cpu.pc + 2)), dist)[0]);
-        cpu.pc = new_mem;
+        const new_mem: u16 = @intCast(@addWithOverflow(@as(i17, @intCast(cpu.pc + 2)), dist)[0]);
         cpu.pushToExecutionChain("JR | to pc:0x{X}", .{new_mem});
+        cpu.pc = new_mem;
         return 3; // 3 cycles when taken
     } else { // next instruction, condition failed
         cpu.pushToExecutionChain("JR | skipped jump, failed condition", .{});
@@ -1095,7 +1161,7 @@ fn JR(cpu: *CPU, args: InstrArgs) u8 {
     }
 }
 // CALL
-fn CALLn16(cpu: *CPU, args: InstrArgs) u8 { //
+pub fn CALLn16(cpu: *CPU, args: InstrArgs) u8 { //
     // const zone = tracy.beginZone(@src(), .{ .name = "CALLn16" });
     // defer zone.end();
     const call = cpu.f.check(args.flagConditions);
@@ -1118,7 +1184,7 @@ fn CALLn16(cpu: *CPU, args: InstrArgs) u8 { //
     }
 }
 // RESTART
-fn RST(cpu: *CPU, args: InstrArgs) u8 {
+pub fn RST(cpu: *CPU, args: InstrArgs) u8 {
     const ret = cpu.pc + 1;
     cpu.push_stack(ret);
     cpu.pushToExecutionChain("RST | to 0x{X}, later RET to 0x{X}", .{ args.where, ret });
@@ -1126,7 +1192,7 @@ fn RST(cpu: *CPU, args: InstrArgs) u8 {
     return 4;
 }
 // RETURN
-fn RET(cpu: *CPU, args: InstrArgs) u8 {
+pub fn RET(cpu: *CPU, args: InstrArgs) u8 {
     const ret = cpu.f.check(args.flagConditions);
     if (ret) {
         const low = cpu.bus.readByte(cpu.sp);
@@ -1146,7 +1212,7 @@ fn RET(cpu: *CPU, args: InstrArgs) u8 {
         return 2; // 2 cycles when not taken
     }
 }
-fn RETI(cpu: *CPU, _: InstrArgs) u8 {
+pub fn RETI(cpu: *CPU, _: InstrArgs) u8 {
     print("reti\n", .{});
     const popped = cpu.pop_stack();
     const low = popped[0];
@@ -1226,7 +1292,7 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
             0x37 => SCF(cpu, .{ .none = {} }),
             0x38 => JR(cpu, .{ .flagConditions = .c }),
             0x39 => ADDHLSP(cpu, .{ .none = {} }),
-            0x3A => LDAHL(cpu, .{ .hl_mod = 0 }),
+            0x3A => LDAHL(cpu, .{ .hl_mod = -1 }),
             0x3B => DECSP(cpu, .{ .none = {} }),
             0x3C => INCr8(cpu, .{ .target = regID.a }),
             0x3D => DECr8(cpu, .{ .target = regID.a }),
@@ -1685,8 +1751,69 @@ pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
         },
     };
 }
+// helpers
+fn detectHalfCarry(target: anytype, b: anytype, sign: union(enum(u1)){add, sub}) bool {
+    var target_high_byte: ?u8 = null;
+    var b_high_byte: ?u8 = null;
+    var lower_byte_carried = false;
 
-// const GB = @import("gb.zig"); // TODO GET RID OF THIS AND ALL REFERENCES
+    if (@TypeOf(target) == u16 or @TypeOf(b) == u16) {
+        // print("")
+        if (@TypeOf(target) == u16) {
+            target_high_byte = @intCast(target >> 8);
+            lower_byte_carried = switch (sign) {
+                .add => @addWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1,
+                .sub => @subWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1
+            };
+            if (lower_byte_carried) {
+                print("Lower byte carried\n", .{});
+                if (target_high_byte.?&0xF == 0xF) {
+                    print("detected 0xF after carry\n", .{});
+                    return true;
+                }
+            }
+        }
+        if (@TypeOf(b) == u16) {
+            b_high_byte = @intCast(b >> 8);
+            lower_byte_carried = switch (sign) {
+                .add => @addWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1,
+                .sub => @subWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1
+            };
+            if (lower_byte_carried) {
+                print("Lower byte carried\n", .{});
+                if (b_high_byte.?&0xF == 0xF) {
+                    print("detected 0xF after carry\n", .{});
+                    return true;
+                }
+            }
+        }
+    }
+    return switch (sign) {
+        .add => @addWithOverflow(
+            @as(u4, @truncate(target_high_byte orelse target)),
+            @as(u4, @truncate(b_high_byte orelse b))
+        )[1] == 1,
+        .sub =>  @subWithOverflow(
+            @as(u4, @truncate(target_high_byte orelse target)),
+            @as(u4, @truncate(b_high_byte orelse b))
+        )[1] == 1,
+    };
+}
+/// Allows for mixed sign arithmetic i.e. i8 + u16 with overflow
+fn mixedSignArithmetic(target_value: anytype, signed_value: anytype, treat_as: type) struct { @TypeOf(target_value), u1 } {
+    const res: struct { treat_as, u1 } = @addWithOverflow(@as(treat_as, target_value), signed_value);
+    print("result: 0x{X} (0b{b}), carry: 0b{b}\n", .{res[0], res[0], res[1]});
+    var val: @TypeOf(target_value) = undefined;
+    switch (res[0] >= 0) {
+        true => val = @intCast(res[0]),
+        false => {
+            // distance from the min negative value is how much we overflowed by
+            const dist = std.math.minInt(treat_as) - res[0];
+            val = @intCast(@abs(dist));
+        }
+    }
+    return .{val, res[1]};
+}
 const CPU = @import("cpu.zig");
 // const CPU = cpu;
 const regID = CPU.regID;

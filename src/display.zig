@@ -35,7 +35,7 @@ pub const GPU = struct {
         self.vram = gb.bus.memory[VRAM_BEGIN .. VRAM_END + 1];
         self.oam = gb.bus.memory[OAM_BEGIN .. OAM_END + 1];
         self.bus = &gb.bus;
-        self.special_registers = gb.bus.memory[LCD.special_registers.start .. LCD.special_registers.end + 1];
+        self.special_registers = gb.bus.memory[special_register.start .. special_register.end + 1];
         self.mode = .SCAN;
         self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
         try self.lcd.init(gb.allocator, gb.root_path);
@@ -225,16 +225,33 @@ pub const GPU = struct {
             self.vram[fixed_address] = value;
         }
     }
-    pub fn setSpecialRegister(self: *@This(), register: LCD.special_registers, value: u8) void {
+    pub const special_register = enum(u8) {
+        lcdc, // LCDC (LCD Control) Enables/disables layers, defines rendering mode
+        stat, // $FF41 STAT (Status) Tracks PPU state
+        scy, // $FF42 SCY (Scroll Y) Background vertical scroll
+        scx, // $FF43 SCX (Scroll X) Background horizontal scroll
+        ly, // current scanline
+        lyc, // $FF45 LYC (Compare LY) Interrupt if LY matches LYC
+        dma, // $FF46 DMA Transfers 160 bytes from RAM to OAM
+        bgp, // $FF47 BGP (BG Palette) Defines colors for BG tiles
+        obp0, // $FF48 OBP0 (OBJ Palette 0) Defines colors for sprite palette 0
+        obp1, // $FF49 OBP1 (OBJ Palette 1) Defines colors for sprite palette 1
+        wy, // $FF4A WY (Window Y) Window vertical position
+        wx, // $FF4B WX (Window X) Window horizontal position
+        pub const end = 0xFF4B;
+        pub const start = 0xFF40;
+        const size = 0xFF4B - 0xFF40 + 1;
+    };
+    pub fn setSpecialRegister(self: *GPU, register: special_register, value: u8) void {
         self.special_registers[@intFromEnum(register)] = value;
     }
-    pub fn getSpecialRegister(self: *@This(), register: LCD.special_registers) u8 {
+    pub fn getSpecialRegister(self: *GPU, register: special_register) u8 {
         return self.special_registers[@intFromEnum(register)];
     }
-    pub fn testSpecialRegister(self: *@This(), register: LCD.special_registers, bit: u3) bool {
+    pub fn testSpecialRegister(self: *GPU, register: special_register, bit: u3) bool {
         return @as(u1, @truncate(self.special_registers[@intFromEnum(register)] >> bit)) == 1;
     }
-    pub fn writeOAM(self: *@This(), address: usize, value: u8) !void {
+    pub fn writeOAM(self: *GPU, address: usize, value: u8) !void {
         if (self.mode == .RENDER or self.mode == .SCAN) {
             print("cannot access oam now\n", .{});
             return;
@@ -243,7 +260,7 @@ pub const GPU = struct {
         self.oam[address] = value;
     }
     // mem dump
-    fn vram_dump(self: *@This()) void {
+    fn vram_dump(self: *GPU) void {
         print("VRAM dump: \n", .{});
         for (self.vram, 0..VRAM_SIZE) |value, i| {
             const global_address = i + VRAM_BEGIN;
@@ -251,6 +268,13 @@ pub const GPU = struct {
             print("@0x{X}[", .{global_address});
             print("0x{x}]\t", .{value});
             if (i != 0 and i % 12 == 0) print("\n", .{});
+        }
+        print("\n", .{});
+    }
+    pub fn spec_register_dump(self: *GPU) void {
+        print("Special Registers:\n", .{});
+        for (std.enums.values(special_register), self.special_registers[0..]) |reg, value| {
+            print("{any}[ 0x{x} ]\n", .{ reg, value });
         }
         print("\n", .{});
     }
@@ -291,23 +315,6 @@ pub const LCD = struct {
     grid_pixel_sz: u16 = undefined,
     allocator: std.mem.Allocator = undefined,
     root_path: []const u8 = undefined,
-    pub const special_registers = enum(u8) {
-        lcdc, // LCDC (LCD Control) Enables/disables layers, defines rendering mode
-        stat, // $FF41 STAT (Status) Tracks PPU state
-        scy, // $FF42 SCY (Scroll Y) Background vertical scroll
-        scx, // $FF43 SCX (Scroll X) Background horizontal scroll
-        ly, // current scanline
-        lyc, // $FF45 LYC (Compare LY) Interrupt if LY matches LYC
-        dma, // $FF46 DMA Transfers 160 bytes from RAM to OAM
-        bgp, // $FF47 BGP (BG Palette) Defines colors for BG tiles
-        obp0, // $FF48 OBP0 (OBJ Palette 0) Defines colors for sprite palette 0
-        obp1, // $FF49 OBP1 (OBJ Palette 1) Defines colors for sprite palette 1
-        wy, // $FF4A WY (Window Y) Window vertical position
-        wx, // $FF4B WX (Window X) Window horizontal position
-        pub const end = 0xFF4B;
-        pub const start = 0xFF40;
-        const size = 0xFF4B - 0xFF40 + 1;
-    };
     const gb_palette = [_]u32{ // actually greens
         0xFFFFFFFF, // white
         0xFFAAAAAA, // light gray
@@ -371,7 +378,6 @@ pub const LCD = struct {
 
         const font_path = try std.fs.path.join(self.allocator, &.{ self.root_path, "assets", "fonts", "Minecraft.ttf" });
         defer self.allocator.free(font_path);
-
         const font = g.TTF_OpenFont(font_path.ptr, 18);
         self.font = font orelse {
             print("Font Loading Error", .{});

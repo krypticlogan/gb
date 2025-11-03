@@ -12,9 +12,9 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     const exe = b.addExecutable(.{
-            .name = "gb",
-            .root_module = exe_mod,
-            .use_llvm = true
+        .name = "gb",
+        .root_module = exe_mod,
+        .use_llvm = true
     });
     // SDL_ttf Dependency
     const sdl_ttf_dep = b.dependency("sdl_ttf", .{
@@ -36,7 +36,6 @@ pub fn build(b: *std.Build) void {
     // step is evaluated that depends on it. The next line below will establish
     // such a dependency.
     const run_cmd = b.addRunArtifact(exe);
-
     // By making the run step depend on the install step, it will be run from the
     // installation directory rather than directly from within the cache directory.
     // This is not necessary, however, if the application depends on other installed
@@ -55,11 +54,20 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    const exe_check = b.addExecutable(.{
+        .name = "gb",
+        .root_module = exe_mod,
+        .use_llvm = true
+    });
+
+    const check = b.step("check", "should build");
+    check.dependOn(&exe_check.step);
+
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const exe_unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/tests.zig"),
+            .root_source_file = b.path("src/cpu_tests.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,

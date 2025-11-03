@@ -7,17 +7,28 @@ pc: u16 = undefined, // program counter
 sp: u16 = undefined, // stack pointer
 halted: bool = false, // stops all execution when true
 halt_bug: bool = false,
+// state
+step: bool = false,
+paused: bool = false,
 executing_byte: u8 = 0x0,
 log: Log = Log{},
+booted: bool = false,
 // TODO instruction cache?
 pub fn init(self: *@This(), gb: *GB) !void {
     @memset(&self.registers, 0);
     self.pc = 0;
     self.sp = 0;
     self.bus = &gb.bus;
+    // if (std.fs.cwd().deleteFile(sub_path: []const u8))
+    Log.out_file = std.fs.cwd().createFile(Log.out_file_path, .{.truncate = true}) catch {
+        @panic("Unable to create log file, abortting");
+    };
+    defer {
+        Log.out_file.close();
+    }
 }
 // cpu execution
-pub fn execute(self: *@This()) !u8 {
+pub fn execute(self: *@This()) struct{u8, bool} {
     const set_ime = self.executing_byte == 0xFB; // set the ime flag after this instruction
     if (!self.halt_bug) {
         self.executing_byte = self.bus.readByte(self.pc);
@@ -31,8 +42,13 @@ pub fn execute(self: *@This()) !u8 {
     }
     const cycles_spent = InstructionSet.exe_from_byte(self, prefixed);
     self.bus.handler.ime = set_ime;
+    self.bus.handler.handle(self);
+    if (self.step) {
+        self.break_exe();
+        return .{cycles_spent, true};
+    }
 
-    return cycles_spent;
+    return .{cycles_spent, self.paused};
 }
 
 pub inline fn pushToExecutionChain(self: *@This(), comptime debug: []const u8, args: anytype) void {
@@ -43,6 +59,9 @@ pub inline fn pushToExecutionChain(self: *@This(), comptime debug: []const u8, a
 }
 // memory ops
 pub fn set_byte(self: *@This(), reg1: regID, value: u8) void {
+    // if (reg1 == .a and (value == 0x1b or value == 0x1a)) {
+    //  print("A register modified at pc[0x{X}] by [{X}]; new a = 0x{X}\n", .{self.pc, self.executing_byte, value});
+    // }
     self.registers[@intFromEnum(reg1)] = value;
 }
 pub fn get_byte(self: *@This(), reg1: regID) u8 {
@@ -68,13 +87,32 @@ pub inline fn pop_stack(cpu: *CPU) struct { u8, u8 } {
     cpu.sp = @addWithOverflow(cpu.sp, 1)[0];
     return .{ low, high };
 }
+// debug
+pub inline fn break_exe(self: *CPU) void {
+    print("break execution\n", .{});
+    self.paused = true;
+}
+pub inline fn resume_exe(self: *CPU) void {
+    // print("resume execution\n", .{});
+    self.paused = false;
+}
 /// Dumps all register values, previous instruction and program counter to the command line
 pub fn state_dump(self: *@This()) void {
-    const register_labels = [_]u8{ "a", "b", "c", "d", "e", "h", "l" };
-    for (register_labels, self.registers) |label, register| {
-        print("REGISTER {s}: {s}", .{ label, register });
+    print("\n[CPU STATE]\n----------------------\n", .{});
+    // program counter & stack pointer
+    print("PC: 0x{X}\tSP: 0x{X}\n", .{self.pc, self.sp});
+    // registers
+    print("REGISTERS\n", .{});
+    for (std.enums.values(regID), self.registers) |label, register| {
+        print("{any}[ 0x{X} / ({d}) ]\n", .{ label, register, register });
     }
-    // print("Register values: a, b, c, d, e, h, l", .{});
+    print("\n", .{});
+    // flags and state
+    print("Flags: C: {any}, S: {any}, H: {any}, Z: {any}\n", .{self.f.cFlag(), self.f.sFlag(), self.f.hFlag(), self.f.zFlag()});
+    print("Current Instruction: 0x{X}\n", .{self.executing_byte});
+    print("Previous Instructions:\n", .{});
+    self.log.dump();
+    print("Upcoming Instructions: TODO\n", .{});
 }
 // types & context
 pub const regID = enum(u3) {
@@ -137,21 +175,64 @@ pub const Log = struct {
         var text_buffer: [MAX_LINES * MAX_CHAR]u8 = undefined;
         var stream = std.io.fixedBufferStream(&text_buffer);
         const writer = stream.writer();
-        var i: u8 = 0;
-        while (i < MAX_LINES) : (i += 1) {
-            const idx = (self.ring_idx + i) % MAX_LINES;
-            if (self.log[idx]) |debug| {
+        var i = self.ring_idx;
+        const ring_start = switch (self.ring_idx) {
+            0 => 19,
+            else => self.ring_idx - 1
+        };
+        // print("log! ring idx {d}\n", .{self.ring_idx});
+        while (i != ring_start) : (i = (i+1) % MAX_LINES) {
+            // print("{d} ", .{i});
+            if (self.log[i]) |debug| {
                 writer.print("{s}", .{debug}) catch unreachable;
             }
         }
+        // print("{d}\n", .{ring_start});
+        writer.print("   {s}", .{self.log[ring_start].?}) catch unreachable;
+        // while (i < MAX_LINES) : (i += 1) {
+        //     const idx = (self.ring_idx + i) % MAX_LINES;
+        //     if (self.log[idx]) |debug| {
+        //         writer.print("{s}", .{debug}) catch unreachable;
+        //     }
+        // }
         return stream.getWritten();
     }
-    fn dump(self: *Log) void {
-        for (self.log) |info| {
-            if (info) |str| {
-                print("{s}", .{str});
+    /// Dumps the log state from oldest to most recent instruction
+    pub fn dump(self: *Log) void {
+        var i = self.ring_idx + 1;
+        while (i != self.ring_idx) {
+            if (i + 1 >= MAX_LINES) {
+                i = 0;
+            } else {
+                i += 1;
+            }
+            if (self.log[i]) |debug| {
+                print("{s}", .{debug});
             }
         }
+    }
+    const out_file_path = "gameboy-doctor/gb.log";
+    var out_file: std.fs.File = undefined;
+    pub inline fn write_to_file(state: struct {u8, u8, u8, u8, u8, u8, u8, u8, u16, u16, u8, u8, u8, u8}) void {
+                                            // a   f   b   c   d   e   h   l   sp   pc   pc_mem -->
+        out_file = std.fs.cwd().createFile(out_file_path, .{.truncate = false}) catch {
+            @panic("Unable to create log file, aborting");
+        };
+        defer {
+            out_file.close();
+        }
+        out_file.seekFromEnd(0) catch {
+            @panic("Issue with seekFromEnd");
+        };
+        const log_format = "A:{X:0>2} F:{X:0>2} B:{X:0>2} C:{X:0>2} D:{X:0>2} E:{X:0>2} H:{X:0>2} L:{X:0>2} SP:{X:0>4} PC:{X:0>4} PCMEM:{X:0>2},{X:0>2},{X:0>2},{X:0>2}\n";
+        var log_buffer: [1024]u8 = undefined;
+        // const state: []const u8 =
+        _ = out_file.write(
+            std.fmt.bufPrint(&log_buffer, log_format, state) catch {
+                @panic("Unable to format log");
+            }) catch {
+                @panic("Unable to write log");
+            };
     }
 };
 pub const WRAM_START = 0xC000;
