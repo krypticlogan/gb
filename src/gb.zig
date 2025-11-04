@@ -113,30 +113,31 @@ pub fn go(self: *GB) !void {
     }
 }
 fn do(self: *GB) !void {
-    if (self.cpu.booted) {
-        CPU.Log.write_to_file(.{
-            self.cpu.get_byte(.a),
-            self.cpu.f.value,
-            self.cpu.get_byte(.b),
-            self.cpu.get_byte(.c),
-            self.cpu.get_byte(.d),
-            self.cpu.get_byte(.e),
-            self.cpu.get_byte(.h),
-            self.cpu.get_byte(.l),
-            self.cpu.sp,
-            self.cpu.pc,
-            self.cpu.bus.readByte(self.cpu.pc),
-            self.cpu.bus.readByte(self.cpu.pc + 1),
-            self.cpu.bus.readByte(self.cpu.pc + 2),
-            self.cpu.bus.readByte(self.cpu.pc + 3),
-        });
-    }
+    // if (self.cpu.booted) {
+    //     CPU.Log.write_to_file(.{
+    //         self.cpu.get_byte(.a),
+    //         self.cpu.f.value,
+    //         self.cpu.get_byte(.b),
+    //         self.cpu.get_byte(.c),
+    //         self.cpu.get_byte(.d),
+    //         self.cpu.get_byte(.e),
+    //         self.cpu.get_byte(.h),
+    //         self.cpu.get_byte(.l),
+    //         self.cpu.sp,
+    //         self.cpu.pc,
+    //         self.cpu.bus.readByte(self.cpu.pc),
+    //         self.cpu.bus.readByte(self.cpu.pc + 1),
+    //         self.cpu.bus.readByte(self.cpu.pc + 2),
+    //         self.cpu.bus.readByte(self.cpu.pc + 3),
+    //     });
+    // }
     const res = self.cpu.execute();
     const cycles_spent = res[0];
     self.cycles_spent += cycles_spent;
     const cycles_to_spend: u8 = @max(1, cycles_spent);
     self.gpu.tick(cycles_to_spend * 4);
     self.timer.tick(cycles_to_spend * 4);
+    self.bus.handler.handle(&self.cpu);
     if (self.cpu.pc > 0xFF and !self.cpu.booted) {
         self.cpu.booted = true;
         self.load_cartridge_to_rom();
@@ -327,6 +328,14 @@ pub const Bus = struct {
                 // print("byte: 0x{X}, '{c}'\n", .{char, char});
                 self.memory[address] &= ~@as(u8, 0x80);
             }
+        } else if (address == 0xFFFF) {
+            self.memory[address] = value;
+            // print("wrote to the iF flag = 0b{b}\ndoes it show?\thandler IE flag = 0b{b}\n", .{value, self.handler.iE.*});
+            // self.handler.dump();
+        } else if (address == 0xFF0F) {
+            self.memory[address] = value;
+            print("wrote to the iF flag = 0b{b} @pc[{X}]\ndoes it show?\thandler iF flag = 0b{b}\n", .{value, self.cpu.pc, self.handler.iF.*});
+            self.handler.dump();
         } else self.memory[address] = value;
     }
     /// Memory Bank Controller
@@ -485,7 +494,7 @@ pub const Bus = struct {
         pub inline fn handle(self: *InterruptHandler, cpu: *CPU) void {
             // which interrupt do we need to handle (highest priority first)
             if (self.ime) {
-                print("interrupt handle", .{});
+                print("interrupt handle @pc[{X}]\n", .{cpu.pc});
                 self.dump();
                 for (Interrupts) |interrupt| {
                     if (self.check(.enable, interrupt.bit) and self.check(.flag, interrupt.bit)) {
@@ -610,18 +619,18 @@ const Timer = struct {
                 if (cycles_since == 16) {
                     self.set_reg(.tima, self.get_reg(.tma));
                     // timer interrupt
-                    print("set timer interrupt\n", .{});
+                    // print("set timer interrupt\n", .{});
                     self.bus.handler.set(.flag, .timer);
                     self.cycles_since_overflow = null;
                 }
-                self.cycles_since_overflow.? += 1;
+                if (self.cycles_since_overflow != null) self.cycles_since_overflow.? += 1;
             }
             const and_res = bit == 1 and timer_enable == 1;
             // if (bit == 1) print("bit (timer): {any}", .{bit == 1});
-            if (timer_enable == 1) print("enable (timer): {any}", .{timer_enable == 1});
-            if (and_res) print("AND result (timer): {any}", .{and_res});
+            // if (timer_enable == 1) print("enable (timer): {any}\n", .{timer_enable == 1});
+            // if (and_res) print("AND result (timer): {any}\n", .{and_res});
             if (self.prev_and_res and !and_res) { // falling edge
-                print("timer tick\n", .{});
+                // print("timer tick\n", .{});
                 const res = @addWithOverflow(self.get_reg(.tima), 1);
                 self.set_reg(.tima, res[0]);
                 if (res[1] == 1) { // overflow

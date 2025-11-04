@@ -18,19 +18,17 @@ pub fn STOP(cpu: *CPU, _: InstrArgs) u8 {
     return 0;
 }
 pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
-    const debug = "HALT";
-    print(debug ++ "\n", .{});
-    cpu.pushToExecutionChain(debug, .{});
+    const debug = "HALT @pc[{X}]";
+    print(debug ++ "\n", .{cpu.pc});
+    cpu.pushToExecutionChain(debug, .{cpu.pc});
     switch(cpu.halted) {
         false => { // first entry
-            cpu.halted = true; 
-            return 1;
+            cpu.halted = true;
         },
         true => { // still halted, we have returned 
             switch (cpu.bus.handler.ime) {
                 true => {
                     if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
-                        // cpu.pc += 1;
                         cpu.bus.handler.handle(cpu);
                         cpu.halted = false;
                     }
@@ -40,13 +38,10 @@ pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
                         cpu.halt_bug = true;
                         cpu.halted = false;
                         cpu.pc += 1;
-                    } else {
-                        cpu.halted = false;
-                        cpu.pc += 1;
                     }
                 }
             }
-        }   
+        }
     }
     return 1;
 }
@@ -413,7 +408,7 @@ pub fn ADDSPn8(cpu: *CPU, _: InstrArgs) u8 {
     const value: i8 = @bitCast(cpu.bus.readByte(cpu.pc + 1));
     const debug = "ADDSPn8 | SP 0x{X} + 0x{X}";
     cpu.pushToExecutionChain(debug, .{cpu.sp, value});
-    print(debug ++ "\n", .{cpu.sp, value});
+    // print(debug ++ "\n", .{cpu.sp, value});
     const res = mixedSignArithmetic(cpu.sp, value, i17);
     const s = false;
     const c = @addWithOverflow(@as(u8, @truncate(cpu.sp)), @as(u8, @bitCast(value)))[1] == 1;
@@ -1793,9 +1788,9 @@ fn detectHalfCarry(target: anytype, b: anytype, sign: union(enum(u1)){add, sub})
                 .sub => @subWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1
             };
             if (lower_byte_carried) {
-                print("Lower byte carried\n", .{});
+                // print("Lower byte carried\n", .{});
                 if (b_high_byte.?&0xF == 0xF) {
-                    print("detected 0xF after carry\n", .{});
+                    // print("detected 0xF after carry\n", .{});
                     return true;
                 }
             }
@@ -1815,7 +1810,7 @@ fn detectHalfCarry(target: anytype, b: anytype, sign: union(enum(u1)){add, sub})
 /// Allows for mixed sign arithmetic i.e. i8 + u16 with overflow
 fn mixedSignArithmetic(target_value: anytype, signed_value: anytype, treat_as: type) struct { @TypeOf(target_value), u1 } {
     const res: struct { treat_as, u1 } = @addWithOverflow(@as(treat_as, target_value), signed_value);
-    print("result: 0x{X} (0b{b}), carry: 0b{b}\n", .{res[0], res[0], res[1]});
+    // print("result: 0x{X} (0b{b}), carry: 0b{b}\n", .{res[0], res[0], res[1]});
     var val: @TypeOf(target_value) = undefined;
     switch (res[0] >= 0) {
         true => val = @intCast(res[0]),

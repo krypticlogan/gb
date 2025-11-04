@@ -30,9 +30,9 @@ pub fn init(self: *@This(), gb: *GB) !void {
 // cpu execution
 pub fn execute(self: *@This()) struct{u8, bool} {
     const set_ime = self.executing_byte == 0xFB; // set the ime flag after this instruction
-    if (!self.halt_bug) {
-        self.executing_byte = self.bus.readByte(self.pc);
-    }
+    // if (!self.halt_bug) {
+    self.executing_byte = self.bus.readByte(self.pc);
+    // }
 
     var prefixed = false;
     if (self.executing_byte == 0xCB) { // prefix byte
@@ -41,8 +41,7 @@ pub fn execute(self: *@This()) struct{u8, bool} {
         self.executing_byte = self.bus.readByte(self.pc);
     }
     const cycles_spent = InstructionSet.exe_from_byte(self, prefixed);
-    self.bus.handler.ime = set_ime;
-    self.bus.handler.handle(self);
+    if (set_ime) self.bus.handler.ime = true;
     if (self.step) {
         self.break_exe();
         return .{cycles_spent, true};
