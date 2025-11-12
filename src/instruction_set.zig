@@ -4,7 +4,7 @@ pub const Condition = union(enum) { none, z, c, nz, nc };
 pub fn INVALID(cpu: *CPU, _: InstrArgs) u8 {
     // This instruction should never be called
     _ = cpu;
-    return 0;
+    @panic("Attempt to execute invalid instruction");
 }
 pub fn NOP(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("NOP", .{});
@@ -19,13 +19,11 @@ pub fn STOP(cpu: *CPU, _: InstrArgs) u8 {
 }
 pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
     const debug = "HALT @pc[{X}]";
-    print(debug ++ "\n", .{cpu.pc});
+    // print(debug ++ "\n", .{cpu.pc});
     cpu.pushToExecutionChain(debug, .{cpu.pc});
-    switch(cpu.halted) {
+    switch (cpu.halted) {
         false => { // first entry
             cpu.halted = true;
-        },
-        true => { // still halted, we have returned 
             switch (cpu.bus.handler.ime) {
                 true => {
                     if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
@@ -35,13 +33,29 @@ pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
                 },
                 false => {
                     if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
-                        cpu.halt_bug = true;
+                        cpu.halted = false;
+                        cpu.halt_bug_state = 1;
+                        cpu.pc += 1;
+                    }
+                },
+            }
+        },
+        true => { // still halted, we have returned
+            switch (cpu.bus.handler.ime) {
+                true => {
+                    if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
+                        cpu.bus.handler.handle(cpu);
+                        cpu.halted = false;
+                    }
+                },
+                false => {
+                    if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
                         cpu.halted = false;
                         cpu.pc += 1;
                     }
-                }
+                },
             }
-        }
+        },
     }
     return 1;
 }
@@ -62,15 +76,15 @@ pub fn LDr8(cpu: *CPU, args: InstrArgs) u8 { // LD r8, r8
     cpu.pc += 1;
     return 1;
 }
-pub fn LDr8HL(cpu: *CPU, args: InstrArgs) u8 { // LD r8, [HL] TODO: trying to encode ld [hl], [hl] instead yields the halt instruction:
+pub fn LDr8HL(cpu: *CPU, args: InstrArgs) u8 { // LD r8, [HL]
     // const hl = cpu.get_word(regID.h);
     const value = cpu.bus.readByte(cpu.get_word(regID.h));
     if (args.target == .l and value == 0x1B) {
-        print("HERE\n\n\t\tLD r8, [HL] | {any} <-- 0x{X} @(0x{X}) pc[{X}]\n", .{args.target, value, cpu.get_word(regID.h), cpu.pc});
+        print("HERE\n\n\t\tLD r8, [HL] | {any} <-- 0x{X} @(0x{X}) pc[{X}]\n", .{ args.target, value, cpu.get_word(regID.h), cpu.pc });
         // cpu.break_exe();
     }
 
-    cpu.pushToExecutionChain("LD r8, [HL] | {any} <-- 0x{X}", .{args.target, value});
+    cpu.pushToExecutionChain("LD r8, [HL] | {any} <-- 0x{X}", .{ args.target, value });
     cpu.set_byte(args.target, value);
     cpu.pc += 1;
     return 2;
@@ -407,7 +421,7 @@ pub fn ADDAn8(cpu: *CPU, _: InstrArgs) u8 { //
 pub fn ADDSPn8(cpu: *CPU, _: InstrArgs) u8 {
     const value: i8 = @bitCast(cpu.bus.readByte(cpu.pc + 1));
     const debug = "ADDSPn8 | SP 0x{X} + 0x{X}";
-    cpu.pushToExecutionChain(debug, .{cpu.sp, value});
+    cpu.pushToExecutionChain(debug, .{ cpu.sp, value });
     // print(debug ++ "\n", .{cpu.sp, value});
     const res = mixedSignArithmetic(cpu.sp, value, i17);
     const s = false;
@@ -638,7 +652,7 @@ pub fn INCHL(cpu: *CPU, _: InstrArgs) u8 { // increment the value of the byte po
     const c = cpu.f.cFlag();
     cpu.f.write(z, c, h, s);
     cpu.pc += 1;
-    return 2;
+    return 3;
 }
 pub fn DECr16(cpu: *CPU, args: InstrArgs) u8 { // decrement any 16 bit register;
     const value = cpu.get_word(args.target);
@@ -666,7 +680,7 @@ pub fn DECHL(cpu: *CPU, _: InstrArgs) u8 { // decrement the value of the byte po
     cpu.f.write(z, c, h, s);
     cpu.pushToExecutionChain("DECHL | mem@hl: 0x{X} - 1 = 0x{X}", .{ value, res });
     cpu.pc += 1;
-    return 2;
+    return 3;
 }
 pub fn ADDHLr16(cpu: *CPU, args: InstrArgs) u8 {
     const hl = cpu.get_word(regID.h);
@@ -674,7 +688,7 @@ pub fn ADDHLr16(cpu: *CPU, args: InstrArgs) u8 {
     const debug = "ADDHLr16 | {any} + hl, {d} + {d}";
     cpu.pushToExecutionChain(debug, .{ args.target, value, hl });
     // print(debug, .{ args.target, value, hl });
-    const res: struct {u16, u1} = @addWithOverflow(hl, value);
+    const res: struct { u16, u1 } = @addWithOverflow(hl, value);
     const s = false;
     const h = detectHalfCarry(hl, value, .add);
     const c = res[1] == 1;
@@ -692,7 +706,7 @@ pub fn ADDHLSP(cpu: *CPU, _: InstrArgs) u8 {
     const debug = "ADDHLSP | SP + hl, 0x{X} + 0x{X}";
     cpu.pushToExecutionChain(debug, .{ value, hl });
     // print(debug, .{ value, hl });
-    const res: struct {u16, u1} = @addWithOverflow(hl, value);
+    const res: struct { u16, u1 } = @addWithOverflow(hl, value);
     const s = false;
     const h = detectHalfCarry(hl, value, .add);
     const c = res[1] == 1;
@@ -733,13 +747,13 @@ pub fn DI(cpu: *CPU, _: InstrArgs) u8 {
     // print("DI!\n\n", .{});
     const prior = cpu.bus.handler.ime;
     const debug = "DI | ime prior: {any}, ime post op: {any}";
-    print(debug ++ "\n", .{prior, cpu.bus.handler.ime});
+    print(debug ++ "\n", .{ prior, cpu.bus.handler.ime });
     cpu.bus.handler.ime = false;
-    cpu.pushToExecutionChain(debug, .{prior, cpu.bus.handler.ime});
+    cpu.pushToExecutionChain(debug, .{ prior, cpu.bus.handler.ime });
     cpu.pc += 1;
     return 1;
 }
-pub fn PUSH(cpu: *CPU, args: InstrArgs) u8 { // TODO fix this for speed
+pub fn PUSH(cpu: *CPU, args: InstrArgs) u8 {
     var high: u8 = undefined;
     var low: u8 = undefined;
     // print("[pc]:0x{X}\t", .{cpu.pc});
@@ -923,7 +937,7 @@ pub fn RLHL(cpu: *CPU, _: InstrArgs) u8 { // C <- [7 <- 0] <- C Rotate bits in r
     cpu.bus.writeByte(mem_place, rotated);
     cpu.pushToExecutionChain("RLHL | b.{b}", .{byte});
     cpu.pc += 1;
-    return 2;
+    return 4;
 }
 pub fn RRCr8(cpu: *CPU, args: InstrArgs) u8 { //Rotate register right. 0 -> [7 -> 0] -> C
     cpu.pushToExecutionChain("RRCr8 | target {any} << 1", .{args.target});
@@ -981,7 +995,7 @@ pub fn RRHL(cpu: *CPU, _: InstrArgs) u8 { // C -> [7 -> 0] -> C Rotate bits in r
     cpu.bus.writeByte(mem_place, rotated);
     cpu.pushToExecutionChain("RRHL | b.{b}", .{byte});
     cpu.pc += 1;
-    return 2;
+    return 4;
 }
 pub fn SLAr8(cpu: *CPU, args: InstrArgs) u8 { // Shift Left Arithmetic register r8. C <- [7 <- 0] <- 0
     const reg = cpu.get_byte(args.target);
@@ -1227,7 +1241,7 @@ pub fn RETI(cpu: *CPU, _: InstrArgs) u8 {
     const low = popped[0];
     const high = popped[1];
     const jumpto = @as(u16, high) << 8 | low;
-    cpu.pushToExecutionChain("RETI | jumpto pc[{X:04}]", .{ jumpto });
+    cpu.pushToExecutionChain("RETI | jumpto pc[{X:04}]", .{jumpto});
     cpu.pc = jumpto;
     cpu.bus.handler.ime = true;
     return 4;
@@ -1237,530 +1251,3140 @@ pub inline fn fmtInsDebug(string: []const u8, args: anytype) []const u8 {
     var buffer: [CPU.Log.MAX_CHAR]u8 = undefined;
     return std.fmt.bufPrint(&buffer, string, args) catch unreachable;
 }
-// opcode to exe
-//
-pub inline fn exe_from_byte(cpu: *CPU, prefixed: bool) u8 {
-    return switch (prefixed) {
-        false => switch (cpu.executing_byte) {
-            0x00 => NOP(cpu, .{ .none = {} }),
-            0x01 => LD16(cpu, .{ .target = regID.b }),
-            0x02 => LDr16A(cpu, .{ .target = regID.b }),
-            0x03 => INCr16(cpu, .{ .target = regID.b }),
-            0x04 => INCr8(cpu, .{ .target = regID.b }),
-            0x05 => DECr8(cpu, .{ .target = regID.b }),
-            0x06 => LD8(cpu, .{ .target = regID.b }),
-            0x07 => RLCA(cpu, .{ .none = {} }),
-            0x08 => LDn16SP(cpu, .{ .none = {} }),
-            0x09 => ADDHLr16(cpu, .{ .target = regID.b }),
-            0x0A => LDAr16(cpu, .{ .target = regID.b }),
-            0x0B => DECr16(cpu, .{ .target = regID.b }),
-            0x0C => INCr8(cpu, .{ .target = regID.c }),
-            0x0D => DECr8(cpu, .{ .target = regID.c }),
-            0x0E => LD8(cpu, .{ .target = regID.c }),
-            0x0F => RRCA(cpu, .{ .none = {} }),
-            0x10 => STOP(cpu, .{ .none = {} }), // STOP
-            0x11 => LD16(cpu, .{ .target = regID.d }),
-            0x12 => LDr16A(cpu, .{ .target = regID.d }),
-            0x13 => INCr16(cpu, .{ .target = regID.d }),
-            0x14 => INCr8(cpu, .{ .target = regID.d }),
-            0x15 => DECr8(cpu, .{ .target = regID.d }),
-            0x16 => LD8(cpu, .{ .target = regID.d }),
-            0x17 => RLA(cpu, .{ .none = {} }),
-            0x18 => JR(cpu, .{ .flagConditions = .none }),
-            0x19 => ADDHLr16(cpu, .{ .target = regID.d }),
-            0x1A => LDAr16(cpu, .{ .target = regID.d }),
-            0x1B => DECr16(cpu, .{ .target = regID.d }),
-            0x1C => INCr8(cpu, .{ .target = regID.e }),
-            0x1D => DECr8(cpu, .{ .target = regID.e }),
-            0x1E => LD8(cpu, .{ .target = regID.e }),
-            0x1F => RRA(cpu, .{ .none = {} }),
-            0x20 => JR(cpu, .{ .flagConditions = .nz }),
-            0x21 => LD16(cpu, .{ .target = regID.h }),
-            0x22 => LDHLIA(cpu, .{ .none = {} }),
-            0x23 => INCr16(cpu, .{ .target = regID.h }),
-            0x24 => INCr8(cpu, .{ .target = regID.h }),
-            0x25 => DECr8(cpu, .{ .target = regID.h }),
-            0x26 => LD8(cpu, .{ .target = regID.h }),
-            0x27 => DAA(cpu, .{ .none = {} }),
-            0x28 => JR(cpu, .{ .flagConditions = .z }),
-            0x29 => ADDHLr16(cpu, .{ .target = regID.h }),
-            0x2A => LDAHL(cpu, .{ .hl_mod = 1 }),
-            0x2B => DECr16(cpu, .{ .target = regID.h }),
-            0x2C => INCr8(cpu, .{ .target = regID.l }),
-            0x2D => DECr8(cpu, .{ .target = regID.l }),
-            0x2E => LD8(cpu, .{ .target = regID.l }),
-            0x2F => CPL(cpu, .{ .none = {} }),
-            0x30 => JR(cpu, .{ .flagConditions = .nc }),
-            0x31 => LDSP16(cpu, .{ .none = {} }),
-            0x32 => LDHLDA(cpu, .{ .none = {} }),
-            0x33 => INCSP(cpu, .{ .none = {} }),
-            0x34 => INCHL(cpu, .{ .none = {} }),
-            0x35 => DECHL(cpu, .{ .none = {} }),
-            0x36 => LDHL8(cpu, .{ .none = {} }),
-            0x37 => SCF(cpu, .{ .none = {} }),
-            0x38 => JR(cpu, .{ .flagConditions = .c }),
-            0x39 => ADDHLSP(cpu, .{ .none = {} }),
-            0x3A => LDAHL(cpu, .{ .hl_mod = -1 }),
-            0x3B => DECSP(cpu, .{ .none = {} }),
-            0x3C => INCr8(cpu, .{ .target = regID.a }),
-            0x3D => DECr8(cpu, .{ .target = regID.a }),
-            0x3E => LD8(cpu, .{ .target = regID.a }),
-            0x3F => CCF(cpu, .{ .none = {} }),
-            0x40 => LDr8(cpu, .{ .targets = .{ .to = .b, .from = .b } }),
-            0x41 => LDr8(cpu, .{ .targets = .{ .to = .b, .from = .c } }),
-            0x42 => LDr8(cpu, .{ .targets = .{ .to = .b, .from = .d } }),
-            0x43 => LDr8(cpu, .{ .targets = .{ .to = .b, .from = .e } }),
-            0x44 => LDr8(cpu, .{ .targets = .{ .to = .b, .from = .h } }),
-            0x45 => LDr8(cpu, .{ .targets = .{ .to = .b, .from = .l } }),
-            0x46 => LDr8HL(cpu, .{ .target = regID.b }),
-            0x47 => LDr8(cpu, .{ .targets = .{ .to = .b, .from = .a } }),
-            0x48 => LDr8(cpu, .{ .targets = .{ .to = .c, .from = .b } }),
-            0x49 => LDr8(cpu, .{ .targets = .{ .to = .c, .from = .c } }),
-            0x4A => LDr8(cpu, .{ .targets = .{ .to = .c, .from = .d } }),
-            0x4B => LDr8(cpu, .{ .targets = .{ .to = .c, .from = .e } }),
-            0x4C => LDr8(cpu, .{ .targets = .{ .to = .c, .from = .h } }),
-            0x4D => LDr8(cpu, .{ .targets = .{ .to = .c, .from = .l } }),
-            0x4E => LDr8HL(cpu, .{ .target = regID.c }),
-            0x4F => LDr8(cpu, .{ .targets = .{ .to = .c, .from = .a } }),
-            0x50 => LDr8(cpu, .{ .targets = .{ .to = .d, .from = .b } }),
-            0x51 => LDr8(cpu, .{ .targets = .{ .to = .d, .from = .c } }),
-            0x52 => LDr8(cpu, .{ .targets = .{ .to = .d, .from = .d } }),
-            0x53 => LDr8(cpu, .{ .targets = .{ .to = .d, .from = .e } }),
-            0x54 => LDr8(cpu, .{ .targets = .{ .to = .d, .from = .h } }),
-            0x55 => LDr8(cpu, .{ .targets = .{ .to = .d, .from = .l } }),
-            0x56 => LDr8HL(cpu, .{ .target = regID.d }),
-            0x57 => LDr8(cpu, .{ .targets = .{ .to = .d, .from = .a } }),
-            0x58 => LDr8(cpu, .{ .targets = .{ .to = .e, .from = .b } }),
-            0x59 => LDr8(cpu, .{ .targets = .{ .to = .e, .from = .c } }),
-            0x5A => LDr8(cpu, .{ .targets = .{ .to = .e, .from = .d } }),
-            0x5B => LDr8(cpu, .{ .targets = .{ .to = .e, .from = .e } }),
-            0x5C => LDr8(cpu, .{ .targets = .{ .to = .e, .from = .h } }),
-            0x5D => LDr8(cpu, .{ .targets = .{ .to = .e, .from = .l } }),
-            0x5E => LDr8HL(cpu, .{ .target = regID.e }),
-            0x5F => LDr8(cpu, .{ .targets = .{ .to = .e, .from = .a } }),
-            0x60 => LDr8(cpu, .{ .targets = .{ .to = .h, .from = .b } }),
-            0x61 => LDr8(cpu, .{ .targets = .{ .to = .h, .from = .c } }),
-            0x62 => LDr8(cpu, .{ .targets = .{ .to = .h, .from = .d } }),
-            0x63 => LDr8(cpu, .{ .targets = .{ .to = .h, .from = .e } }),
-            0x64 => LDr8(cpu, .{ .targets = .{ .to = .h, .from = .h } }),
-            0x65 => LDr8(cpu, .{ .targets = .{ .to = .h, .from = .l } }),
-            0x66 => LDr8HL(cpu, .{ .target = regID.h }),
-            0x67 => LDr8(cpu, .{ .targets = .{ .to = .h, .from = .a } }),
-            0x68 => LDr8(cpu, .{ .targets = .{ .to = .l, .from = .b } }),
-            0x69 => LDr8(cpu, .{ .targets = .{ .to = .l, .from = .c } }),
-            0x6A => LDr8(cpu, .{ .targets = .{ .to = .l, .from = .d } }),
-            0x6B => LDr8(cpu, .{ .targets = .{ .to = .l, .from = .e } }),
-            0x6C => LDr8(cpu, .{ .targets = .{ .to = .l, .from = .h } }),
-            0x6D => LDr8(cpu, .{ .targets = .{ .to = .l, .from = .l } }),
-            0x6E => LDr8HL(cpu, .{ .target = regID.l }),
-            0x6F => LDr8(cpu, .{ .targets = .{ .to = .l, .from = .a } }),
-            0x70 => LDHLr8(cpu, .{ .target = regID.b }),
-            0x71 => LDHLr8(cpu, .{ .target = regID.c }),
-            0x72 => LDHLr8(cpu, .{ .target = regID.d }),
-            0x73 => LDHLr8(cpu, .{ .target = regID.e }),
-            0x74 => LDHLr8(cpu, .{ .target = regID.h }),
-            0x75 => LDHLr8(cpu, .{ .target = regID.l }),
-            0x76 => HALT(cpu, .{ .none = {} }), // HALT
-            0x77 => LDHLr8(cpu, .{ .target = regID.a }),
-            0x78 => LDr8(cpu, .{ .targets = .{ .to = .a, .from = .b } }),
-            0x79 => LDr8(cpu, .{ .targets = .{ .to = .a, .from = .c } }),
-            0x7A => LDr8(cpu, .{ .targets = .{ .to = .a, .from = .d } }),
-            0x7B => LDr8(cpu, .{ .targets = .{ .to = .a, .from = .e } }),
-            0x7C => LDr8(cpu, .{ .targets = .{ .to = .a, .from = .h } }),
-            0x7D => LDr8(cpu, .{ .targets = .{ .to = .a, .from = .l } }),
-            0x7E => LDr8HL(cpu, .{ .target = regID.a }),
-            0x7F => LDr8(cpu, .{ .targets = .{ .to = regID.a, .from = regID.a } }),
-            0x80 => ADDAr8(cpu, .{ .target = regID.b }),
-            0x81 => ADDAr8(cpu, .{ .target = regID.c }),
-            0x82 => ADDAr8(cpu, .{ .target = regID.d }),
-            0x83 => ADDAr8(cpu, .{ .target = regID.e }),
-            0x84 => ADDAr8(cpu, .{ .target = regID.h }),
-            0x85 => ADDAr8(cpu, .{ .target = regID.l }),
-            0x86 => ADDAHL(cpu, .{ .none = {} }),
-            0x87 => ADDAr8(cpu, .{ .target = regID.a }),
-            0x88 => ADCAr8(cpu, .{ .target = regID.b }),
-            0x89 => ADCAr8(cpu, .{ .target = regID.c }),
-            0x8A => ADCAr8(cpu, .{ .target = regID.d }),
-            0x8B => ADCAr8(cpu, .{ .target = regID.e }),
-            0x8C => ADCAr8(cpu, .{ .target = regID.h }),
-            0x8D => ADCAr8(cpu, .{ .target = regID.l }),
-            0x8E => ADCAHL(cpu, .{ .none = {} }),
-            0x8F => ADCAr8(cpu, .{ .target = regID.a }),
-            0x90 => SUBAr8(cpu, .{ .target = regID.b }),
-            0x91 => SUBAr8(cpu, .{ .target = regID.c }),
-            0x92 => SUBAr8(cpu, .{ .target = regID.d }),
-            0x93 => SUBAr8(cpu, .{ .target = regID.e }),
-            0x94 => SUBAr8(cpu, .{ .target = regID.h }),
-            0x95 => SUBAr8(cpu, .{ .target = regID.l }),
-            0x96 => SUBAHL(cpu, .{ .none = {} }),
-            0x97 => SUBAr8(cpu, .{ .target = regID.a }),
-            0x98 => SBCAr8(cpu, .{ .target = regID.b }),
-            0x99 => SBCAr8(cpu, .{ .target = regID.c }),
-            0x9A => SBCAr8(cpu, .{ .target = regID.d }),
-            0x9B => SBCAr8(cpu, .{ .target = regID.e }),
-            0x9C => SBCAr8(cpu, .{ .target = regID.h }),
-            0x9D => SBCAr8(cpu, .{ .target = regID.l }),
-            0x9E => SBCAHL(cpu, .{ .none = {} }),
-            0x9F => SBCAr8(cpu, .{ .target = regID.a }),
-            0xA0 => ANDr8(cpu, .{ .target = regID.b }),
-            0xA1 => ANDr8(cpu, .{ .target = regID.c }),
-            0xA2 => ANDr8(cpu, .{ .target = regID.d }),
-            0xA3 => ANDr8(cpu, .{ .target = regID.e }),
-            0xA4 => ANDr8(cpu, .{ .target = regID.h }),
-            0xA5 => ANDr8(cpu, .{ .target = regID.l }),
-            0xA6 => ANDHL(cpu, .{ .none = {} }),
-            0xA7 => ANDr8(cpu, .{ .target = regID.a }),
-            0xA8 => XORr8(cpu, .{ .target = regID.b }),
-            0xA9 => XORr8(cpu, .{ .target = regID.c }),
-            0xAA => XORr8(cpu, .{ .target = regID.d }),
-            0xAB => XORr8(cpu, .{ .target = regID.e }),
-            0xAC => XORr8(cpu, .{ .target = regID.h }),
-            0xAD => XORr8(cpu, .{ .target = regID.l }),
-            0xAE => XORHL(cpu, .{ .none = {} }),
-            0xAF => XORr8(cpu, .{ .target = regID.a }),
-            0xB0 => ORr8(cpu, .{ .target = regID.b }),
-            0xB1 => ORr8(cpu, .{ .target = regID.c }),
-            0xB2 => ORr8(cpu, .{ .target = regID.d }),
-            0xB3 => ORr8(cpu, .{ .target = regID.e }),
-            0xB4 => ORr8(cpu, .{ .target = regID.h }),
-            0xB5 => ORr8(cpu, .{ .target = regID.l }),
-            0xB6 => ORHL(cpu, .{ .none = {} }),
-            0xB7 => ORr8(cpu, .{ .target = regID.a }),
-            0xB8 => CPAr8(cpu, .{ .target = regID.b }),
-            0xB9 => CPAr8(cpu, .{ .target = regID.c }),
-            0xBA => CPAr8(cpu, .{ .target = regID.d }),
-            0xBB => CPAr8(cpu, .{ .target = regID.e }),
-            0xBC => CPAr8(cpu, .{ .target = regID.h }),
-            0xBD => CPAr8(cpu, .{ .target = regID.l }),
-            0xBE => CPAHL(cpu, .{ .none = {} }),
-            0xBF => CPAr8(cpu, .{ .target = regID.a }),
-            0xC0 => RET(cpu, .{ .flagConditions = .nz }),
-            0xC1 => POP(cpu, .{ .target = regID.b }),
-            0xC2 => JP(cpu, .{ .flagConditions = .nz }),
-            0xC3 => JP(cpu, .{ .flagConditions = .none }),
-            0xC4 => CALLn16(cpu, .{ .flagConditions = .nz }),
-            0xC5 => PUSH(cpu, .{ .target = regID.b }),
-            0xC6 => ADDAn8(cpu, .{ .none = {} }),
-            0xC7 => RST(cpu, .{ .where = 0x0 }),
-            0xC8 => RET(cpu, .{ .flagConditions = .z }),
-            0xC9 => RET(cpu, .{ .flagConditions = .none }),
-            0xCA => JP(cpu, .{ .flagConditions = .z }),
-            0xCB => INVALID(cpu, .{ .none = {} }), // cb prefix
-            0xCC => CALLn16(cpu, .{ .flagConditions = .z }),
-            0xCD => CALLn16(cpu, .{ .flagConditions = .none }),
-            0xCE => ADCAn8(cpu, .{ .none = {} }),
-            0xCF => RST(cpu, .{ .where = 0x08 }),
-            0xD0 => RET(cpu, .{ .flagConditions = .nc }),
-            0xD1 => POP(cpu, .{ .target = regID.d }),
-            0xD2 => JP(cpu, .{ .flagConditions = .nc }),
-            0xD3 => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xD4 => CALLn16(cpu, .{ .flagConditions = .nc }),
-            0xD5 => PUSH(cpu, .{ .target = regID.d }),
-            0xD6 => SUBAn8(cpu, .{ .none = {} }),
-            0xD7 => RST(cpu, .{ .where = 0x10 }),
-            0xD8 => RET(cpu, .{ .flagConditions = .c }),
-            0xD9 => RETI(cpu, .{ .none = {} }),
-            0xDA => JP(cpu, .{ .flagConditions = .c }),
-            0xDB => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xDC => CALLn16(cpu, .{ .flagConditions = .c }),
-            0xDD => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xDE => SBCAn8(cpu, .{ .none = {} }),
-            0xDF => RST(cpu, .{ .where = 0x18 }),
-            0xE0 => LDHn16A(cpu, .{ .none = {} }),
-            0xE1 => POP(cpu, .{ .target = regID.h }),
-            0xE2 => LDHCA(cpu, .{ .none = {} }),
-            0xE3 => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xE4 => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xE5 => PUSH(cpu, .{ .target = regID.h }),
-            0xE6 => ANDn8(cpu, .{ .none = {} }),
-            0xE7 => RST(cpu, .{ .where = 0x20 }),
-            0xE8 => ADDSPn8(cpu, .{ .none = {} }),
-            0xE9 => JPHL(cpu, .{ .none = {} }),
-            0xEA => LDn16A(cpu, .{ .none = {} }),
-            0xEB => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xEC => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xED => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xEE => XORn8(cpu, .{ .none = {} }),
-            0xEF => RST(cpu, .{ .where = 0x28 }),
-            0xF0 => LDHAn16(cpu, .{ .none = {} }),
-            0xF1 => POP(cpu, .{ .target = regID.a }),
-            0xF2 => LDHAC(cpu, .{ .none = {} }),
-            0xF3 => DI(cpu, .{ .none = {} }),
-            0xF4 => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xF5 => PUSH(cpu, .{ .target = regID.a }),
-            0xF6 => ORn8(cpu, .{ .none = {} }),
-            0xF7 => RST(cpu, .{ .where = 0x30 }),
-            0xF8 => LDHLSPn8(cpu, .{ .none = {} }),
-            0xF9 => LDSPHL(cpu, .{ .none = {} }),
-            0xFA => LDAn16(cpu, .{ .none = {} }),
-            0xFB => EI(cpu, .{ .none = {} }),
-            0xFC => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xFD => INVALID(cpu, .{ .none = {} }), // undefined instruction
-            0xFE => CPAn8(cpu, .{ .none = {} }),
-            0xFF => RST(cpu, .{ .where = 0x38 }),
-        },
-        true => switch (cpu.executing_byte) {
-            0x00 => RLCr8(cpu, .{ .target = regID.b }),
-            0x01 => RLCr8(cpu, .{ .target = regID.c }),
-            0x02 => RLCr8(cpu, .{ .target = regID.d }),
-            0x03 => RLCr8(cpu, .{ .target = regID.e }),
-            0x04 => RLCr8(cpu, .{ .target = regID.h }),
-            0x05 => RLCr8(cpu, .{ .target = regID.l }),
-            0x06 => RLCHL(cpu, .{ .none = {} }),
-            0x07 => RLCr8(cpu, .{ .target = regID.a }),
-            0x08 => RRCr8(cpu, .{ .target = regID.b }),
-            0x09 => RRCr8(cpu, .{ .target = regID.c }),
-            0x0A => RRCr8(cpu, .{ .target = regID.d }),
-            0x0B => RRCr8(cpu, .{ .target = regID.e }),
-            0x0C => RRCr8(cpu, .{ .target = regID.h }),
-            0x0D => RRCr8(cpu, .{ .target = regID.l }),
-            0x0E => RRCHL(cpu, .{ .none = {} }),
-            0x0F => RRCr8(cpu, .{ .target = regID.a }),
-            0x10 => RLr8(cpu, .{ .target = regID.b }),
-            0x11 => RLr8(cpu, .{ .target = regID.c }),
-            0x12 => RLr8(cpu, .{ .target = regID.d }),
-            0x13 => RLr8(cpu, .{ .target = regID.e }),
-            0x14 => RLr8(cpu, .{ .target = regID.h }),
-            0x15 => RLr8(cpu, .{ .target = regID.l }),
-            0x16 => RLHL(cpu, .{ .none = {} }),
-            0x17 => RLr8(cpu, .{ .target = regID.a }),
-            0x18 => RRr8(cpu, .{ .target = regID.b }),
-            0x19 => RRr8(cpu, .{ .target = regID.c }),
-            0x1A => RRr8(cpu, .{ .target = regID.d }),
-            0x1B => RRr8(cpu, .{ .target = regID.e }),
-            0x1C => RRr8(cpu, .{ .target = regID.h }),
-            0x1D => RRr8(cpu, .{ .target = regID.l }),
-            0x1E => RRHL(cpu, .{ .none = {} }),
-            0x1F => RRr8(cpu, .{ .target = regID.a }),
-            0x20 => SLAr8(cpu, .{ .target = regID.b }),
-            0x21 => SLAr8(cpu, .{ .target = regID.c }),
-            0x22 => SLAr8(cpu, .{ .target = regID.d }),
-            0x23 => SLAr8(cpu, .{ .target = regID.e }),
-            0x24 => SLAr8(cpu, .{ .target = regID.h }),
-            0x25 => SLAr8(cpu, .{ .target = regID.l }),
-            0x26 => SLAHL(cpu, .{ .none = {} }),
-            0x27 => SLAr8(cpu, .{ .target = regID.a }),
-            0x28 => SRAr8(cpu, .{ .target = regID.b }),
-            0x29 => SRAr8(cpu, .{ .target = regID.c }),
-            0x2A => SRAr8(cpu, .{ .target = regID.d }),
-            0x2B => SRAr8(cpu, .{ .target = regID.e }),
-            0x2C => SRAr8(cpu, .{ .target = regID.h }),
-            0x2D => SRAr8(cpu, .{ .target = regID.l }),
-            0x2E => SRAHL(cpu, .{ .none = {} }),
-            0x2F => SRAr8(cpu, .{ .target = regID.a }),
-            0x30 => SWAPr8(cpu, .{ .target = regID.b }),
-            0x31 => SWAPr8(cpu, .{ .target = regID.c }),
-            0x32 => SWAPr8(cpu, .{ .target = regID.d }),
-            0x33 => SWAPr8(cpu, .{ .target = regID.e }),
-            0x34 => SWAPr8(cpu, .{ .target = regID.h }),
-            0x35 => SWAPr8(cpu, .{ .target = regID.l }),
-            0x36 => SWAPHL(cpu, .{ .none = {} }),
-            0x37 => SWAPr8(cpu, .{ .target = regID.a }),
-            0x38 => SRLr8(cpu, .{ .target = regID.b }),
-            0x39 => SRLr8(cpu, .{ .target = regID.c }),
-            0x3A => SRLr8(cpu, .{ .target = regID.d }),
-            0x3B => SRLr8(cpu, .{ .target = regID.e }),
-            0x3C => SRLr8(cpu, .{ .target = regID.h }),
-            0x3D => SRLr8(cpu, .{ .target = regID.l }),
-            0x3E => SRLHL(cpu, .{ .none = {} }),
-            0x3F => SRLr8(cpu, .{ .target = regID.a }),
-            0x40 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 0 } }),
-            0x41 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 0 } }),
-            0x42 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 0 } }),
-            0x43 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 0 } }),
-            0x44 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 0 } }),
-            0x45 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 0 } }),
-            0x46 => BITTESTHL(cpu, .{ .bit = 0 }),
-            0x47 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 0 } }),
-            0x48 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 1 } }),
-            0x49 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 1 } }),
-            0x4A => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 1 } }),
-            0x4B => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 1 } }),
-            0x4C => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 1 } }),
-            0x4D => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 1 } }),
-            0x4E => BITTESTHL(cpu, .{ .bit = 1 }),
-            0x4F => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 1 } }),
-            0x50 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 2 } }),
-            0x51 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 2 } }),
-            0x52 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 2 } }),
-            0x53 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 2 } }),
-            0x54 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 2 } }),
-            0x55 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 2 } }),
-            0x56 => BITTESTHL(cpu, .{ .bit = 2 }),
-            0x57 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 2 } }),
-            0x58 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 3 } }),
-            0x59 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 3 } }),
-            0x5A => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 3 } }),
-            0x5B => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 3 } }),
-            0x5C => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 3 } }),
-            0x5D => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 3 } }),
-            0x5E => BITTESTHL(cpu, .{ .bit = 3 }),
-            0x5F => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 3 } }),
-            0x60 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 4 } }),
-            0x61 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 4 } }),
-            0x62 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 4 } }),
-            0x63 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 4 } }),
-            0x64 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 4 } }),
-            0x65 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 4 } }),
-            0x66 => BITTESTHL(cpu, .{ .bit = 4 }),
-            0x67 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 4 } }),
-            0x68 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 5 } }),
-            0x69 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 5 } }),
-            0x6A => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 5 } }),
-            0x6B => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 5 } }),
-            0x6C => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 5 } }),
-            0x6D => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 5 } }),
-            0x6E => BITTESTHL(cpu, .{ .bit = 5 }),
-            0x6F => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 5 } }),
-            0x70 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 6 } }),
-            0x71 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 6 } }),
-            0x72 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 6 } }),
-            0x73 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 6 } }),
-            0x74 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 6 } }),
-            0x75 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 6 } }),
-            0x76 => BITTESTHL(cpu, .{ .bit = 6 }),
-            0x77 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 6 } }),
-            0x78 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 7 } }),
-            0x79 => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 7 } }),
-            0x7A => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 7 } }),
-            0x7B => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 7 } }),
-            0x7C => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 7 } }),
-            0x7D => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 7 } }),
-            0x7E => BITTESTHL(cpu, .{ .bit = 7 }),
-            0x7F => BITTESTr8(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 7 } }),
-            0x80 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 0 } }),
-            0x81 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 0 } }),
-            0x82 => RES(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 0 } }),
-            0x83 => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 0 } }),
-            0x84 => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 0 } }),
-            0x85 => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 0 } }),
-            0x86 => RESHL(cpu, .{ .bit = 0 }),
-            0x87 => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 0 } }),
-            0x88 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 1 } }),
-            0x89 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 1 } }),
-            0x8A => RES(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 1 } }),
-            0x8B => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 1 } }),
-            0x8C => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 1 } }),
-            0x8D => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 1 } }),
-            0x8E => RESHL(cpu, .{ .bit = 1 }),
-            0x8F => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 1 } }),
-            0x90 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 2 } }),
-            0x91 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 2 } }),
-            0x92 => RES(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 2 } }),
-            0x93 => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 2 } }),
-            0x94 => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 2 } }),
-            0x95 => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 2 } }),
-            0x96 => RESHL(cpu, .{ .bit = 2 }),
-            0x97 => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 2 } }),
-            0x98 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 3 } }),
-            0x99 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 3 } }),
-            0x9A => RES(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 3 } }),
-            0x9B => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 3 } }),
-            0x9C => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 3 } }),
-            0x9D => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 3 } }),
-            0x9E => RESHL(cpu, .{ .bit = 3 }),
-            0x9F => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 3 } }),
-            0xA0 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 4 } }),
-            0xA1 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 4 } }),
-            0xA2 => RES(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 4 } }),
-            0xA3 => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 4 } }),
-            0xA4 => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 4 } }),
-            0xA5 => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 4 } }),
-            0xA6 => RESHL(cpu, .{ .bit = 4 }),
-            0xA7 => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 4 } }),
-            0xA8 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 5 } }),
-            0xA9 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 5 } }),
-            0xAA => RES(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 5 } }),
-            0xAB => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 5 } }),
-            0xAC => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 5 } }),
-            0xAD => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 5 } }),
-            0xAE => RESHL(cpu, .{ .bit = 5 }),
-            0xAF => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 5 } }),
-            0xB0 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 6 } }),
-            0xB1 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 6 } }),
-            0xB2 => RES(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 6 } }),
-            0xB3 => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 6 } }),
-            0xB4 => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 6 } }),
-            0xB5 => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 6 } }),
-            0xB6 => RESHL(cpu, .{ .bit = 6 }),
-            0xB7 => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 6 } }),
-            0xB8 => RES(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 7 } }),
-            0xB9 => RES(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 7 } }),
-            0xBA => RES(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 7 } }),
-            0xBB => RES(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 7 } }),
-            0xBC => RES(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 7 } }),
-            0xBD => RES(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 7 } }),
-            0xBE => RESHL(cpu, .{.bit = 7,}),
-            0xBF => RES(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 7 } }),
-            0xC0 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 0 } }),
-            0xC1 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 0 } }),
-            0xC2 => SET(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 0 } }),
-            0xC3 => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 0 } }),
-            0xC4 => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 0 } }),
-            0xC5 => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 0 } }),
-            0xC6 => SETHL(cpu, .{ .bit = 0 }),
-            0xC7 => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 0 } }),
-            0xC8 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 1 } }),
-            0xC9 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 1 } }),
-            0xCA => SET(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 1 } }),
-            0xCB => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 1 } }),
-            0xCC => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 1 } }),
-            0xCD => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 1 } }),
-            0xCE => SETHL(cpu, .{ .bit = 1 }),
-            0xCF => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 1 } }),
-            0xD0 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 2 } }),
-            0xD1 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 2 } }),
-            0xD2 => SET(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 2 } }),
-            0xD3 => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 2 } }),
-            0xD4 => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 2 } }),
-            0xD5 => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 2 } }),
-            0xD6 => SETHL(cpu, .{ .bit = 2 }),
-            0xD7 => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 2 } }),
-            0xD8 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 3 } }),
-            0xD9 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 3 } }),
-            0xDA => SET(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 3 } }),
-            0xDB => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 3 } }),
-            0xDC => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 3 } }),
-            0xDD => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 3 } }),
-            0xDE => SETHL(cpu, .{ .bit = 3 }),
-            0xDF => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 3 } }),
-            0xE0 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 4 } }),
-            0xE1 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 4 } }),
-            0xE2 => SET(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 4 } }),
-            0xE3 => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 4 } }),
-            0xE4 => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 4 } }),
-            0xE5 => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 4 } }),
-            0xE6 => SETHL(cpu, .{ .bit = 4 }),
-            0xE7 => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 4 } }),
-            0xE8 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 5 } }),
-            0xE9 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 5 } }),
-            0xEA => SET(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 5 } }),
-            0xEB => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 5 } }),
-            0xEC => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 5 } }),
-            0xED => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 5 } }),
-            0xEE => SETHL(cpu, .{ .bit = 5 }),
-            0xEF => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 5 } }),
-            0xF0 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 6 } }),
-            0xF1 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 6 } }),
-            0xF2 => SET(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 6 } }),
-            0xF3 => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 6 } }),
-            0xF4 => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 6 } }),
-            0xF5 => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 6 } }),
-            0xF6 => SETHL(cpu, .{ .bit = 6 }),
-            0xF7 => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 6 } }),
-            0xF8 => SET(cpu, .{ .bit_target = .{ .target = regID.b, .bit = 7 } }),
-            0xF9 => SET(cpu, .{ .bit_target = .{ .target = regID.c, .bit = 7 } }),
-            0xFA => SET(cpu, .{ .bit_target = .{ .target = regID.d, .bit = 7 } }),
-            0xFB => SET(cpu, .{ .bit_target = .{ .target = regID.e, .bit = 7 } }),
-            0xFC => SET(cpu, .{ .bit_target = .{ .target = regID.h, .bit = 7 } }),
-            0xFD => SET(cpu, .{ .bit_target = .{ .target = regID.l, .bit = 7 } }),
-            0xFE => SETHL(cpu, .{ .bit = 7 }),
-            0xFF => SET(cpu, .{ .bit_target = .{ .target = regID.a, .bit = 7 } }),
-        },
-    };
-}
+
+const Instr = struct {
+    func: *const InstrFn,
+    args: InstrArgs,
+    cycles: u8,
+    bytes: u8,
+
+    pub inline fn call(self: *const Instr, cpu: *CPU) u8 {
+        return self.func(cpu, self.args);
+    }
+};
+
+pub const instrs = [256]Instr{
+    // 0x00 - 0x0F
+    .{ // 0x00 NOP
+        .func = NOP,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x01 LD BC,d16
+        .func = LD16,
+        .args = .{ .target = regID.b },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0x02 LD (BC),A
+        .func = LDr16A,
+        .args = .{ .target = regID.b },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x03 INC BC
+        .func = INCr16,
+        .args = .{ .target = regID.b },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x04 INC B
+        .func = INCr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x05 DEC B
+        .func = DECr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x06 LD B,d8
+        .func = LD8,
+        .args = .{ .target = regID.b },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0x07 RLCA
+        .func = RLCA,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x08 LD (a16),SP
+        .func = LDn16SP,
+        .args = .{ .none = {} },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0x09 ADD HL,BC
+        .func = ADDHLr16,
+        .args = .{ .target = regID.b },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x0A LD A,(BC)
+        .func = LDAr16,
+        .args = .{ .target = regID.b },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x0B DEC BC
+        .func = DECr16,
+        .args = .{ .target = regID.b },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x0C INC C
+        .func = INCr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x0D DEC C
+        .func = DECr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x0E LD C,d8
+        .func = LD8,
+        .args = .{ .target = regID.c },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0x0F RRCA
+        .func = RRCA,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x10 STOP
+        .func = STOP,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0x11 LD DE,d16
+        .func = LD16,
+        .args = .{ .target = regID.d },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0x12 LD (DE),A
+        .func = LDr16A,
+        .args = .{ .target = regID.d },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x13 INC DE
+        .func = INCr16,
+        .args = .{ .target = regID.d },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x14 INC D
+        .func = INCr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x15 DEC D
+        .func = DECr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x16 LD D,d8
+        .func = LD8,
+        .args = .{ .target = regID.d },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0x17 RLA
+        .func = RLA,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x18 JR r8
+        .func = JR,
+        .args = .{ .flagConditions = .none },
+        .cycles = 3,
+        .bytes = 2,
+    },
+    .{ // 0x19 ADD HL,DE
+        .func = ADDHLr16,
+        .args = .{ .target = regID.d },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x1A LD A,(DE)
+        .func = LDAr16,
+        .args = .{ .target = regID.d },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x1B DEC DE
+        .func = DECr16,
+        .args = .{ .target = regID.d },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x1C INC E
+        .func = INCr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x1D DEC E
+        .func = DECr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x1E LD E,d8
+        .func = LD8,
+        .args = .{ .target = regID.e },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0x1F RRA
+        .func = RRA,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x20 JR NZ,r8
+        .func = JR,
+        .args = .{ .flagConditions = .nz },
+        .cycles = 3,
+        .bytes = 2,
+    },
+    .{ // 0x21 LD HL,d16
+        .func = LD16,
+        .args = .{ .target = regID.h },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0x22 LD (HL+),A
+        .func = LDHLIA,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x23 INC HL
+        .func = INCr16,
+        .args = .{ .target = regID.h },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x24 INC H
+        .func = INCr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x25 DEC H
+        .func = DECr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x26 LD H,d8
+        .func = LD8,
+        .args = .{ .target = regID.h },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0x27 DAA
+        .func = DAA,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x28 JR Z,r8
+        .func = JR,
+        .args = .{ .flagConditions = .z },
+        .cycles = 3,
+        .bytes = 2,
+    },
+    .{ // 0x29 ADD HL,HL
+        .func = ADDHLr16,
+        .args = .{ .target = regID.h },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x2A LD A,(HL+)
+        .func = LDAHL,
+        .args = .{ .hl_mod = 1 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x2B DEC HL
+        .func = DECr16,
+        .args = .{ .target = regID.h },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x2C INC L
+        .func = INCr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x2D DEC L
+        .func = DECr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x2E LD L,d8
+        .func = LD8,
+        .args = .{ .target = regID.l },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0x2F CPL
+        .func = CPL,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x30 JR NC,r8
+        .func = JR,
+        .args = .{ .flagConditions = .nc },
+        .cycles = 3,
+        .bytes = 2,
+    },
+    .{ // 0x31 LD SP,d16
+        .func = LDSP16,
+        .args = .{ .none = {} },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0x32 LD (HL-),A
+        .func = LDHLDA,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x33 INC SP
+        .func = INCSP,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x34 INC (HL)
+        .func = INCHL,
+        .args = .{ .none = {} },
+        .cycles = 3,
+        .bytes = 1,
+    },
+    .{ // 0x35 DEC (HL)
+        .func = DECHL,
+        .args = .{ .none = {} },
+        .cycles = 3,
+        .bytes = 1,
+    },
+    .{ // 0x36 LD (HL),d8
+        .func = LDHL8,
+        .args = .{ .none = {} },
+        .cycles = 3,
+        .bytes = 2,
+    },
+    .{ // 0x37 SCF
+        .func = SCF,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x38 JR C,r8
+        .func = JR,
+        .args = .{ .flagConditions = .c },
+        .cycles = 3,
+        .bytes = 2,
+    },
+    .{ // 0x39 ADD HL,SP
+        .func = ADDHLSP,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x3A LD A,(HL-)
+        .func = LDAHL,
+        .args = .{ .hl_mod = -1 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x3B DEC SP
+        .func = DECSP,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x3C INC A
+        .func = INCr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x3D DEC A
+        .func = DECr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x3E LD A,d8
+        .func = LD8,
+        .args = .{ .target = regID.a },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0x3F CCF
+        .func = CCF,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x40 LD B,B
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .b, .from = .b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x41 LD B,C
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .b, .from = .c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x42 LD B,D
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .b, .from = .d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x43 LD B,E
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .b, .from = .e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x44 LD B,H
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .b, .from = .h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x45 LD B,L
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .b, .from = .l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x46 LD B,(HL)
+        .func = LDr8HL,
+        .args = .{ .target = regID.b },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x47 LD B,A
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .b, .from = .a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x48 LD C,B
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .c, .from = .b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x49 LD C,C
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .c, .from = .c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x4A LD C,D
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .c, .from = .d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x4B LD C,E
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .c, .from = .e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x4C LD C,H
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .c, .from = .h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x4D LD C,L
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .c, .from = .l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x4E LD C,(HL)
+        .func = LDr8HL,
+        .args = .{ .target = regID.c },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x4F LD C,A
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .c, .from = .a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    // 0x50–0x7F (D–A registers and HL/A transfers)
+    .{ // 0x50 LD D,B
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .d, .from = .b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x51 LD D,C
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .d, .from = .c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x52 LD D,D
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .d, .from = .d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x53 LD D,E
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .d, .from = .e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x54 LD D,H
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .d, .from = .h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x55 LD D,L
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .d, .from = .l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x56 LD D,(HL)
+        .func = LDr8HL,
+        .args = .{ .target = regID.d },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x57 LD D,A
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .d, .from = .a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x58 LD E,B
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .e, .from = .b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x59 LD E,C
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .e, .from = .c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x5A LD E,D
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .e, .from = .d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x5B LD E,E
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .e, .from = .e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x5C LD E,H
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .e, .from = .h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x5D LD E,L
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .e, .from = .l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x5E LD E,(HL)
+        .func = LDr8HL,
+        .args = .{ .target = regID.e },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x5F LD E,A
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .e, .from = .a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x60 LD H,B
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .h, .from = .b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x61 LD H,C
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .h, .from = .c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x62 LD H,D
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .h, .from = .d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x63 LD H,E
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .h, .from = .e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x64 LD H,H
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .h, .from = .h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x65 LD H,L
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .h, .from = .l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x66 LD H,(HL)
+        .func = LDr8HL,
+        .args = .{ .target = regID.h },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x67 LD H,A
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .h, .from = .a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x68 LD L,B
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .l, .from = .b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x69 LD L,C
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .l, .from = .c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x6A LD L,D
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .l, .from = .d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x6B LD L,E
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .l, .from = .e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x6C LD L,H
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .l, .from = .h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x6D LD L,L
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .l, .from = .l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x6E LD L,(HL)
+        .func = LDr8HL,
+        .args = .{ .target = regID.l },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x6F LD L,A
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .l, .from = .a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // 0x70 LD (HL),B
+        .func = LDHLr8,
+        .args = .{ .target = regID.b },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x71 LD (HL),C
+        .func = LDHLr8,
+        .args = .{ .target = regID.c },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x72 LD (HL),D
+        .func = LDHLr8,
+        .args = .{ .target = regID.d },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x73 LD (HL),E
+        .func = LDHLr8,
+        .args = .{ .target = regID.e },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x74 LD (HL),H
+        .func = LDHLr8,
+        .args = .{ .target = regID.h },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x75 LD (HL),L
+        .func = LDHLr8,
+        .args = .{ .target = regID.l },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x76 HALT
+        .func = HALT,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x77 LD (HL),A
+        .func = LDHLr8,
+        .args = .{ .target = regID.a },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x78 LD A,B
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .a, .from = .b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x79 LD A,C
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .a, .from = .c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x7A LD A,D
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .a, .from = .d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x7B LD A,E
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .a, .from = .e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x7C LD A,H
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .a, .from = .h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x7D LD A,L
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .a, .from = .l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x7E LD A,(HL)
+        .func = LDr8HL,
+        .args = .{ .target = regID.a },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x7F LD A,A
+        .func = LDr8,
+        .args = .{ .targets = .{ .to = .a, .from = .a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    // Arithmetic
+    .{ // 0x80 ADD A,B
+        .func = ADDAr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x81 ADD A,C
+        .func = ADDAr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x82 ADD A,D
+        .func = ADDAr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x83 ADD A,E
+        .func = ADDAr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x84 ADD A,H
+        .func = ADDAr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x85 ADD A,L
+        .func = ADDAr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x86 ADD A,(HL)
+        .func = ADDAHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x87 ADD A,A
+        .func = ADDAr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x88 ADC A,B
+        .func = ADCAr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x89 ADC A,C
+        .func = ADCAr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x8A ADC A,D
+        .func = ADCAr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x8B ADC A,E
+        .func = ADCAr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x8C ADC A,H
+        .func = ADCAr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x8D ADC A,L
+        .func = ADCAr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x8E ADC A,(HL)
+        .func = ADCAHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x8F ADC A,A
+        .func = ADCAr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    // Subtraction
+    .{ // 0x90 SUB A,B
+        .func = SUBAr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x91 SUB A,C
+        .func = SUBAr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x92 SUB A,D
+        .func = SUBAr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x93 SUB A,E
+        .func = SUBAr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x94 SUB A,H
+        .func = SUBAr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x95 SUB A,L
+        .func = SUBAr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x96 SUB A,(HL)
+        .func = SUBAHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x97 SUB A,A
+        .func = SUBAr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x98 SBC A,B
+        .func = SBCAr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x99 SBC A,C
+        .func = SBCAr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x9A SBC A,D
+        .func = SBCAr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x9B SBC A,E
+        .func = SBCAr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x9C SBC A,H
+        .func = SBCAr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x9D SBC A,L
+        .func = SBCAr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0x9E SBC A,(HL)
+        .func = SBCAHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0x9F SBC A,A
+        .func = SBCAr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    // AND
+    .{ // 0xA0 AND B
+        .func = ANDr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xA1 AND C
+        .func = ANDr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xA2 AND D
+        .func = ANDr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xA3 AND E
+        .func = ANDr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xA4 AND H
+        .func = ANDr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xA5 AND L
+        .func = ANDr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xA6 AND (HL)
+        .func = ANDHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xA7 AND A
+        .func = ANDr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    // XOR
+    .{ // 0xA8 XOR B
+        .func = XORr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xA9 XOR C
+        .func = XORr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xAA XOR D
+        .func = XORr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xAB XOR E
+        .func = XORr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xAC XOR H
+        .func = XORr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xAD XOR L
+        .func = XORr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xAE XOR (HL)
+        .func = XORHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xAF XOR A
+        .func = XORr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    // OR
+    .{ // 0xB0 OR B
+        .func = ORr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xB1 OR C
+        .func = ORr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xB2 OR D
+        .func = ORr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xB3 OR E
+        .func = ORr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xB4 OR H
+        .func = ORr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xB5 OR L
+        .func = ORr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xB6 OR (HL)
+        .func = ORHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xB7 OR A
+        .func = ORr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    // CP
+    .{ // 0xB8 CP B
+        .func = CPAr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xB9 CP C
+        .func = CPAr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xBA CP D
+        .func = CPAr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xBB CP E
+        .func = CPAr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xBC CP H
+        .func = CPAr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xBD CP L
+        .func = CPAr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xBE CP (HL)
+        .func = CPAHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xBF CP A
+        .func = CPAr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    // Control & Misc
+    .{ // 0xC0 RET NZ
+        .func = RET,
+        .args = .{ .flagConditions = .nz },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xC1 POP BC
+        .func = POP,
+        .args = .{ .target = regID.b },
+        .cycles = 3,
+        .bytes = 1,
+    },
+    .{ // 0xC2 JP NZ
+        .func = JP,
+        .args = .{ .flagConditions = .nz },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0xC3 JP
+        .func = JP,
+        .args = .{ .flagConditions = .none },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0xC4 CALL NZ
+        .func = CALLn16,
+        .args = .{ .flagConditions = .nz },
+        .cycles = 6,
+        .bytes = 3,
+    },
+    .{ // 0xC5 PUSH BC
+        .func = PUSH,
+        .args = .{ .target = regID.b },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xC6 ADD A,n
+        .func = ADDAn8,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0xC7 RST 0x00
+        .func = RST,
+        .args = .{ .where = 0x00 },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xC8 RET Z
+        .func = RET,
+        .args = .{ .flagConditions = .z },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xC9 RET
+        .func = RET,
+        .args = .{ .flagConditions = .none },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xCA JP Z
+        .func = JP,
+        .args = .{ .flagConditions = .z },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0xCB PREFIX CB
+        .func = INVALID, // handled separately as CB-prefixed table
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xCC CALL Z
+        .func = CALLn16,
+        .args = .{ .flagConditions = .z },
+        .cycles = 6,
+        .bytes = 3,
+    },
+    .{ // 0xCD CALL
+        .func = CALLn16,
+        .args = .{ .flagConditions = .none },
+        .cycles = 6,
+        .bytes = 3,
+    },
+    .{ // 0xCE ADC A,n
+        .func = ADCAn8,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0xCF RST 0x08
+        .func = RST,
+        .args = .{ .where = 0x08 },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xD0 RET NC
+        .func = RET,
+        .args = .{ .flagConditions = .nc },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xD1 POP DE
+        .func = POP,
+        .args = .{ .target = regID.d },
+        .cycles = 3,
+        .bytes = 1,
+    },
+    .{ // 0xD2 JP NC
+        .func = JP,
+        .args = .{ .flagConditions = .nc },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0xD3 INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xD4 CALL NC
+        .func = CALLn16,
+        .args = .{ .flagConditions = .nc },
+        .cycles = 6,
+        .bytes = 3,
+    },
+    .{ // 0xD5 PUSH DE
+        .func = PUSH,
+        .args = .{ .target = regID.d },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xD6 SUB n
+        .func = SUBAn8,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0xD7 RST 0x10
+        .func = RST,
+        .args = .{ .where = 0x10 },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xD8 RET C
+        .func = RET,
+        .args = .{ .flagConditions = .c },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xD9 RETI
+        .func = RETI,
+        .args = .{ .none = {} },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xDA JP C
+        .func = JP,
+        .args = .{ .flagConditions = .c },
+        .cycles = 3,
+        .bytes = 3,
+    },
+    .{ // 0xDB INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xDC CALL C
+        .func = CALLn16,
+        .args = .{ .flagConditions = .c },
+        .cycles = 6,
+        .bytes = 3,
+    },
+    .{ // 0xDD INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xDE SBC A,n
+        .func = SBCAn8,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0xDF RST 0x18
+        .func = RST,
+        .args = .{ .where = 0x18 },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xE0 LDH (n),A
+        .func = LDHn16A,
+        .args = .{ .none = {} },
+        .cycles = 3,
+        .bytes = 2,
+    },
+    .{ // 0xE1 POP HL
+        .func = POP,
+        .args = .{ .target = regID.h },
+        .cycles = 3,
+        .bytes = 1,
+    },
+    .{ // 0xE2 LD (C),A
+        .func = LDHCA,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xE3 INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xE4 INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xE5 PUSH HL
+        .func = PUSH,
+        .args = .{ .target = regID.h },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xE6 AND n
+        .func = ANDn8,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0xE7 RST 0x20
+        .func = RST,
+        .args = .{ .where = 0x20 },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xE8 ADD SP,n
+        .func = ADDSPn8,
+        .args = .{ .none = {} },
+        .cycles = 4,
+        .bytes = 2,
+    },
+    .{ // 0xE9 JP (HL)
+        .func = JPHL,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xEA LD (nn),A
+        .func = LDn16A,
+        .args = .{ .none = {} },
+        .cycles = 4,
+        .bytes = 3,
+    },
+    .{ // 0xEB INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xEC INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xED INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xEE XOR n
+        .func = XORn8,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0xEF RST 0x28
+        .func = RST,
+        .args = .{ .where = 0x28 },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xF0 LDH A,(n)
+        .func = LDHAn16,
+        .args = .{ .none = {} },
+        .cycles = 3,
+        .bytes = 2,
+    },
+    .{ // 0xF1 POP AF
+        .func = POP,
+        .args = .{ .target = regID.a },
+        .cycles = 3,
+        .bytes = 1,
+    },
+    .{ // 0xF2 LD A,(C)
+        .func = LDHAC,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xF3 DI
+        .func = DI,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xF4 INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xF5 PUSH AF
+        .func = PUSH,
+        .args = .{ .target = regID.a },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xF6 OR n
+        .func = ORn8,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0xF7 RST 0x30
+        .func = RST,
+        .args = .{ .where = 0x30 },
+        .cycles = 4,
+        .bytes = 1,
+    },
+    .{ // 0xF8 LD HL,SP+n
+        .func = LDHLSPn8,
+        .args = .{ .none = {} },
+        .cycles = 3,
+        .bytes = 2,
+    },
+    .{ // 0xF9 LD SP,HL
+        .func = LDSPHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // 0xFA LD A,(nn)
+        .func = LDAn16,
+        .args = .{ .none = {} },
+        .cycles = 4,
+        .bytes = 3,
+    },
+    .{ // 0xFB EI
+        .func = EI,
+        .args = .{ .none = {} },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // 0xFC INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xFD INVALID
+        .func = INVALID,
+        .args = .{ .none = {} },
+        .cycles = 0,
+        .bytes = 1,
+    },
+    .{ // 0xFE CP n
+        .func = CPAn8,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 2,
+    },
+    .{ // 0xFF RST 0x38
+        .func = RST,
+        .args = .{ .where = 0x38 },
+        .cycles = 4,
+        .bytes = 1,
+    },
+};
+
+pub const prefix_instrs = [256]Instr{
+    .{ // RLC B
+        .func = RLCr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RLC C
+        .func = RLCr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RLC D
+        .func = RLCr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RLC E
+        .func = RLCr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RLC H
+        .func = RLCr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RLC L
+        .func = RLCr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RLC (HL)
+        .func = RLCHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RLC A
+        .func = RLCr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // RRC B
+        .func = RRCr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RRC C
+        .func = RRCr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RRC D
+        .func = RRCr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RRC E
+        .func = RRCr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RRC H
+        .func = RRCr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RRC L
+        .func = RRCr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RRC (HL)
+        .func = RRCHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RRC A
+        .func = RRCr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // RL B
+        .func = RLr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RL C
+        .func = RLr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RL D
+        .func = RLr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RL E
+        .func = RLr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RL H
+        .func = RLr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RL L
+        .func = RLr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RL (HL)
+        .func = RLHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RL A
+        .func = RLr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RR B
+        .func = RRr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RR C
+        .func = RRr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RR D
+        .func = RRr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RR E
+        .func = RRr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RR H
+        .func = RRr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RR L
+        .func = RRr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RR (HL)
+        .func = RRHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RR A
+        .func = RRr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SLA B
+        .func = SLAr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SLA C
+        .func = SLAr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SLA D
+        .func = SLAr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SLA E
+        .func = SLAr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SLA H
+        .func = SLAr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SLA L
+        .func = SLAr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SLA (HL)
+        .func = SLAHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SLA A
+        .func = SLAr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SRA B
+        .func = SRAr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRA C
+        .func = SRAr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRA D
+        .func = SRAr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRA E
+        .func = SRAr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRA H
+        .func = SRAr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRA L
+        .func = SRAr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRA (HL)
+        .func = SRAHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SRA A
+        .func = SRAr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SWAP B
+        .func = SWAPr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SWAP C
+        .func = SWAPr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SWAP D
+        .func = SWAPr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SWAP E
+        .func = SWAPr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SWAP H
+        .func = SWAPr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SWAP L
+        .func = SWAPr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SWAP (HL)
+        .func = SWAPHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SWAP A
+        .func = SWAPr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SRL B
+        .func = SRLr8,
+        .args = .{ .target = regID.b },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRL C
+        .func = SRLr8,
+        .args = .{ .target = regID.c },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRL D
+        .func = SRLr8,
+        .args = .{ .target = regID.d },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRL E
+        .func = SRLr8,
+        .args = .{ .target = regID.e },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRL H
+        .func = SRLr8,
+        .args = .{ .target = regID.h },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRL L
+        .func = SRLr8,
+        .args = .{ .target = regID.l },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SRL (HL)
+        .func = SRLHL,
+        .args = .{ .none = {} },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SRL A
+        .func = SRLr8,
+        .args = .{ .target = regID.a },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 0,B
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 0,C
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 0,D
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 0,E
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 0,H
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 0,L
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 0,(HL)
+        .func = BITTESTHL,
+        .args = .{ .bit = 0 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // BIT 0,A
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // BIT 1,B
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 1,C
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 1,D
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 1,E
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 1,H
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 1,L
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 1,(HL)
+        .func = BITTESTHL,
+        .args = .{ .bit = 1 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // BIT 1,A
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // BIT 2,B
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 2,C
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 2,D
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 2,E
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 2,H
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 2,L
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 2,(HL)
+        .func = BITTESTHL,
+        .args = .{ .bit = 2 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // BIT 2,A
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // BIT 3,B
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 3,C
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 3,D
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 3,E
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 3,H
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 3,L
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 3,(HL)
+        .func = BITTESTHL,
+        .args = .{ .bit = 3 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // BIT 3,A
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 4,B
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 4,C
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 4,D
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 4,E
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 4,H
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 4,L
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 4,(HL)
+        .func = BITTESTHL,
+        .args = .{ .bit = 4 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // BIT 4,A
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // BIT 5,B
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 5,C
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 5,D
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 5,E
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 5,H
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 5,L
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 5,(HL)
+        .func = BITTESTHL,
+        .args = .{ .bit = 5 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // BIT 5,A
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // BIT 6,B
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 6,C
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 6,D
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 6,E
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 6,H
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 6,L
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 6,(HL)
+        .func = BITTESTHL,
+        .args = .{ .bit = 6 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // BIT 6,A
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // BIT 7,B
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 7,C
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 7,D
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 7,E
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 7,H
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 7,L
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // BIT 7,(HL)
+        .func = BITTESTHL,
+        .args = .{ .bit = 7 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // BIT 7,A
+        .func = BITTESTr8,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 0,B
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 0,C
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 0,D
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 0,E
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 0,H
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 0,L
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 0,(HL)
+        .func = RESHL,
+        .args = .{ .bit = 0 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RES 0,A
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // RES 1,B
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 1,C
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 1,D
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 1,E
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 1,H
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 1,L
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 1,(HL)
+        .func = RESHL,
+        .args = .{ .bit = 1 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RES 1,A
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // RES 2,B
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 2,C
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 2,D
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 2,E
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 2,H
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 2,L
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 2,(HL)
+        .func = RESHL,
+        .args = .{ .bit = 2 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RES 2,A
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // RES 3,B
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 3,C
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 3,D
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 3,E
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 3,H
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 3,L
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 3,(HL)
+        .func = RESHL,
+        .args = .{ .bit = 3 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RES 3,A
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // RES 4,B
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 4,C
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 4,D
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 4,E
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 4,H
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 4,L
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 4,(HL)
+        .func = RESHL,
+        .args = .{ .bit = 4 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RES 4,A
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // RES 5,B
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 5,C
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 5,D
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 5,E
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 5,H
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 5,L
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 5,(HL)
+        .func = RESHL,
+        .args = .{ .bit = 5 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RES 5,A
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 6,B
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 6,C
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 6,D
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 6,E
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 6,H
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 6,L
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 6,(HL)
+        .func = RESHL,
+        .args = .{ .bit = 6 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RES 6,A
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // RES 7,B
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 7,C
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 7,D
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 7,E
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 7,H
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 7,L
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // RES 7,(HL)
+        .func = RESHL,
+        .args = .{ .bit = 7 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // RES 7,A
+        .func = RES,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SET 0,B
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 0,C
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 0,D
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 0,E
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 0,H
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 0,L
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 0,(HL)
+        .func = SETHL,
+        .args = .{ .bit = 0 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SET 0,A
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 0, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SET 1,B
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 1,C
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 1,D
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 1,E
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 1,H
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 1,L
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 1,(HL)
+        .func = SETHL,
+        .args = .{ .bit = 1 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SET 1,A
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 1, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SET 2,B
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 2,C
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 2,D
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 2,E
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 2,H
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 2,L
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 2,(HL)
+        .func = SETHL,
+        .args = .{ .bit = 2 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SET 2,A
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 2, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SET 3,B
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 3,C
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 3,D
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 3,E
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 3,H
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 3,L
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 3,(HL)
+        .func = SETHL,
+        .args = .{ .bit = 3 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SET 3,A
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 3, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SET 4,B
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 4,C
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 4,D
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 4,E
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 4,H
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 4,L
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 4,(HL)
+        .func = SETHL,
+        .args = .{ .bit = 4 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SET 4,A
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 4, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SET 5,B
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 5,C
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 5,D
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 5,E
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 5,H
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 5,L
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 5,(HL)
+        .func = SETHL,
+        .args = .{ .bit = 5 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SET 5,A
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 5, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SET 6,B
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 6,C
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 6,D
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 6,E
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 6,H
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 6,L
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 6,(HL)
+        .func = SETHL,
+        .args = .{ .bit = 6 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SET 6,A
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 6, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+
+    .{ // SET 7,B
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.b } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 7,C
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.c } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 7,D
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.d } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 7,E
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.e } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 7,H
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.h } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 7,L
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.l } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+    .{ // SET 7,(HL)
+        .func = SETHL,
+        .args = .{ .bit = 7 },
+        .cycles = 2,
+        .bytes = 1,
+    },
+    .{ // SET 7,A
+        .func = SET,
+        .args = .{ .bit_target = .{ .bit = 7, .target = regID.a } },
+        .cycles = 1,
+        .bytes = 1,
+    },
+};
 // helpers
-fn detectHalfCarry(target: anytype, b: anytype, sign: union(enum(u1)){add, sub}) bool {
+fn detectHalfCarry(target: anytype, b: anytype, sign: union(enum(u1)) { add, sub }) bool {
     var target_high_byte: ?u8 = null;
     var b_high_byte: ?u8 = null;
     var lower_byte_carried = false;
@@ -1771,12 +4395,12 @@ fn detectHalfCarry(target: anytype, b: anytype, sign: union(enum(u1)){add, sub})
             target_high_byte = @intCast(target >> 8);
             lower_byte_carried = switch (sign) {
                 .add => @addWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1,
-                .sub => @subWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1
+                .sub => @subWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1,
             };
             if (lower_byte_carried) {
                 // print("Lower byte carried\n", .{});
-                if (target_high_byte.?&0xF == 0xF) {
-                    print("detected 0xF after carry\n", .{});
+                if (target_high_byte.? & 0xF == 0xF) {
+                    // print("detected 0xF after carry\n", .{});
                     return true;
                 }
             }
@@ -1785,11 +4409,11 @@ fn detectHalfCarry(target: anytype, b: anytype, sign: union(enum(u1)){add, sub})
             b_high_byte = @intCast(b >> 8);
             lower_byte_carried = switch (sign) {
                 .add => @addWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1,
-                .sub => @subWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1
+                .sub => @subWithOverflow(@as(u8, @truncate(target)), @as(u8, @truncate(b)))[1] == 1,
             };
             if (lower_byte_carried) {
                 // print("Lower byte carried\n", .{});
-                if (b_high_byte.?&0xF == 0xF) {
+                if (b_high_byte.? & 0xF == 0xF) {
                     // print("detected 0xF after carry\n", .{});
                     return true;
                 }
@@ -1797,14 +4421,8 @@ fn detectHalfCarry(target: anytype, b: anytype, sign: union(enum(u1)){add, sub})
         }
     }
     return switch (sign) {
-        .add => @addWithOverflow(
-            @as(u4, @truncate(target_high_byte orelse target)),
-            @as(u4, @truncate(b_high_byte orelse b))
-        )[1] == 1,
-        .sub =>  @subWithOverflow(
-            @as(u4, @truncate(target_high_byte orelse target)),
-            @as(u4, @truncate(b_high_byte orelse b))
-        )[1] == 1,
+        .add => @addWithOverflow(@as(u4, @truncate(target_high_byte orelse target)), @as(u4, @truncate(b_high_byte orelse b)))[1] == 1,
+        .sub => @subWithOverflow(@as(u4, @truncate(target_high_byte orelse target)), @as(u4, @truncate(b_high_byte orelse b)))[1] == 1,
     };
 }
 /// Allows for mixed sign arithmetic i.e. i8 + u16 with overflow
@@ -1818,9 +4436,9 @@ fn mixedSignArithmetic(target_value: anytype, signed_value: anytype, treat_as: t
             // distance from the min negative value is how much we overflowed by
             const dist = std.math.minInt(treat_as) - res[0];
             val = @intCast(@abs(dist));
-        }
+        },
     }
-    return .{val, res[1]};
+    return .{ val, res[1] };
 }
 const CPU = @import("cpu.zig");
 // const CPU = cpu;

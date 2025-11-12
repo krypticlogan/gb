@@ -4,6 +4,7 @@ cpu: CPU = CPU{}, // peripherals
 gpu: GPU = GPU{},
 apu: APU = APU{},
 timer: Timer = Timer{},
+joypad: Joypad = Joypad{},
 bus: Bus = Bus{},
 mbc: Bus.MBC = Bus.MBC{},
 clock: Clock = Clock{},
@@ -23,11 +24,13 @@ pub fn init(self: *GB, testing: bool) !void {
         try initRandom(); // init random before gpu init
         try self.gpu.init(self);
     }
+    self.joypad.init(self);
     self.bus.init(self); // inits memory, connects peripherals
     self.timer.init(self);
     try self.cpu.init(self);
-    _ = InstructionSet.exe_from_byte(&self.cpu, false); // dummy op to init cache
-    self.cpu.pc -= 1;
+    const NOP = InstructionSet.instrs[0x0];
+    _ = NOP.call(&self.cpu); // dummy op to init cache
+    self.cpu.jump_to_prev_instr();
     self.running = true;
 }
 pub fn load_cartridge(self: *GB) !void {
@@ -237,6 +240,7 @@ pub const Bus = struct {
     gpu: *GPU = undefined,
     apu: *APU = undefined,
     timer: *Timer = undefined,
+    joypad: *Joypad = undefined,
     mbc: *MBC = undefined,
     rom: []u8 = undefined,
     ext_ram: []u8 = undefined,
@@ -248,6 +252,7 @@ pub const Bus = struct {
         self.cpu = &gb.cpu;
         self.gpu = &gb.gpu;
         self.apu = &gb.apu;
+        self.joypad = &gb.joypad;
         self.timer = &gb.timer;
         self.mbc = &gb.mbc;
         self.rom = gb.cartridge_rom;
@@ -271,16 +276,20 @@ pub const Bus = struct {
             return self.gpu.readVram(address);
         }
         if (address >= GPU.special_register.start and address <= GPU.special_register.end) {
-            if (self.cpu.booted and address == 0xFF44) return 0x90;
+            // if (self.cpu.booted and address == 0xFF44) return 0x90;
             return self.gpu.getSpecialRegister(@as(GPU.special_register, @enumFromInt(address - GPU.special_register.start)));
         }
         if (address >= GPU.OAM_BEGIN and address <= GPU.OAM_END) {
             return self.gpu.oam[address - GPU.OAM_BEGIN];
         }
         if (address >= Timer.START and address <= Timer.END) {
-            print("read timer @0x{X}, got 0x{X}\n", .{address, self.timer.read(address)});
+            // print("read timer @0x{X}, got 0x{X}\n", .{address, self.timer.read(address)});
             return self.timer.read(address);
         }
+        if (address == 0xFF00) {
+                print("read joypad\n", .{});
+                return self.joypad.check();
+            }
         return self.memory[address];
     }
     pub fn writeByte(self: *Bus, address: u16, value: u8) void {
@@ -291,7 +300,7 @@ pub const Bus = struct {
         //     },
         // }
         if (address >= Timer.START and address <= Timer.END) {
-            print("write to timer @0x{X}, value 0x{X}\n", .{address, value});
+            // print("write to timer @0x{X}, value 0x{X}\n", .{address, value});
             // self.cpu.break_exe();
             self.timer.write(address, value);
         } else if (address >= GPU.special_register.start and address <= GPU.special_register.end) {
@@ -301,7 +310,8 @@ pub const Bus = struct {
             if (register == GPU.special_register.dma) {
                 const prefix = address / 0x100;
                 const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
-                @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
+                print("RAM ADDR: [0x{X}], copy size\n\t source: 0x{X}\n\t dest: 0x{X}\n", .{ram_address, GPU.OAM_SIZE, GPU.OAM_END - GPU.OAM_BEGIN});
+                @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END + 1], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
             }
         } else if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) { // VRAM banks 0 & 1
             self.gpu.writeVram(address, value);
@@ -323,20 +333,22 @@ pub const Bus = struct {
                 };
                 serialBuf[serialIndex] = byte[0];
                 serialIndex += 1;
-                print("SERIAL: [{c}]\n", .{self.memory[0xFF01]});
+                // print("SERIAL: [{c}]\n", .{self.memory[0xFF01]});
                 // const char = self.memory[0xFF01];
                 // print("byte: 0x{X}, '{c}'\n", .{char, char});
                 self.memory[address] &= ~@as(u8, 0x80);
             }
-        } else if (address == 0xFFFF) {
-            self.memory[address] = value;
-            // print("wrote to the iF flag = 0b{b}\ndoes it show?\thandler IE flag = 0b{b}\n", .{value, self.handler.iE.*});
-            // self.handler.dump();
-        } else if (address == 0xFF0F) {
-            self.memory[address] = value;
-            print("wrote to the iF flag = 0b{b} @pc[{X}]\ndoes it show?\thandler iF flag = 0b{b}\n", .{value, self.cpu.pc, self.handler.iF.*});
-            self.handler.dump();
-        } else self.memory[address] = value;
+        }
+        // else if (address == 0xFFFF) {
+        //     self.memory[address] = value;
+        //     // print("wrote to the iF flag = 0b{b}\n does it show?\t handler IE flag = 0b{b}\n", .{value, self.handler.iE.*});
+        //     // self.handler.dump();
+        // } else if (address == 0xFF0F) {
+        //     self.memory[address] = value;
+        //     // print("wrote to the iF flag = 0b{b} @pc[{X}]\n does it show?\t handler iF flag = 0b{b}\n", .{value, self.cpu.pc, self.handler.iF.*});
+        //     // self.handler.dump();
+        // }
+        else self.memory[address] = value;
     }
     /// Memory Bank Controller
     const MBC = struct {
@@ -494,8 +506,8 @@ pub const Bus = struct {
         pub inline fn handle(self: *InterruptHandler, cpu: *CPU) void {
             // which interrupt do we need to handle (highest priority first)
             if (self.ime) {
-                print("interrupt handle @pc[{X}]\n", .{cpu.pc});
-                self.dump();
+                // print("interrupt handle @pc[{X}]\n", .{cpu.pc});
+                // self.dump();
                 for (Interrupts) |interrupt| {
                     if (self.check(.enable, interrupt.bit) and self.check(.flag, interrupt.bit)) {
                         self.ime = false;
@@ -516,8 +528,23 @@ pub const Bus = struct {
 };
 
 /// Joypad logic
-pub const InputHandler = struct {
+pub const Joypad = struct {
+    const button = enum {
+        select, start,
+        a, b,
+        up, down, left, right
+    };
 
+    button_field: *u8 = undefined,
+
+    fn init(self: *Joypad, gb: *GB) void {
+        self.button_field = &gb.bus.memory[0xFF00];
+    }
+
+    fn check(self: *Joypad) u8 {
+        _ = self;
+        return 0xFF;
+    }
 };
 
 pub const Clock = struct {
@@ -575,11 +602,16 @@ pub const Clock = struct {
 const Timer = struct {
     registers: *[4]u8 = undefined,
     bus: *Bus = undefined,
-    counter: u16 = 0, // master counter (div)
+    div_counter: u16 = 0, // master counter (div)
+    tima_counter: u16 = 0,
     prev_and_res: bool = false,
     cycles_since_overflow: ?u8 = null,
     const START = 0xFF04;
     const END = 0xFF07;
+    fn init(self: *Timer, gb: *GB) void {
+        self.registers = gb.bus.memory[START .. END + 1];
+        self.bus = &gb.bus;
+    }
     const timer_reg = enum {
         div,    // $FF04 - Divider Register (DIV)
         tima,   // $FF05 - Timer Counter (TIMA)
@@ -598,53 +630,75 @@ const Timer = struct {
     fn set_reg(timer: *Timer, reg: timer_reg, value: u8) void {
         timer.registers[@intFromEnum(reg)] = value;
     }
-    fn init(self: *Timer, gb: *GB) void {
-        self.registers = gb.bus.memory[START .. END + 1];
-        self.bus = &gb.bus;
-    }
-    fn tick(self: *Timer, cycles: u8) void {
-        var cycles_ticked: u8 = 0;
-        while (cycles_ticked < cycles) : (cycles_ticked += 1) {
-            // print("Counter: 0x{X}\nCycles: {d} Cycles ticked {d}\n", .{self.counter, cycles, cycles_ticked});
-            self.counter = @addWithOverflow(self.counter, 1)[0];
-            const bit_pos: u4 = switch (@as(u2, @truncate(self.get_reg(.tac)))) { // get bit pos
-                0b00 => 9,
-                0b01 => 3,
-                0b10 => 5,
-                0b11 => 7,
-            };
-            const bit: u1 = @truncate(self.counter >> bit_pos); // store bit at pos for later tep
-            const timer_enable: u1 = @truncate(self.get_reg(.tac) >> 2);
-            if (self.cycles_since_overflow) |cycles_since| {
-                if (cycles_since == 16) {
+    // This tick function proves to be a tricky area. But it eventually started passing test roms
+    // You should probably return to this and look into it some more (tima is never zero, interrupts are immediate)
+    fn tick(self: *Timer, t_cycles: u8) void {
+        // We should tick the div register once for every t-cycle
+        self.div_counter = @addWithOverflow(self.div_counter, t_cycles)[0];
+
+        const enabled: bool = (self.get_reg(.tac) >> 2) == 1;
+        const clock_sel: u16 = switch (@as(u2, @truncate(self.get_reg(.tac)))){
+            0b00 => 1024,
+            0b01 => 16,
+            0b10 => 64,
+            0b11 => 256
+        };
+        // const bit_pos: u4 = @intCast(@ctz(clock_sel) - 1); // our bit position is the same as one less than the number of trailing zeros
+        // const bit: bool = self.div_counter & clock_sel != 0;
+        // const and_res = enabled and bit;
+        if (enabled) {
+        self.tima_counter += t_cycles;
+        while (self.tima_counter >= clock_sel) : (self.tima_counter -= clock_sel) {
+            // const should_tick = tima_cycles_spent % clock_sel == 0;
+            // if (self.prev_and_res and !and_res) { // falling edge
+                const tima = self.get_reg(.tima);
+            if (tima < 0xFF) {
+                self.set_reg(.tima, tima + 1);
+            } else { // overflow
                     self.set_reg(.tima, self.get_reg(.tma));
-                    // timer interrupt
-                    // print("set timer interrupt\n", .{});
-                    self.bus.handler.set(.flag, .timer);
-                    self.cycles_since_overflow = null;
-                }
-                if (self.cycles_since_overflow != null) self.cycles_since_overflow.? += 1;
+                self.cycles_since_overflow = 0;
+                self.bus.handler.set(.flag, .timer);
             }
-            const and_res = bit == 1 and timer_enable == 1;
-            // if (bit == 1) print("bit (timer): {any}", .{bit == 1});
-            // if (timer_enable == 1) print("enable (timer): {any}\n", .{timer_enable == 1});
-            // if (and_res) print("AND result (timer): {any}\n", .{and_res});
-            if (self.prev_and_res and !and_res) { // falling edge
-                // print("timer tick\n", .{});
-                const res = @addWithOverflow(self.get_reg(.tima), 1);
-                self.set_reg(.tima, res[0]);
-                if (res[1] == 1) { // overflow
-                    self.cycles_since_overflow = 0;
-                    self.set_reg(.tima, 0);
-                }
+            // }
+
+            // self.prev_and_res = and_res;
+            //
+            // if (self.cycles_since_overflow) |cycles_since_overflow| {
+            //     switch (cycles_since_overflow) {
+            //         4 => { // interrupt
+            //             self.set_reg(.tima, self.get_reg(.tma));
+            //             self.bus.handler.set(.flag, .timer);
+            //         },
+            //         else => self.cycles_since_overflow.? += 1
+            //     }
+            // }
             }
-            self.prev_and_res = and_res;
         }
+
+        // Source: https://github.com/feo-boy/feo-boy/blob/master/src/bus/timer.rs#L56-L66
+            // NB: This is the source of a very common bug in timer implementations.
+            //
+            // Here, we need to increment the timer's internal counter relative to the tick size. The
+            // counter may have to be incremented multiple times for a given tick. While this
+            // technically could happen for the div internal counter, in practice it doesn't: no
+            // instruction takes longer to execute than it takes to increment DIV once. However, it
+            // _is_ possible to have the timer internal counter increment multiple times during a given
+            // instruction.
+            //
+            // Notably, getting this wrong will cause blargg's instr_timing test ROM to fail with
+            // the cryptic "Failure #255" message.;
+
+            // imagine we dont complete the required 4 t-cycles before we exit to complete another instruction
+            // in the case that cycles since overflow is '3' and we exit, imagine we execute a 1 m-cycle instruction
+            // in this case, we should have 4 more t-cycles to execute, meaning that after the first one,
+            // we should immediately reload the value in the tima register and execute a timer interrupt
+            // execution continues, and we execute the other 3 t-cycles that we're meant to.
+            // an interrupt should not happen in this time
     }
     fn read(self: *Timer, address: u16) u8 {
         const fixed_address: u3 = @intCast(address - START);
         return switch (@as(timer_reg, @enumFromInt(fixed_address))) {
-            .div => @truncate(self.counter >> 8),
+            .div => @truncate(self.div_counter >> 8),
             else => self.registers[fixed_address]
         };
     }
@@ -652,7 +706,7 @@ const Timer = struct {
         const fixed_address: u3 = @intCast(address - START);
         // print("timer reg len: {d}, index: {d}", .{self.registers.len, fixed_address});
         switch (@as(timer_reg, @enumFromInt(fixed_address))) { // writing here resets the counter to 0
-            .div => self.counter = 0,
+            .div => self.div_counter = 0,
             else => self.registers[fixed_address] = value
         }
     }

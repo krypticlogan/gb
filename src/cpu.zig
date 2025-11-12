@@ -6,11 +6,12 @@ f: FlagRegister = FlagRegister{},
 pc: u16 = undefined, // program counter
 sp: u16 = undefined, // stack pointer
 halted: bool = false, // stops all execution when true
-halt_bug: bool = false,
+halt_bug_state: u2 = 0,
 // state
 step: bool = false,
 paused: bool = false,
 executing_byte: u8 = 0x0,
+// prefixed: bool = false,
 log: Log = Log{},
 booted: bool = false,
 // TODO instruction cache?
@@ -30,23 +31,36 @@ pub fn init(self: *@This(), gb: *GB) !void {
 // cpu execution
 pub fn execute(self: *@This()) struct{u8, bool} {
     const set_ime = self.executing_byte == 0xFB; // set the ime flag after this instruction
-    // if (!self.halt_bug) {
+    blk: { switch (self.halt_bug_state) {
+        0 => { break :blk; }, // normal operation
+        1 => { // this is the instruction to be repeated
+            self.halt_bug_state += 1;
+            break :blk;
+        },
+        2 => { // this is our repeat of the instruction
+            self.halt_bug_state = 0;
+            self.jump_to_prev_instr();
+        },
+        else => unreachable
+    }}
     self.executing_byte = self.bus.readByte(self.pc);
-    // }
+    // const byte = self.bus.readByte(self.executing_pc);
+    // const cycles_spent = InstructionSet.exe_from_byte(self, prefixed);
+    const instr = switch (self.executing_byte == 0xCB) { // prefix byte
+        false => InstructionSet.instrs[self.executing_byte],
+        true => blk: {
+            self.pc += 1;
+            self.executing_byte = self.bus.readByte(self.pc);
+            break :blk InstructionSet.prefix_instrs[self.executing_byte];
+        }
+    };
 
-    var prefixed = false;
-    if (self.executing_byte == 0xCB) { // prefix byte
-        prefixed = true;
-        self.pc += 1;
-        self.executing_byte = self.bus.readByte(self.pc);
-    }
-    const cycles_spent = InstructionSet.exe_from_byte(self, prefixed);
+    const cycles_spent = instr.call(self);
     if (set_ime) self.bus.handler.ime = true;
     if (self.step) {
         self.break_exe();
         return .{cycles_spent, true};
     }
-
     return .{cycles_spent, self.paused};
 }
 
@@ -85,6 +99,14 @@ pub inline fn pop_stack(cpu: *CPU) struct { u8, u8 } {
     const high = cpu.bus.readByte(cpu.sp);
     cpu.sp = @addWithOverflow(cpu.sp, 1)[0];
     return .{ low, high };
+}
+/// Sets the pc to the location of the previously executed instruction
+pub inline fn jump_to_prev_instr(self: *CPU) void {
+    self.pc -= InstructionSet.instrs[self.executing_byte].bytes;
+    self.pc = switch (self.pc > 0 and self.bus.readByte(self.pc - 1) == 0xCB) {
+        false => self.pc,
+        true => self.pc - 1
+    };
 }
 // debug
 pub inline fn break_exe(self: *CPU) void {
