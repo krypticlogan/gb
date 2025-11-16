@@ -21,20 +21,24 @@ pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
     const debug = "HALT @pc[{X}]";
     // print(debug ++ "\n", .{cpu.pc});
     cpu.pushToExecutionChain(debug, .{cpu.pc});
+    const interrupt_pending = cpu.bus.handler.read(.enable) & cpu.bus.handler.read(.flag) != 0;
+    print("HALT on pc[{X}]: {s}\nInterrupt state\n -------------\n\t", .{cpu.pc, if (!cpu.halted) "first entry\n" else "returned" });
+    cpu.bus.handler.dump();
     switch (cpu.halted) {
         false => { // first entry
             cpu.halted = true;
             switch (cpu.bus.handler.ime) {
                 true => {
-                    if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
+                    if (interrupt_pending) {
                         cpu.bus.handler.handle(cpu);
                         cpu.halted = false;
                     }
                 },
                 false => {
-                    if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
+                    if (interrupt_pending) {
                         cpu.halted = false;
                         cpu.halt_bug_state = 1;
+                        print("Entered halt bug state, next PC / INSTR = pc[{X}] / 0x{X}\n", .{cpu.pc + 1, cpu.bus.readByte(cpu.pc + 1)});
                         cpu.pc += 1;
                     }
                 },
@@ -43,13 +47,14 @@ pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
         true => { // still halted, we have returned
             switch (cpu.bus.handler.ime) {
                 true => {
-                    if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
+                    if (interrupt_pending) {
                         cpu.bus.handler.handle(cpu);
                         cpu.halted = false;
                     }
                 },
                 false => {
-                    if (cpu.bus.handler.iE.* & cpu.bus.handler.iF.* != 0) { // interrupt pending
+                    if (interrupt_pending) {
+                        print("no ime, no halt bug\n", .{});
                         cpu.halted = false;
                         cpu.pc += 1;
                     }
@@ -745,6 +750,7 @@ pub fn EI(cpu: *CPU, _: InstrArgs) u8 {
 }
 pub fn DI(cpu: *CPU, _: InstrArgs) u8 {
     // print("DI!\n\n", .{});
+    // cpu.break_exe();
     const prior = cpu.bus.handler.ime;
     const debug = "DI | ime prior: {any}, ime post op: {any}";
     print(debug ++ "\n", .{ prior, cpu.bus.handler.ime });
@@ -1236,7 +1242,7 @@ pub fn RET(cpu: *CPU, args: InstrArgs) u8 {
     }
 }
 pub fn RETI(cpu: *CPU, _: InstrArgs) u8 {
-    print("reti\n", .{});
+    // print("reti\n", .{});
     const popped = cpu.pop_stack();
     const low = popped[0];
     const high = popped[1];

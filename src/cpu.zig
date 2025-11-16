@@ -31,18 +31,17 @@ pub fn init(self: *@This(), gb: *GB) !void {
 // cpu execution
 pub fn execute(self: *@This()) struct{u8, bool} {
     const set_ime = self.executing_byte == 0xFB; // set the ime flag after this instruction
-    blk: { switch (self.halt_bug_state) {
-        0 => { break :blk; }, // normal operation
+    switch (self.halt_bug_state) {
+        0 => {}, // normal operation
         1 => { // this is the instruction to be repeated
             self.halt_bug_state += 1;
-            break :blk;
         },
         2 => { // this is our repeat of the instruction
-            self.halt_bug_state = 0;
             self.jump_to_prev_instr();
+            self.halt_bug_state = 0;
         },
         else => unreachable
-    }}
+    }
     self.executing_byte = self.bus.readByte(self.pc);
     // const byte = self.bus.readByte(self.executing_pc);
     // const cycles_spent = InstructionSet.exe_from_byte(self, prefixed);
@@ -56,7 +55,7 @@ pub fn execute(self: *@This()) struct{u8, bool} {
     };
 
     const cycles_spent = instr.call(self);
-    if (set_ime) self.bus.handler.ime = true;
+    if (set_ime) self.bus.handler.enable();
     if (self.step) {
         self.break_exe();
         return .{cycles_spent, true};

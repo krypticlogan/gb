@@ -13,6 +13,7 @@ pub const GPU = struct {
     tile_set: [384]Tile = undefined,
     sprite_set: [10]Tile = undefined, // TODO actually sprite
     stat_reg: u8 = undefined,
+    interrupt_pending: bool = false,
     mode: Mode = undefined,
     lcd: LCD = undefined,
     scanline: [LCD.screenWidthPx]Color = undefined,
@@ -45,7 +46,7 @@ pub const GPU = struct {
     pub fn tick(self: *@This(), cycles: u16) void {
         // TODO the gpu should tick/cycle just as many
         // times as the cpu did, while being able to
-        // process interrupts and continue on as well as changing modes midscanline when needed
+        // process interrupts and continue on as well as changing modes mid-scanline when needed
         var cycles_left = cycles; // amt of cycles spent by cpu
         self.frame_cycles_spent += cycles_left;
         while (cycles_left > 0) {
@@ -56,8 +57,33 @@ pub const GPU = struct {
             cycles_left -= cycles_to_process;
             if (self.mode_cycles_left == 0) {
                 self.switchMode(); // handles drawing the screen, updating ly
+                // update the stat register after mode switch
+                const lyc_check = self.getSpecialRegister(.ly) == self.getSpecialRegister(.lyc);
+                // lyc check here
+                var stat_reg = self.getSpecialRegister(.stat); // update STAT register
+                stat_reg |= (@as(u3, @intFromBool(lyc_check)) << @intFromEnum(stat_bit.lyc_res)) | @intFromEnum(self.mode);
+                self.setSpecialRegister(.stat, stat_reg);
+
+                const mode_interrupt_bit: ?stat_bit = switch (self.mode) {
+                    .HBLANK => stat_bit.enable_mode0,
+                    .VBLANK => stat_bit.enable_mode1,
+                    .SCAN => stat_bit.enable_mode2,
+                    .RENDER => null
+                };
+                const line_was_set = set: {
+                    if (mode_interrupt_bit != null and interrupt_is_enabled(self.stat_reg, mode_interrupt_bit.?)) {
+                        break :set self.set_interrupt_line();
+                    }
+                    if (lyc_check and interrupt_is_enabled(self.stat_reg, .enable_lyc_check)) {
+                        break :set self.set_interrupt_line();
+                    }
+                    break :set false;
+                };
+                if (line_was_set) {
+                    // print("lcd interrupt\n", .{});
+                    self.bus.handler.set(.flag, .lcd);
+                }
                 // print("Mode switch: {any}, LY: {d}, stat: {d}\n", .{ self.mode, self.getSpecialRegister(.ly), self.getSpecialRegister(.stat) });
-                // TODO LYC CHECK
             }
         }
     }
@@ -66,7 +92,6 @@ pub const GPU = struct {
         // // const zone = tracy.beginZone(@src(), .{ .name = "DO GPU CYCLES" });
         // // defer zone.end();
         var cycles_to_spend: f16 = @floatFromInt(cycles);
-
         switch (self.mode) {
             .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
                 // decoding:
@@ -150,30 +175,28 @@ pub const GPU = struct {
     }
     fn switchMode(self: *@This()) void {
         const ly = self.getSpecialRegister(.ly);
-        switch (self.mode) {
+        self.mode = mode: switch (self.mode) {
             .SCAN => {
-                self.mode = .RENDER;
                 self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.RENDER)];
+                break :mode .RENDER;
             },
             .RENDER => {
                 self.lcd.pushScanline(self.scanline, ly);
-                self.mode = .HBLANK;
                 self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.HBLANK)];
                 self.scanline_progress = 0;
+                break :mode .HBLANK;
             },
             .HBLANK => {
                 // Increment LY register
                 self.setSpecialRegister(.ly, ly + 1);
-                if (ly + 1 == 144) {
-                    // send vblank interrupt
+                if (ly + 1 == 144) { // send vblank interrupt
                     self.bus.handler.set(.flag, .vblank);
-                    self.mode = .VBLANK;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)]; // per scanline
+                    break :mode .VBLANK;
                 } else {
-                    self.mode = .SCAN;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
+                    break :mode .SCAN;
                 }
-                // TODO INTERRUPT
             },
             .VBLANK => {
                 const new_ly = ly + 1;
@@ -200,18 +223,37 @@ pub const GPU = struct {
                         }
                     }
                     self.setSpecialRegister(.ly, 0); // reset LY to 0
-                    self.mode = .SCAN;
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.SCAN)];
                     self.frames_cycled += 1;
+                    break :mode .SCAN;
                 } else {
                     self.setSpecialRegister(.ly, new_ly);
                     self.mode_cycles_left = Mode.cycles[@intFromEnum(Mode.VBLANK)];
+                    break:mode .VBLANK;
                 }
             },
+        };
+    }
+
+    const stat_bit = enum(u3) {
+        // read-only
+        ppu_mode = 0, // 2 wide
+        lyc_res = 2,
+        // read and write -- interrupts
+        enable_mode0 = 3,
+        enable_mode1 = 4,
+        enable_mode2 = 5,
+        enable_lyc_check = 6
+    };
+    fn set_interrupt_line(self: *GPU) bool {
+        if (!self.interrupt_pending) {
+            self.interrupt_pending = true;
+            return true;
         }
-        var stat_reg = self.getSpecialRegister(.stat); // update STAT register vv
-        stat_reg = (stat_reg & 0b1111_1100) | @intFromEnum(self.mode);
-        self.setSpecialRegister(.stat, stat_reg);
+        return false;
+    }
+    fn interrupt_is_enabled(stat: u8, bit: stat_bit) bool {
+        return (stat >> @intFromEnum(bit) & 1) == 1;
     }
     // memory ops
     pub fn readVram(self: *@This(), address: usize) u8 {
@@ -225,7 +267,7 @@ pub const GPU = struct {
             self.vram[fixed_address] = value;
         }
     }
-    pub const special_register = enum(u8) {
+    pub const special_register = enum {
         lcdc, // LCDC (LCD Control) Enables/disables layers, defines rendering mode
         stat, // $FF41 STAT (Status) Tracks PPU state
         scy, // $FF42 SCY (Scroll Y) Background vertical scroll

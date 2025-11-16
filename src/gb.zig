@@ -66,7 +66,7 @@ fn load_cartridge_to_rom(self: *GB) void {
 }
 /// Loads GameBoy bootrom and the rom to be used
 pub fn boot(self: *GB) !void {
-    const bootFilePath = try std.fs.path.join(self.allocator, &.{self.root_path, "roms", "dmg_boot.bin"});
+    const bootFilePath = try std.fs.path.join(self.allocator, &.{self.root_path, "roms", "boot.bin"});
     defer self.allocator.free(bootFilePath);
     const bootFile = try std.fs.openFileAbsolute(bootFilePath, .{});
     defer bootFile.close();
@@ -286,10 +286,16 @@ pub const Bus = struct {
             // print("read timer @0x{X}, got 0x{X}\n", .{address, self.timer.read(address)});
             return self.timer.read(address);
         }
+        if (address == 0xFF0F) {
+            return self.handler.read(.flag);
+        }
+        if (address == 0xFFFF) {
+            return self.handler.read(.enable);
+        }
         if (address == 0xFF00) {
-                print("read joypad\n", .{});
-                return self.joypad.check();
-            }
+            // print("read joypad\n", .{});
+            return self.joypad.check();
+        }
         return self.memory[address];
     }
     pub fn writeByte(self: *Bus, address: u16, value: u8) void {
@@ -305,12 +311,17 @@ pub const Bus = struct {
             self.timer.write(address, value);
         } else if (address >= GPU.special_register.start and address <= GPU.special_register.end) {
             const register = @as(GPU.special_register, @enumFromInt(address - GPU.special_register.start));
+            switch (register) {
+                .ly => {}, // no writes
+                .stat => self.gpu.setSpecialRegister(register, value & 0b1111_1000), // bottom 3 bytes are read only
+                else => self.gpu.setSpecialRegister(register, value)
+            }
             self.gpu.setSpecialRegister(register, value);
             // handle dma transfers
             if (register == GPU.special_register.dma) {
                 const prefix = address / 0x100;
                 const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
-                print("RAM ADDR: [0x{X}], copy size\n\t source: 0x{X}\n\t dest: 0x{X}\n", .{ram_address, GPU.OAM_SIZE, GPU.OAM_END - GPU.OAM_BEGIN});
+                // print("RAM ADDR: [0x{X}], copy size\n\t source: 0x{X}\n\t dest: 0x{X}\n", .{ram_address, GPU.OAM_SIZE, GPU.OAM_END - GPU.OAM_BEGIN});
                 @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END + 1], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
             }
         } else if (address >= GPU.VRAM_BEGIN and address <= GPU.VRAM_END) { // VRAM banks 0 & 1
@@ -456,7 +467,7 @@ pub const Bus = struct {
     };
 
     /// Handles/Services interrupts sent to the GameBoy from various devices
-    const InterruptHandler = struct {
+    pub const InterruptHandler = struct {
         const InterruptBit = enum(u3) {
             vblank,
             lcd,
@@ -470,11 +481,11 @@ pub const Bus = struct {
             source: u16
         };
         const Interrupts = [_]Interrupt{
-            .{.bit = .vblank, .source = 40}, // highest priority
-            .{.bit = .lcd, .source = 48},
-            .{.bit = .timer, .source = 50},
-            .{.bit = .serial, .source = 58},
-            .{.bit = .joypad, .source = 60} // least priority
+            .{.bit = .vblank, .source = 0x40}, // highest priority
+            .{.bit = .lcd, .source = 0x48},
+            .{.bit = .timer, .source = 0x50},
+            .{.bit = .serial, .source = 0x58},
+            .{.bit = .joypad, .source = 0x60} // least priority
          };
         iE: *u8 = undefined, // interrupt enable
         iF: *u8 = undefined, // interrupt flag
@@ -503,23 +514,38 @@ pub const Bus = struct {
                 .flag => self.iF.* &= mask
             }
         }
+        pub inline fn enable(self: *InterruptHandler) void {
+            self.ime = true;
+        }
         pub inline fn handle(self: *InterruptHandler, cpu: *CPU) void {
             // which interrupt do we need to handle (highest priority first)
             if (self.ime) {
                 // print("interrupt handle @pc[{X}]\n", .{cpu.pc});
-                // self.dump();
+                // if (self.check(.flag, .lcd)) {
+                    // self.dump();
+                // }
                 for (Interrupts) |interrupt| {
                     if (self.check(.enable, interrupt.bit) and self.check(.flag, interrupt.bit)) {
                         self.ime = false;
                         self.clear(.flag, interrupt.bit);
                         cpu.push_stack(cpu.pc);
                         cpu.pc = interrupt.source;
+                        // print("\thandled {any}, set pc to 0x{X}\n", .{interrupt, cpu.pc});
                         break;
                     }
                 } // 5 M cycles
             }
         }
+        pub fn read(self: *InterruptHandler, target: enum { enable, flag }) u8 {
+            return @intCast(
+                switch (target) {
+                    .enable => @as(u5, @truncate(self.iE.*)),
+                    .flag =>  @as(u5, @truncate(self.iF.*)),
+                }
+            );
+        }
         pub fn dump(self: *InterruptHandler) void {
+            print("IME: {d}\n", .{@intFromBool(self.ime)});
             for (std.enums.values(InterruptBit)) |interrupt| {
                 print("{any}[ E: ({d})\tF: ({d}) ]\n", .{interrupt, @intFromBool(self.check(.enable, interrupt)), @intFromBool(self.check(.flag, interrupt))});
             }
@@ -530,9 +556,9 @@ pub const Bus = struct {
 /// Joypad logic
 pub const Joypad = struct {
     const button = enum {
-        select, start,
-        a, b,
-        up, down, left, right
+        select, start, // options
+        a, b, // gameplay
+        up, down, left, right // d-pad
     };
 
     button_field: *u8 = undefined,
@@ -543,7 +569,7 @@ pub const Joypad = struct {
 
     fn check(self: *Joypad) u8 {
         _ = self;
-        return 0xFF;
+        return 0xF;
     }
 };
 
