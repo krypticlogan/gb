@@ -357,13 +357,6 @@ pub const LCD = struct {
     grid_pixel_sz: u16 = undefined,
     allocator: std.mem.Allocator = undefined,
     root_path: []const u8 = undefined,
-    const gb_palette = [_]u32{ // actually greens
-        0xFFFFFFFF, // white
-        0xFFAAAAAA, // light gray
-        0xFF555555, // dark gray
-        0xFF000000, // transparent
-    };
-
     // startup
     fn init(self: *@This(), allocator: std.mem.Allocator, root_path: []const u8) !void {
         var color: GPU.Color = undefined;
@@ -452,17 +445,107 @@ pub const LCD = struct {
         }
         std.Thread.sleep(17 * std.time.ns_per_ms);
     }
+    var palette_index: u8 = 0;
+    const Palette = [4]u32;
+    const palettes = [_]Palette {
+        .{ // black/white
+            0xFF_FF_FF_FF,
+            0xFF_AA_AA_AA,
+            0xFF_55_55_55,
+            0xFF_00_00_00,
+        },
+        .{ // green
+            0xFF_CC_FF_CC,
+            0xFF_99_CC_99,
+            0xFF_66_99_66,
+            0xFF_33_66_33
+        },
+        .{ // pink
+            0xFF_FF_CC_CC,
+            0xFF_CC_99_99,
+            0xFF_99_66_66,
+            0xFF_66_33_33
+        },
+        .{ // blue
+            0xFF_CC_CC_FF,
+            0xFF_99_99_CC,
+            0xFF_66_66_99,
+            0xFF_33_33_66
+        },
+        .{ // sand
+            0xFF_FB_EF_E8,
+            0xFF_F2_B4_9C,
+            0xFF_C3_7A_60,
+            0xFF_6A_5C_41
+        },
+        .{ // forest
+            0xFF_A4_F3_97,
+            0xFF_88_75_4E,
+            0xFF_60_51_3A,
+            0xFF_22_2B_22
+        },
+        .{ // fairy
+            0xFF_FF_D2_D4,
+            0xFF_F8_D1_A5,
+            0xFF_B7_B1_F6,
+            0xFF_F5_83_9A
+        },
+        .{ // funk pop
+            0xFF_FF_F8_61,
+            0xFF_FF_79_C6,
+            0xFF_B1_4B_F0,
+            0xFF_6A_00_F4
+        },
+        .{ // ocean neon
+            0xFF_A0_FF_FF,
+            0xFF_4D_CB_FF,
+            0xFF_00_89_C0,
+            0xFF_00_3F_63
+        },
+        .{ // retro sunset
+            0xFF_FF_C1_47,
+            0xFF_FF_70_67,
+            0xFF_C0_3A_6B,
+            0xFF_4C_1A_45
+        },
+        .{ // moss and ember
+            0xFF_D9_EC_D2,
+            0xFF_9C_CB_7A,
+            0xFF_75_54_2E,
+            0xFF_A6_38_1F
+        },
+        .{ // bubblegum digital
+            0xFF_FF_E6_F7,
+            0xFF_FF_AE_EC,
+            0xFF_D8_7C_F4,
+            0xFF_53_2D_8F
+        },
+        .{ // frostbyte terminal
+            0xFF_E0_FF_FB,
+            0xFF_8A_FF_F1,
+            0xFF_30_C9_CF,
+            0xFF_0F_3E_4F
+        },
+    };
+    fn getCurrentPalette() Palette {
+        return palettes[palette_index];
+    }
+    pub fn nextPalette() void {
+        palette_index = (palette_index + 1) % @as(u8, palettes.len);
+    }
     // peripheral fns
     fn writeToBuf(buf: []u32, color: GPU.Color, index: usize) void {
         if (@intFromEnum(color) > 3) {
             print("enum Color(0-3): {d}\n", .{color});
         }
-        buf[index] = switch (color) {
-            .white => 0xFFCCFFCC,
-            .lgray => 0xFF99CC99,
-            .dgray => 0xFF669966,
-            .black => 0xFF336633,
-        };
+        // buf[index] = switch (color) {
+        //     .white => 0xFFCCFFCC,
+        //     .lgray => 0xFF99CC99,
+        //     .dgray => 0xFF669966,
+        //     .black => 0xFF336633,
+        // };
+        const palette = getCurrentPalette();
+        buf[index] = palette[@intFromEnum(color)];
     }
     fn pushScanline(self: *@This(), new_scanline: [screenWidthPx]GPU.Color, ly: u8) void {
         for (0..screenWidthPx) |x| {

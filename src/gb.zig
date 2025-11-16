@@ -161,6 +161,9 @@ pub fn getEvents(self: *GB) !void {
         switch (event.type) {
             g.SDL_EVENT_KEY_DOWN => {
                 switch (event.key.key) {
+                    g.SDLK_1 => {
+                       LCD.nextPalette();
+                    },
                     g.SDLK_P => {
                         switch (self.cpu.paused) {
                             false => self.cpu.break_exe(),
