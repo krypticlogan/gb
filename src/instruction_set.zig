@@ -22,8 +22,8 @@ pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
     // print(debug ++ "\n", .{cpu.pc});
     cpu.pushToExecutionChain(debug, .{cpu.pc});
     const interrupt_pending = cpu.bus.handler.read(.enable) & cpu.bus.handler.read(.flag) != 0;
-    print("HALT on pc[{X}]: {s}\nInterrupt state\n -------------\n\t", .{cpu.pc, if (!cpu.halted) "first entry\n" else "returned" });
-    cpu.bus.handler.dump();
+    // print("HALT on pc[{X}]: {s}\nInterrupt state\n -------------\n\t", .{cpu.pc, if (!cpu.halted) "first entry\n" else "returned" });
+    // cpu.bus.handler.dump();
     switch (cpu.halted) {
         false => { // first entry
             cpu.halted = true;
@@ -4447,7 +4447,6 @@ fn mixedSignArithmetic(target_value: anytype, signed_value: anytype, treat_as: t
     return .{ val, res[1] };
 }
 const CPU = @import("cpu.zig");
-// const CPU = cpu;
 const regID = CPU.regID;
 
 const std = @import("std");

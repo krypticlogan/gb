@@ -24,9 +24,6 @@ pub fn init(self: *@This(), gb: *GB) !void {
     Log.out_file = std.fs.cwd().createFile(Log.out_file_path, .{.truncate = true}) catch {
         @panic("Unable to create log file, abortting");
     };
-    defer {
-        Log.out_file.close();
-    }
 }
 // cpu execution
 pub fn execute(self: *@This()) struct{u8, bool} {
@@ -232,27 +229,22 @@ pub const Log = struct {
         }
     }
     const out_file_path = "gameboy-doctor/gb.log";
-    var out_file: std.fs.File = undefined;
-    pub inline fn write_to_file(state: struct {u8, u8, u8, u8, u8, u8, u8, u8, u16, u16, u8, u8, u8, u8}) void {
-                                            // a   f   b   c   d   e   h   l   sp   pc   pc_mem -->
-        out_file = std.fs.cwd().createFile(out_file_path, .{.truncate = false}) catch {
-            @panic("Unable to create log file, aborting");
-        };
-        defer {
-            out_file.close();
-        }
-        out_file.seekFromEnd(0) catch {
-            @panic("Issue with seekFromEnd");
-        };
+    pub var out_file: std.fs.File = undefined;
+
+    pub inline fn write_to_file(state: struct {u8, u8, u8, u8, u8, u8, u8, u8, u16, u16, u8, u8, u8, u8}) void {// a   f   b   c   d   e   h   l   sp   pc   pc_mem -->
+        // out_file.seekFromEnd(0) catch {
+        //     @panic("Issue with seekFromEnd");
+        // };
         const log_format = "A:{X:0>2} F:{X:0>2} B:{X:0>2} C:{X:0>2} D:{X:0>2} E:{X:0>2} H:{X:0>2} L:{X:0>2} SP:{X:0>4} PC:{X:0>4} PCMEM:{X:0>2},{X:0>2},{X:0>2},{X:0>2}\n";
         var log_buffer: [1024]u8 = undefined;
         // const state: []const u8 =
+
         _ = out_file.write(
             std.fmt.bufPrint(&log_buffer, log_format, state) catch {
                 @panic("Unable to format log");
-            }) catch {
-                @panic("Unable to write log");
-            };
+        }) catch {
+            @panic("Unable to write log");
+        };
     }
 };
 pub const WRAM_START = 0xC000;

@@ -15,7 +15,7 @@ pub fn main() !void {
     const project_root = std.fs.path.dirname(std.fs.path.dirname(exe_dir).?).?;
     // print("project root", .{project_root});
     defer allocator.free(exe_path);
-    
+
 
     var gb = GB{.allocator = allocator, .root_path = project_root};
 

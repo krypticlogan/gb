@@ -161,10 +161,38 @@ pub fn getEvents(self: *GB) !void {
         switch (event.type) {
             g.SDL_EVENT_KEY_DOWN => {
                 switch (event.key.key) {
+                    // d-pad
+                    g.SDLK_W, g.SDLK_UP => {
+                        self.joypad.press(Joypad.D_Pad.up);
+                    },
+                    g.SDLK_A, g.SDLK_LEFT => {
+                        self.joypad.press(Joypad.D_Pad.left);
+                    },
+                    g.SDLK_S, g.SDLK_DOWN => {
+                        self.joypad.press(Joypad.D_Pad.down);
+                    },
+                    g.SDLK_D, g.SDLK_RIGHT => {
+                        self.joypad.press(Joypad.D_Pad.right);
+                    },
+                    g.SDLK_O, g.SDLK_Z => { // a
+                        self.joypad.press(Joypad.Button.a);
+                    },
+                    g.SDLK_P, g.SDLK_X => { // b
+                        self.joypad.press(Joypad.Button.b);
+                    },
+                    g.SDLK_F => { // start
+                        self.joypad.press(Joypad.Button.start);
+                    },
+                    g.SDLK_G => { // select
+                        self.joypad.press(Joypad.Button.select);
+                    },
+
+
+                    // debug
                     g.SDLK_1 => {
                        LCD.nextPalette();
                     },
-                    g.SDLK_P => {
+                    g.SDLK_0 => {
                         switch (self.cpu.paused) {
                             false => self.cpu.break_exe(),
                             true => {
@@ -180,16 +208,53 @@ pub fn getEvents(self: *GB) !void {
                             self.cpu.resume_exe();
                         }
                     },
+                    // core utils
+                    g.SDLK_F11 => {
+                        self.gpu.lcd.toggleFullscreen();
+                    },
                     else => continue
                 }
             },
-            g.SDL_EVENT_KEY_UP => {},
+            g.SDL_EVENT_KEY_UP => {
+                switch (event.key.key) {
+                // d-pad
+                    g.SDLK_W, g.SDLK_UP => {
+                        self.joypad.unpress(Joypad.D_Pad.up);
+                    },
+                    g.SDLK_A, g.SDLK_LEFT => {
+                        self.joypad.unpress(Joypad.D_Pad.left);
+                    },
+                    g.SDLK_S, g.SDLK_DOWN => {
+                        self.joypad.unpress(Joypad.D_Pad.down);
+                    },
+                    g.SDLK_D, g.SDLK_RIGHT => {
+                        self.joypad.unpress(Joypad.D_Pad.right);
+                    },
+                    g.SDLK_O, g.SDLK_Z => { // a
+                        self.joypad.unpress(Joypad.Button.a);
+                    },
+                    g.SDLK_P, g.SDLK_X => { // b
+                        self.joypad.unpress(Joypad.Button.b);
+                    },
+                    g.SDLK_F => { // start
+                        self.joypad.unpress(Joypad.Button.start);
+                    },
+                    g.SDLK_G => { // select
+                        self.joypad.unpress(Joypad.Button.select);
+                    },
+                    else => {}
+                }
+            },
             g.SDL_EVENT_QUIT => {
                 self.running = false;
             },
             g.SDL_EVENT_WINDOW_RESIZED => { // TODO
                 print("RESIZED, NEW SIZE\n\n\n\n\n\n", .{});
+                self.gpu.lcd.resize();
             },
+            // g.SDL_EVENT_WINDOW_ENTER_FULLSCREEN, g.SDL_EVENT_WINDOW_LEAVE_FULLSCREEN => {
+            //     self.gpu.lcd.toggleFullscreen();
+            // },
             else => {},
         }
     }
@@ -230,6 +295,7 @@ pub fn endGB(self: *GB) void {
     print("Serial output: {s}", .{serialBuf[0..serialIndex]});
     self.allocator.free(self.cartridge_rom);
     self.gpu.lcd.endSDL();
+    CPU.Log.out_file.close();
 }
 
 //
@@ -504,6 +570,9 @@ pub const Bus = struct {
             };
         }
         pub fn set(self: *InterruptHandler, target: enum {enable, flag}, bit: InterruptBit) void {
+            // if (target == .enable and bit == .joypad) {
+            //
+            // }
             const mask = @as(u8, 1) << @intFromEnum(bit);
             switch (target) {
                 .enable => self.iE.* |= mask,
@@ -558,21 +627,97 @@ pub const Bus = struct {
 
 /// Joypad logic
 pub const Joypad = struct {
-    const button = enum {
-        select, start, // options
-        a, b, // gameplay
-        up, down, left, right // d-pad
+    // The button and d-pad enums are defined in the same order
+    // as their respective bit placements within the JOYP register
+    const Button = enum {
+        a, b, select, start
     };
-
-    button_field: *u8 = undefined,
+    const D_Pad = enum {
+        right, left, up, down
+    };
+    const Select = enum {
+        both, dpad, buttons, none
+    };
+    input_field: *u8 = undefined, // bottom 4 bits of this input field will always be 0
+    // we will reconstruct the register from internal state on reads
+    button_state: u4 = 0xF,
+    d_pad_state: u4 = 0xF,
+    pending_buttons: u4 = 0xF,
+    pending_dir: u4 = 0xF,
+    bus: *Bus = undefined,
 
     fn init(self: *Joypad, gb: *GB) void {
-        self.button_field = &gb.bus.memory[0xFF00];
+        self.input_field = &gb.bus.memory[0xFF00];
+        self.bus = &gb.bus;
     }
 
+    // fn get_selection(self: *Joypad) Select {
+    //     const selection_state: u2 = @truncate(self.input_field.* >> 4);
+    //     return @enumFromInt(selection_state);
+    // }
+    inline fn is_dpad_selected(self: *Joypad) bool {
+        return (self.input_field.* >> 4) & 1 == 0;
+    }
+    inline fn is_button_selected(self: *Joypad) bool {
+        return (self.input_field.* >> 5) & 1 == 0;
+    }
     fn check(self: *Joypad) u8 {
-        _ = self;
-        return 0xF;
+        // var input_state = self.input_field.*;
+        return self.input_field.* | switch (@as(u2, @intFromBool(self.is_button_selected()) | @intFromBool(self.is_dpad_selected()))) {
+            0b00 => self.button_state | self.d_pad_state,
+            0b01 => self.d_pad_state,
+            0b10 => self.button_state,
+            0b11 => 0xF
+        };
+    }
+    fn write(self: *Joypad, value: u8) void {
+        // const old_sel = self.input_field.*;
+        const new_sel = value & 0x30;
+        self.input_field.* = new_sel;
+        // update pending interrupts
+        // if (new_sel ^ old_sel != 0) {
+        //     if (self.is_button_selected()) {
+        //         self.button_state = self.pending_buttons;
+        //     }
+        //     if (self.is_dpad_selected()) {
+        //         self.d_pad_state = self.pending_dir;
+        //     }
+        // }
+    }
+    fn press(self: *Joypad, input: anytype) void {
+        const mask = ~(@as(u4, 1) << @intFromEnum(input));
+        // const pressed = self.
+        const state, _, _ = switch (@TypeOf(input)) {
+            Button => .{&self.button_state, self.is_button_selected(), &self.pending_buttons},
+            D_Pad => .{&self.d_pad_state, self.is_dpad_selected(), &self.pending_dir},
+            else => @compileError("Unexpected selection")
+        };
+        state.* &= mask;
+
+        // if (state.* & ~mask != 0) {
+        //     state.* &= mask;
+        //     if ((self.is_button_selected()) or (self.is_dpad_selected())) {
+        //         self.bus.handler.set(.flag, .joypad);
+        //         print("sent joyp interrupt\n\n", .{});
+        //     }
+        // }
+        // self.dump_state();
+    }
+    fn unpress(self: *Joypad, input: anytype) void {
+        const mask: u4 = @as(u4, 1) << @intFromEnum(input);
+        switch (@TypeOf(input)) {
+            Button => self.button_state |= mask,
+            D_Pad => self.d_pad_state |= mask,
+            else => @compileError("Unexpected selection")
+        }
+        // self.dump_state();
+    }
+
+    pub fn dump_state(self: *Joypad) void {
+        print("Joypad |\t", .{});
+        print("SEL | B: {any}, D: {any}\n", .{self.is_button_selected(), self.is_dpad_selected()});
+        print("Start | Select | B | A\t0b{b:04}\n", .{self.button_state});
+        print("Down | Up | Left | Right\t0b{b:04}\n", .{self.d_pad_state});
     }
 };
 
