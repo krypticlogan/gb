@@ -111,7 +111,7 @@ pub fn go(self: *GB) !void {
         try self.getEvents(); // poll events once per frame
         self.clock.tick();
         self.clock.update(); // calculates average fps
-        self.gpu.lcd.renderAll(self.cpu.log.writeAll()); // render at the last scanline
+        // self.gpu.lcd.renderAll(self.cpu.log.writeAll()); // render at the last scanline
         if (self.gpu.frame_cycles_spent >= Clock.cycles_per_frame) self.gpu.frame_cycles_spent = 0;
     }
 }
@@ -136,10 +136,14 @@ fn do(self: *GB) !void {
     // }
     const res = self.cpu.execute();
     const cycles_spent = res[0];
+
     self.cycles_spent += cycles_spent;
+
     const cycles_to_spend: u8 = @max(1, cycles_spent);
+
     self.gpu.tick(cycles_to_spend * 4);
     self.timer.tick(cycles_to_spend * 4);
+
     self.bus.handler.handle(&self.cpu);
     if (self.cpu.pc > 0xFF and !self.cpu.booted) {
         self.cpu.booted = true;
@@ -193,20 +197,15 @@ pub fn getEvents(self: *GB) !void {
                        LCD.nextPalette();
                     },
                     g.SDLK_0 => {
-                        switch (self.cpu.paused) {
-                            false => self.cpu.break_exe(),
-                            true => {
-                                self.cpu.resume_exe();
-                                self.cpu.step = false;
-                            }
-                        }
+                        self.cpu.break_exe();
                     },
                     g.SDLK_SPACE => {
-                        if (self.cpu.paused) {
-                            // self.state_dump();
-                            self.cpu.step = true;
-                            self.cpu.resume_exe();
-                        }
+                        self.cpu.step = true;
+                        self.cpu.resume_exe();
+                    },
+                    g.SDLK_RETURN => {
+                        self.cpu.resume_exe();
+                        self.cpu.step = false;
                     },
                     // core utils
                     g.SDLK_F11 => {
@@ -380,12 +379,50 @@ pub const Bus = struct {
             self.timer.write(address, value);
         } else if (address >= GPU.special_register.start and address <= GPU.special_register.end) {
             const register = @as(GPU.special_register, @enumFromInt(address - GPU.special_register.start));
+            // if (register == .lcdc) { // debug
+                // const current_lcdc_b5 = self.gpu.check_lcdc(.display_window);
+                // const new_lcdc_b5 = display.BIT(@intFromEnum(GPU.lcdc_bit.display_window), value) == 1;
+                // print("wrote to 0x{X} (lcdc)\n", .{address});
+                
+                // // 8 bits 8 spaces 8 bars
+                // var new_lcdc_buf: [8]u8 = undefined;
+                // _= std.fmt.bufPrint(&new_lcdc_buf, "{b:0>8}", .{value}) catch {
+                //     @panic("[debug] couldn't print to the buffer");
+                // };
+                // print("(pure bits of new lcdc) {b}\n", .{value});
+                // print("Bit: | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |\n", .{});
+                // print("New: ", .{});
+                // for (0..8) |i| {
+                //     print("| {c} ", .{new_lcdc_buf[i]});
+                // }
+
+                // var old_lcdc_buf: [8]u8 = undefined;
+                // _ = std.fmt.bufPrint(&old_lcdc_buf, "{b:0>8}", .{self.gpu.getSpecialRegister(.lcdc)}) catch {
+                //     @panic("[debug] couldn't print to the buffer");
+                // };
+                // print("|\nOld: ", .{});
+                // for (0..8) |i| {
+                //     print("| {c} ", .{old_lcdc_buf[i]});
+                // }
+
+                // const bits_changed = value ^ self.gpu.getSpecialRegister(.lcdc);
+                // // print("Changes: 0b{b}\n", .{bits_changed});
+                // var change_lcdc_buf: [8]u8 = undefined;
+                // _ = std.fmt.bufPrint(&change_lcdc_buf, "{b:0>8}", .{bits_changed}) catch {
+                //     @panic("[debug] couldn't print to the buffer");
+                // };
+                // print("|\nChg: ", .{});
+                // for (0..8) |i| {
+                //     print("| {c} ", .{change_lcdc_buf[i]});
+                // }
+                // print("|\n", .{});
+                // self.cpu.break_exe();
+            // }
             switch (register) {
                 .ly => {}, // no writes
                 .stat => self.gpu.setSpecialRegister(register, value & 0b1111_1000), // bottom 3 bytes are read only
                 else => self.gpu.setSpecialRegister(register, value)
             }
-            self.gpu.setSpecialRegister(register, value);
             // handle dma transfers
             if (register == GPU.special_register.dma) {
                 const prefix = address / 0x100;
@@ -419,15 +456,6 @@ pub const Bus = struct {
                 self.memory[address] &= ~@as(u8, 0x80);
             }
         }
-        // else if (address == 0xFFFF) {
-        //     self.memory[address] = value;
-        //     // print("wrote to the iF flag = 0b{b}\n does it show?\t handler IE flag = 0b{b}\n", .{value, self.handler.iE.*});
-        //     // self.handler.dump();
-        // } else if (address == 0xFF0F) {
-        //     self.memory[address] = value;
-        //     // print("wrote to the iF flag = 0b{b} @pc[{X}]\n does it show?\t handler iF flag = 0b{b}\n", .{value, self.cpu.pc, self.handler.iF.*});
-        //     // self.handler.dump();
-        // }
         else self.memory[address] = value;
     }
     /// Memory Bank Controller
@@ -651,10 +679,6 @@ pub const Joypad = struct {
         self.bus = &gb.bus;
     }
 
-    // fn get_selection(self: *Joypad) Select {
-    //     const selection_state: u2 = @truncate(self.input_field.* >> 4);
-    //     return @enumFromInt(selection_state);
-    // }
     inline fn is_dpad_selected(self: *Joypad) bool {
         return (self.input_field.* >> 4) & 1 == 0;
     }

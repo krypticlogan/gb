@@ -1,4 +1,4 @@
-/// Defines a gameboy GPU(PPU)
+/// Defines a Game Boy GPU(PPU)
 /// - Handles writing to vram and processing pixels from memory to the screen
 pub const GPU = struct {
     pub const VRAM_BEGIN = 0x8000;
@@ -12,28 +12,59 @@ pub const GPU = struct {
     const tilemap_two = 0x9C00;
     const tilemap_size: u16 = tilemap_two - tilemap_one;
 
-    const Mode = enum { // modes specifying number of cycles per scanline
+    const Mode = enum { // 4 modes that the PPU cycles through
         HBLANK,
         VBLANK,
         SCAN,
         RENDER,
-        // const cycles: [4]u16 = .{ 204, 456, 80, 172 };
-        fn min_cycles(self: Mode) u16 {
+        fn max_cycles(self: Mode) u16 {
             return switch (self) {
                 .HBLANK => 204,
                 .VBLANK => 456,
                 .SCAN => 80,
-                .RENDER => 172
+                .RENDER => 289
             };
         }
     };
+
     const Color = enum(u2) { transparent, dgray, lgray, white };
-    const Sprite = struct {
+    const Sprite = struct { // A sprite object
         y: u8 = 0,
         x: u8 = 0,
         tile_no: u8 = 0,
-        flags: u8 = 0,
-        const len = 4;
+        flags: Flags, // constructed from bitfield in detect_sprite_fetch through the inspect_flags(flags: u8) method
+        const Flags = struct {bg_priority: bool, y_flip: bool, x_flip: bool, palette: bool};    
+        fn inspect_flags(flags: u8) Flags {
+            return .{
+                // Bit 7    OBJ-to-BG Priority
+                // 0 = Sprite is always rendered above background
+                // 1 = Background colors 1-3 overlay sprite, sprite is still rendered above color 0
+                .bg_priority = BIT(7, flags) == 1,
+                // Bit 6    Y-Flip
+                // If set to 1 the sprite is flipped vertically, otherwise rendered as normal
+                .y_flip = BIT(6, flags) ==  1,
+                // Bit 5    X-Flip
+                // If set to 1 the sprite is flipped horizontally, otherwise rendered as normal
+                .x_flip = BIT(5, flags) ==  1,
+                // Bit 4    Palette Number
+                // If set to 0, the OBP0 register is used as the palette, otherwise OBP1
+                .palette = BIT(4,flags) ==  1,
+            };
+        }
+        fn comparePriority(context: void, lhs: ?Sprite, rhs: ?Sprite) bool {
+            _ = context;
+            if (rhs == null or lhs == null) {
+                return lhs != null;
+            }
+            const lhs_x = lhs.?.x;
+            const rhs_x = rhs.?.x;
+            if (lhs_x == rhs_x) return true; // preserve order for equal sprites
+            // if the sprites occupy the same space, put the one with the lower x value after the one with higher
+            // we occupy the same space iff the abs(lhs - rhs) is less than 8
+            // const same_space = @abs(@as(i16, lhs_x) - rhs_x) < 8;
+            // if (same_space) return lhs_x > rhs_x;
+            return lhs_x < rhs_x; // lhs should come before rhs (they do not occupy the same space)
+        }
     };
 
     bus: *Bus = undefined,
@@ -52,30 +83,29 @@ pub const GPU = struct {
     sprites_used: u8 = 0,
 
     // Fifos that the fetcher uses to process pixels
-    sprite_pixel_fifo: std.ArrayList(Color) = undefined,
-    sprite_pixel_fifo_buffer: [8]Color = undefined,
+    sprite_pixel_fifo: std.ArrayList(struct{Color, bool}) = undefined,
+    sprite_pixel_fifo_buffer: [16]struct{Color, bool} = undefined,
     bg_pixel_fifo: std.ArrayList(Color) = undefined,
-    bg_pixel_fifo_buffer: [8]Color = undefined,
+    bg_pixel_fifo_buffer: [16]Color = undefined,
 
     // STATE
     mode: Mode = undefined,
+    mode_cycles: u16 = 0,
+    mode_cycles_spent: u16 = 0,
     stat_reg: u8 = undefined,
     interrupt_pending: bool = false,
     scanline: [LCD.screenWidthPx]Color = undefined,
-    scanline_fetched: u8 = 0,
     scanline_displayed: u8 = 0,
     scx_discard: u8 = 0,
-    reached_window: bool = false,
-    mode_cycles_left: u16 = 0,
     frames_cycled: usize = 0,
     frame_cycles_spent: u64 = 0,
+    stall: u8 = 0,
 
     // Peripherals
     lcd: LCD = undefined,
     /// Combined BG/Sprite pixel fetcher
     fetcher: pixel_fetcher = undefined,
 
-    // rand: std.Random = undefined,
     // startup
     pub fn init(self: *@This(), gb: *GB) !void {
         self.vram = gb.bus.memory[VRAM_BEGIN .. VRAM_END + 1];
@@ -83,13 +113,12 @@ pub const GPU = struct {
         self.bus = &gb.bus;
         self.special_registers = gb.bus.memory[special_register.start .. special_register.end + 1];
         self.mode = .SCAN;
-        self.mode_cycles_left = self.mode.min_cycles();
-        self.sprite_pixel_fifo = std.ArrayList(Color).initBuffer(&self.sprite_pixel_fifo_buffer);
+        self.mode_cycles = self.mode.max_cycles();
+        self.sprite_pixel_fifo = std.ArrayList(struct{Color, bool}).initBuffer(&self.sprite_pixel_fifo_buffer);
         self.bg_pixel_fifo = std.ArrayList(Color).initBuffer(&self.bg_pixel_fifo_buffer);
         @memset(&self.scanline, GB.prng.random().enumValue(Color));
         try self.lcd.init(gb.allocator, gb.root_path);
         self.fetcher.init(self);
-        // @memset(&self.sprite_buffer, Sprite{});
     }
     /// gpu execution
     pub fn tick(self: *@This(), cycles: u16) void {
@@ -98,45 +127,71 @@ pub const GPU = struct {
         // process interrupts and continue on as well as changing modes mid-scanline when needed
         var cycles_left = cycles; // amt of cycles spent by cpu
         self.frame_cycles_spent += cycles_left;
-        while (cycles_left > 0) {
-            if (self.mode_cycles_left == 0) {
-                self.switchMode(); // handles drawing the screen, updating ly
-                // print("Mode switch: {any}, LY: {d}, stat: {d}\n", .{ self.mode, self.getSpecialRegister(.ly), self.getSpecialRegister(.stat) });
-            }
-            const cycles_to_process: u8 = @intCast(@min(cycles_left, self.mode_cycles_left));
 
+        while (cycles_left > 0) {
+            switch (self.mode) {
+                .RENDER => {
+                    if (self.scanline_displayed == self.scanline.len) {
+                        self.switchMode();
+                    }
+                    else if (self.mode_cycles_spent >= self.mode_cycles) {
+                        self.switchMode();
+                    }
+                },
+                else => {
+                    // print("switching mode {any}\n", .{self.mode});
+                    if (self.mode_cycles_spent >= self.mode_cycles) self.switchMode(); // handles drawing the screen, updating ly
+                }
+            }
+
+            const cycles_to_process: u16 = @intCast(@min(cycles_left, self.mode_cycles));
+            // print("processing cycles\n", .{});
             self.do(cycles_to_process);
-            self.mode_cycles_left -= cycles_to_process;
             cycles_left -= cycles_to_process;
         }
     }
-    fn do(self: *@This(), cycles: u8) void {
+    fn do(self: *@This(), cycles: u16) void {
         // Operate GPU here
         // // const zone = tracy.beginZone(@src(), .{ .name = "DO GPU CYCLES" });
         // // defer zone.end();
-        var cycles_to_spend: i16 = @intCast(cycles);
+        self.mode_cycles_spent += cycles;
+        var cycles_spent: u16 = 0;
         switch (self.mode) {
             .SCAN => { // 2 searches OAM memory for sprites that should be rendered on the current scanline and stores them in a buffer
-                while (self.sprite_buffer_i < 10 and self.oam_i < OAM_SIZE) : (self.oam_i+=4) {
+                while (self.oam_i < OAM_SIZE and cycles_spent < cycles) : (self.oam_i+=4) {
+                    // this needs to sort/add sprites to the buffer by x value
+                    // using pdq sort
+                    cycles_spent += 2;
+                    if (self.sprite_buffer_i == 10) continue;
                     const ly = self.getSpecialRegister(.ly);
-                    const x_pos = self.oam[self.oam_i+1];
                     const y_pos = self.oam[self.oam_i];
-                    const tile_no = self.oam[self.oam_i+2];
+                    const x_pos = self.oam[self.oam_i+1];
+                    var tile_no = self.oam[self.oam_i+2];
                     const flags = self.oam[self.oam_i+3];
-
-                    const height: u8 = switch (BIT(2, self.getSpecialRegister(.lcdc)) == 1) {
-                        true => 16,
+                    const height: u8 = h: switch (self.check_lcdc(.sprite_size)) {
+                        true => {
+                            tile_no &= 0xFE; // ignore the last bit for tall sprites
+                            break :h 16;
+                        },
                         false => 8
                     };
                     const horizontally_visible = x_pos > 0;
                     const vertically_visible =  y_pos <= ly + 16 and y_pos + height > ly + 16; // Within our current scanline?
 
                     if (horizontally_visible and vertically_visible) {
-                        self.sprite_buffer[self.sprite_buffer_i] = Sprite { .y = y_pos, .x = x_pos, .tile_no = tile_no, .flags = flags };
+                        const sprite = Sprite { .y = y_pos, .x = x_pos, .tile_no = tile_no, .flags = Sprite.inspect_flags(flags) };
+                        print("putting sprite into sprite buffer: {any}\nRead from oam mem[0x{X} .. 0x{X} + 4]\n", .{sprite, self.oam_i, self.oam_i});
+                        self.sprite_buffer[self.sprite_buffer_i] = sprite;
                         self.sprite_buffer_i += 1;
                     }
-                    cycles_to_spend -= 2;
-                    if (cycles_to_spend <= 0) return;
+                }
+                if (self.oam_i == self.oam.len) {
+                    std.sort.insertion(?Sprite, self.sprite_buffer[0..], {}, Sprite.comparePriority);
+                    print("Sorted sprite data\n==============\n", .{});
+                    for (self.sprite_buffer) |sprite| {
+                        print("{any}\n", .{sprite});
+                    }
+                    // self.bus.cpu.break_exe();
                 }
                 // return;
             },
@@ -145,63 +200,64 @@ pub const GPU = struct {
                 // - Background tiles at the current scroll position
                 // - Window tiles if enabled and visible on this line
                 // - Sprites that were found during OAM scan
-                if (!self.testSpecialRegister(.lcdc, 7)) return;
+                if (!self.check_lcdc(.lcd_enable)) return;
 
-                while (self.scanline_displayed < self.scanline.len and cycles_to_spend > 0) {
+                while (self.scanline_displayed < self.scanline.len and cycles_spent < cycles) exit: {
                     if (self.scx_discard > 0) {
-                        print("discarding, progress: {d}, fetched: {d}\n", .{self.scanline_fetched, self.scanline_displayed});
-                        _ = self.bg_pixel_fifo.pop();
+                        // print("discarding, progress: {d}, fetched: {d}\n", .{self.scanline_fetched, self.scanline_displayed});
+                        if (self.bg_pixel_fifo.items.len > 0)
+                            _ = self.bg_pixel_fifo.orderedRemove(0);
                         self.scx_discard -= 1;
-                        // self.scanline_fetched += 1;
-                        cycles_to_spend -= 1;
+                        self.fetcher.pixels_fetched += 1;
+                        cycles_spent += 1;
                         continue;
                     }
 
-                    const cycles_spent = self.fetcher.step_forward();
-                    cycles_to_spend -= cycles_spent;
-
-                    var pixels_pushed: u8 = 0;
+                    const fetcher_cycles_spent = self.fetcher.step_forward(); // returns 2 if it successfully completed a step, 1 if it is waiting to push out and the bg fifo is not empty
+                    var push_cycles_left = fetcher_cycles_spent;
                     // push pixels to scanline at one cycle per pixel
-                    while (pixels_pushed < cycles_spent) : (pixels_pushed += 1) {
-                        if (self.bg_pixel_fifo.pop()) |bg_pixel| {
-                            const sprite_pixel = self.sprite_pixel_fifo.pop() orelse .transparent;
-                            self.scanline[self.scanline_displayed] = pixelMixer(sprite_pixel, bg_pixel, false);
-                            self.scanline_displayed += 1;
-                            // print("scanline px color: {any} (pushed {d} pixels)\n", .{self.scanline[self.scanline_displayed], self.scanline_displayed});
-                        } else break;
+                    const fetching_sprite = self.fetcher.active_fetcher == .sprite; // if we are fetching a sprite, we should wait until it is done
+                    while (!fetching_sprite and push_cycles_left > 0) : (push_cycles_left -= 1) { // shift pixels out to the buffer
+                        if (self.bus.cpu.booted) {
+                            if (self.fetcher.detect_window_reached()) {
+                                break;
+                            }
+                            if (self.fetcher.detect_sprite_fetch()) {
+                                break;
+                            }
+                        }
+                        if (self.bg_pixel_fifo.items.len < 8) break;
+                        if (self.bus.cpu.booted) print("shifting out pixel {d} | ", .{self.scanline_displayed});
+                        const bg_pixel= self.bg_pixel_fifo.orderedRemove(0); // TODO change this to a different structure for 0(1)
+                        if (self.bus.cpu.booted) print("bg color {any} | ", .{bg_pixel});
+
+                        var sprite_pixel: struct{Color, bool} = undefined;
+                        if (self.sprite_pixel_fifo.items.len >= 1) {
+                            sprite_pixel = self.sprite_pixel_fifo.orderedRemove(0);
+                        } else sprite_pixel = .{.transparent, false};
+                        if (self.bus.cpu.booted) print("sprite color {any} | bg priority? {any}\n ", .{sprite_pixel[0], sprite_pixel[1]});
+
+                        self.scanline[self.scanline_displayed] = pixelMixer(sprite_pixel, bg_pixel);
+                        // print("scanline px color: {any} (pushed {d} pixels)\n", .{self.scanline[self.scanline_displayed], self.scanline_displayed});
+                        self.scanline_displayed += 1;
+                        if (self.scanline_displayed == self.scanline.len) {
+                            break :exit;
+                        }
                     }
-                }       
+                    // print("Fetcher cycles: {d}, pushing cycles: {d}", .{fetcher_cycles_spent, pushing_cycles_spent});
+                    // if (fetcher_cycles_spent != pushing_cycles_spent) @panic("Mismatch between fetcher cycles and pushing cycles");
+                    cycles_spent += fetcher_cycles_spent;
+
+                    // print("cycles spent: {d} | cycles to spend: {d}\n", .{cycles_spent, cycles});
+                }
+                if (cycles_spent < cycles) print("lost cycles: {d}", .{cycles - cycles_spent});
+                if (self.mode == .SCAN) print("cycles spent: {d}", .{self.mode_cycles_spent});
             },
             else => return, // no action for hblank or vblank
         }
     }
 
-    fn detect_window_reached(self: *GPU) void {
-        if (self.reached_window) return; // once reached, we do not need to update this anymore
-        self.reached_window = (
-            self.testSpecialRegister(.lcdc, 5) == 1 and // win enabled
-            self.getSpecialRegister(.wy) == self.getSpecialRegister(.ly) and // and we have reached the window vertically
-            self.scanline_displayed >= self.getSpecialRegister(.wx) - 7 // and we have reached the window horizontally
-        );
 
-    }
-    fn detect_sprite_fetch(self: *GPU) void {
-        // sprite fetch check
-        for (self.sprites_used..self.sprite_buffer_i) |cur_sprite_i| {
-            const sprite = self.sprite_buffer[cur_sprite_i] orelse unreachable;
-            const sprite_x = sprite.x - 8;
-            if (sprite_x + 8 < self.scanline_fetched + 8) {
-                continue;
-            }
-            const pixel_i = self.scanline_fetched - sprite_x;
-
-            if (pixel_i < 0 or pixel_i > 7) {
-                continue;
-            }
-            self.fetcher.active_fetcher = .sprite;
-            self.fetcher.reset_state();
-        }
-    }
     const pixel_fetcher = struct {
         const fetcher_state = struct {
             tile_addr: ?u16 = null,
@@ -234,8 +290,13 @@ pub const GPU = struct {
         sprite_fetcher: fetcher_state = fetcher_state{},
 
         active_fetcher: fetcher_type = .bg,
+        render_window: bool = false,
+        window_reached: bool = false,
         sprite_data: ?Sprite = null,
 
+        pixels_fetched: u8 = 0, // counter
+        window_line_counter: u8 = 0,
+        window_x: u8 = 0,
 
 
         fn init(self: *pixel_fetcher, gpu: *GPU) void {
@@ -249,10 +310,10 @@ pub const GPU = struct {
             };
         }
         fn reset_state(self: *pixel_fetcher) void {
-            if (self.active_fetcher == .sprite) self.sprite_fetcher.reset();
-            if (self.active_fetcher == .win) self.win_fetcher.reset();
+            self.sprite_fetcher.reset();
+            self.win_fetcher.reset();
             self.bg_fetcher.reset();
-            self.active_fetcher = .bg;
+            self.active_fetcher = if (!self.render_window) .bg else .win;
         }
         fn step_forward(self: *pixel_fetcher) u8 {
             // print("step {d}: {any}\n", .{@intFromEnum(self.state), self.state});
@@ -260,30 +321,50 @@ pub const GPU = struct {
             return cycles: switch (state.step) {
                 .tile_no => {
                     // file tile position
-                    const ly = self.gpu.getSpecialRegister(.ly);
+                    const ly: u16 = self.gpu.getSpecialRegister(.ly);
+
+                    // debug
+                        if (self.active_fetcher == .sprite) {
+                            const x = self.pixels_fetched;
+                            self.gpu.sprites_used += 1;
+                            print("\nLY: {d}, X: {d} | sprites used? {d}\n", .{ly, x, self.gpu.sprites_used});
+                            // print("sprite buffer: {any}", .{self.gpu.sprite_buffer});
+                        }
+
                     // only scroll on bg
-                    const scx = if (self.active_fetcher == .bg) self.gpu.getSpecialRegister(.scx) else 0;
-                    const scy = if (self.active_fetcher == .bg) self.gpu.getSpecialRegister(.scy) else 0;
+                    const scx: u16 = if (self.active_fetcher == .bg) self.gpu.getSpecialRegister(.scx) else 0;
+                    const scy: u16 = if (self.active_fetcher == .bg) self.gpu.getSpecialRegister(.scy) else 0;
 
                     state.tile_addr = addr: switch (self.active_fetcher) {
-                        .bg, .win => {
-                            const use_signed = !self.gpu.testSpecialRegister(.lcdc, 4);
+                        .bg, .win => { // bg / window tile addr
+                            const use_signed = !self.gpu.check_lcdc(.tile_data_sel);
                             const base: i32 = if (use_signed) 0x9000 else 0x8000;
 
-                            const tilemap_base: u16 = switch (self.active_fetcher) { // check lcdc bit 3 for bg, bit 6 for win}
-                                .bg => if (self.gpu.testSpecialRegister(.lcdc, 3)) 0x9C00 else 0x9800,
-                                .win => if (self.gpu.testSpecialRegister(.lcdc, 6)) 0x9C00 else 0x9800,
+                            var tilemap_base: u16 = undefined; // check lcdc bit 3 for bg, bit 6 for win}
+                            
+                            const bg_y: u8 = y: switch (self.active_fetcher) {
+                                .bg => {
+                                    tilemap_base = if (self.gpu.check_lcdc(.bg_tilemap)) 0x9C00 else 0x9800;
+                                    break: y @intCast((ly + scy) & 0xFF); // wraps at 256
+                                },
+                                .win => {
+                                    tilemap_base = if (self.gpu.check_lcdc(.window_tilemap)) 0x9C00 else 0x9800;
+                                    break: y self.window_line_counter;
+                                },
+                                else => unreachable
+                            };
+        
+                            const bg_x: u8 = switch (self.active_fetcher) {
+                                .bg => @intCast((self.pixels_fetched + scx) & 0xFF),
+                                .win => self.window_x,
                                 else => unreachable
                             };
 
-                            const bg_y: u16 = (@as(u16, ly) + scy) & 0xFF; // wraps at 256
-                            const bg_x: u16 = (@as(u16, self.gpu.scanline_fetched) + scx) & 0xFF;
-
                             // fetch bg pixel (maybe window tile)
-                            const tile_y: u16 = bg_y / 8;
-                            const tile_x: u16 = bg_x / 8;
+                            const tile_y: u8 = bg_y / 8;
+                            const tile_x: u8 = bg_x / 8;
 
-                            const tile_index_addr: u16 = tilemap_base + tile_y * 32 + tile_x;
+                            const tile_index_addr: u16 = tilemap_base + @as(u16, tile_y) * 32 + tile_x;
 
                             const tile_index: i16 = if (use_signed) @intCast(@as(i8, @bitCast(self.gpu.readVram(tile_index_addr)))) else @intCast(self.gpu.readVram(tile_index_addr));
                             const tile_line: u16 = bg_y % 8;
@@ -291,9 +372,13 @@ pub const GPU = struct {
                             break :addr @intCast(base + tile_index * 16 + @as(i32, @intCast(tile_line * 2)));
                             // print("LY={d}, scanline_fetched={d}, bg_x={d}, tile_x={d}\n", .{ly, self.gpu.scanline_fetched, bg_x, tile_x});
                         },
-                        .sprite => {
-                            const sprite_tile_line: u16 = (ly - self.sprite_data.?.y) % 8;
-                            break :addr 0x8000 + @as(u16, @intCast(self.sprite_data.?.tile_no)) * 16 + sprite_tile_line * 2;
+                        .sprite => { // sprite tile addr
+                            const is_tall = self.gpu.check_lcdc(.sprite_size);
+                            print("Beginning rendering {s} sprite: {any}\n", .{if (is_tall) "tall" else "not tall", self.sprite_data.?});
+                            const height: u8 = if (is_tall) 16 else 8;
+                            var sprite_tile_line: u16 = (ly -% self.sprite_data.?.y -% 16) % height;
+                            if (self.sprite_data.?.flags.y_flip) sprite_tile_line = (height - 1) - sprite_tile_line;
+                            break :addr 0x8000 + @as(u16, @intCast(self.sprite_data.?.tile_no + (sprite_tile_line >> 3)))  * 16 + sprite_tile_line * 2;
                         }
                     };
                     state.step = .tile_low;
@@ -310,50 +395,124 @@ pub const GPU = struct {
                     break :cycles 2;
                 },
                 .push => {
-                    if (self.gpu.bg_pixel_fifo.items.len == 0) {
-                        var tile_i: u4 = 8;
-                        while (tile_i > 0) {
-                            tile_i -= 1;
-                            const rendering_sprites = self.active_fetcher == .sprite;
-                            const bg_win_enabled = self.gpu.testSpecialRegister(.lcdc, 0);
+                    const can_push: bool = switch(self.active_fetcher) {
+                        .bg, .win => self.gpu.bg_pixel_fifo.items.len < 8,
+                        .sprite => self.gpu.sprite_pixel_fifo.items.len < 8,
+                    };
+                    if (can_push) {
+                        const rendering_sprites = self.active_fetcher == .sprite;
+                        // we only push a new set of pixels in the instant that the background is
+                        // const pixel_i: u3 = @intCast(self.pixels_fetched % 8); //
+                        var pixel_i: u4  = 0;
+                        while (pixel_i < 8) : (pixel_i += 1) {
+                            if (self.gpu.bus.cpu.booted) { // debug
+                                print("Pushing pixel {d} (tile index {d}) | Rendering sprites? {any}, BG/WIN enabled? {any}\n", .{if (!self.render_window) self.pixels_fetched else self.window_x, pixel_i, rendering_sprites, self.gpu.check_lcdc(.bg_win_enable)});
+                            }
                             const pixel = color: {
-                              if (rendering_sprites or bg_win_enabled) {
-                                  break: color self.gpu.tilePixelDecoder(state.tile_high.?, state.tile_low.?, @intCast(tile_i));
-                              } else break: color .transparent;
+                                if (rendering_sprites) {
+                                    if (self.gpu.check_lcdc(.sprite_enable)) {
+                                        print("sprite data: {any}\n", .{self.sprite_data});
+                                        const palette: special_register = if (self.sprite_data.?.flags.palette) .obp1 else .obp0;
+                                        // const tall = self.sprite_data.?.flags.
+
+                                        break: color self.gpu.tilePixelDecoder(
+                                            state.tile_high.?,
+                                            state.tile_low.?,
+                                            @intCast(pixel_i),
+                                            self.sprite_data.?.flags,
+                                            palette
+                                        );
+                                    } else break: color .transparent;
+                                }
+
+                                if (self.gpu.check_lcdc(.bg_win_enable)) {
+                                    break: color self.gpu.tilePixelDecoder(
+                                        state.tile_high.?,
+                                        state.tile_low.?,
+                                        @intCast(pixel_i),
+                                        .{ .bg_priority = false, .x_flip = false, .y_flip = false, .palette = false},
+                                        .bgp
+                                    );
+                                } else break: color .transparent;
                             };
-                            // fetch_sprite_pixels()
+
                             switch (self.active_fetcher) {
                                 .bg, .win => self.gpu.bg_pixel_fifo.appendAssumeCapacity(pixel),
-                                .sprite => self.gpu.sprite_pixel_fifo.appendAssumeCapacity(pixel)
+                                .sprite => {
+                                    if (self.gpu.sprite_pixel_fifo.items.len > pixel_i) {
+                                        const next = self.gpu.sprite_pixel_fifo.items[pixel_i][0];
+                                        if (next != .transparent) continue;
+                                        self.gpu.sprite_pixel_fifo.items[pixel_i] = .{pixel, self.sprite_data.?.flags.bg_priority};
+                                    } else self.gpu.sprite_pixel_fifo.appendAssumeCapacity(.{pixel, self.sprite_data.?.flags.bg_priority});
+                                }
+                            }
+
+                            switch (self.active_fetcher) {
+                                .bg => self.pixels_fetched += 1,
+                                .win => self.window_x += 1,
+                                .sprite => {}
                             }
                         }
-                        if (self.active_fetcher == .sprite) self.gpu.sprites_used += 1
-                            else self.gpu.scanline_fetched += 8;
-                        self.reset_state(); // reset the fetcher state as this is the last step
+                        // if (pixel_i == 0) {
+                            self.reset_state(); // reset the fetcher state as we have pushed the last pixel
+                            if (self.gpu.bus.cpu.booted) print("finished pushing {s} pixel: active fetcher: {any} | state {any}\n", .{if (rendering_sprites) "sprite" else "bg/window" , self.active_fetcher, self.active_fetcher_state()});
+                        // }
                         break :cycles 2;
                     } else break :cycles 1;
                 }
             };
         }
+
+        fn detect_window_reached(self: *pixel_fetcher) bool {
+            // print("detect_window_reached()\n", .{});
+            if (!self.render_window and self.gpu.check_lcdc(.display_window) and self.window_reached) {
+                // print("we should display the window and we've reached it vertically...\n", .{});
+                const wx = self.gpu.getSpecialRegister(.wx);
+                const window_x_trigger = if (wx >= 7) wx - 7 else 0;
+                const window_max_trigger = 167;
+                if (window_x_trigger <= window_max_trigger and self.gpu.scanline_displayed >= window_x_trigger) {
+                    // print("we've also reached it horizontally, begin window rendering...\n", .{});
+                    self.render_window = true;
+                    self.gpu.bg_pixel_fifo.clearRetainingCapacity();
+                    self.window_x = 0;
+                    // self.pixels_fetched = 0;
+                    self.active_fetcher = .win;
+                    self.reset_state();
+                    return true;
+                }
+            } return false;
+        }
+
+        fn detect_sprite_fetch(self: *pixel_fetcher) bool {
+            for (self.gpu.sprite_buffer[self.gpu.sprites_used..self.gpu.sprite_buffer_i]) |maybe_sprite| {
+                const sprite = maybe_sprite orelse unreachable;
+                const sprite_x = if (sprite.x >= 8) sprite.x - 8 else continue;
+                if (sprite_x != self.gpu.scanline_displayed) continue;
+                // sprite must be here
+                // self.gpu.bg_pixel_fifo.clearRetainingCapacity();
+                print("deteced a sprite fetch at pixel {d} | {any}", .{self.gpu.scanline_displayed, sprite});
+                self.reset_state();
+                self.active_fetcher = .sprite;
+                self.sprite_data = sprite;
+                return true;
+            } return false;
+        }
     };
 
-    pub fn randomStatic(self: *GPU) void { // random static
-        for (0..self.lcd.screenBuf.len) |i| {
-            const color: Color = GB.prng.random().enumValue(Color);
-            LCD.writeToBuf(&self.lcd.screenBuf, color, i);
-        }
-    }
     // fn createTile()
-    fn tilePixelDecoder(self: *GPU, high: u8, low: u8, pixel_index: u3) Color {
-        const shift: u3 = 7 - pixel_index;
+    fn tilePixelDecoder(self: *GPU, high: u8, low: u8, pixel_index: u3, flags: Sprite.Flags, palette: special_register) Color {
+        // inspect the sprite obj data if there is one
+        if (palette != .bgp and palette != .obp0 and palette != .obp1) @panic("you passed a invalid register as the palette"); // remove in release builds
+        const shift: u3 = if (!flags.x_flip) 7 - pixel_index else pixel_index;
         const hi = @as(u1, @truncate(high >> shift));
         const lo = @as(u1, @truncate(low >> shift));
         const color_code: u2 = (@as(u2, hi) << 1) | lo;
-        const bgp = self.getSpecialRegister(.bgp); // get the right color pallete (dmg)
-        const palette_color: u2 = @truncate(bgp >> @as(u3, @intCast(color_code)) * 2); // selecting color
+        const palette_color: u2 = @truncate(self.getSpecialRegister(palette) >> @as(u3, @intCast(color_code)) * 2); // selecting color
         return @as(Color, @enumFromInt(palette_color));
     }
-    fn pixelMixer(sprite_color: Color, bg_color: Color, bg_priority: bool) Color {
+    fn pixelMixer(sprite_pixel: struct{Color, bool}, bg_color: Color) Color {
+        const sprite_color = sprite_pixel[0];
+        const bg_priority = sprite_pixel[1];
         if (sprite_color == .transparent) {
             return bg_color;
         }
@@ -368,29 +527,50 @@ pub const GPU = struct {
     }
     fn switchMode(self: *@This()) void {
         const ly = self.getSpecialRegister(.ly);
+        // print("Mode switch: {any}, LY: {d}, stat: {d}\n", .{ self.mode, ly, self.getSpecialRegister(.stat) });
         self.mode = mode: switch (self.mode) {
             .SCAN => {
-                self.mode_cycles_left = Mode.RENDER.min_cycles();
+                self.mode_cycles = Mode.RENDER.max_cycles(); // this may vary
                 break :mode .RENDER;
             },
             .RENDER => {
+                // debug
+                self.lcd.renderAll("", self.getSpecialRegister(.ly)); // render at the last scanline (for debug!! should happen at the end of each frame in gb.go())
+                if (self.bus.cpu.booted) {
+                    for (self.sprite_buffer[0..]) |*maybe_sprite| {
+                        const sprite = maybe_sprite.* orelse break;
+                        print("Scanline sprite set data: {any}\n", .{sprite});
+                        maybe_sprite.* = null;
+                    }
+                    print("\n", .{});
+                    // self.bus.cpu.break_exe();
+                }
+
                 self.lcd.pushScanline(self.scanline, ly);
-                self.mode_cycles_left = Mode.HBLANK.min_cycles();
+                print("entering hblank, cycles spent rendering? {d}\n", .{self.mode_cycles_spent});
+                self.mode_cycles = Mode.HBLANK.max_cycles() - (self.mode_cycles_spent - 172);
                 break :mode .HBLANK;
             },
             .HBLANK => {
                 // Increment LY register
                 self.setSpecialRegister(.ly, ly + 1);
+                if (self.fetcher.render_window) {
+                    self.fetcher.window_line_counter += 1;
+                }
+                self.fetcher.render_window = false;
                 if (ly + 1 == 144) { // send vblank interrupt
                     self.bus.handler.set(.flag, .vblank);
-                    self.mode_cycles_left = Mode.VBLANK.min_cycles(); // per scanline
+                    self.mode_cycles = Mode.VBLANK.max_cycles(); // per scanline
                     break :mode .VBLANK;
                 } else {
-                    self.mode_cycles_left = Mode.SCAN.min_cycles();
+                    self.mode_cycles = Mode.SCAN.max_cycles();
                     break :mode .SCAN;
                 }
             },
             .VBLANK => {
+                // leaving vblank, reset all per frame variables
+                self.fetcher.window_reached = false;
+                self.fetcher.window_line_counter = 0;
                 const new_ly = ly + 1;
                 if (new_ly > 153) { // 153 is the end of VBLANK
                     // send the tilesheet data to the buffer for debug
@@ -409,7 +589,7 @@ pub const GPU = struct {
                                 const pixel_index: u3 = @intCast(col);
                                 const low = self.readVram(tile_addr + row * 2);
                                 const high = self.readVram(tile_addr + row * 2 + 1);
-                                const color = self.tilePixelDecoder(high, low, pixel_index);
+                                const color = self.tilePixelDecoder(high, low, pixel_index, .{ .bg_priority = false, .x_flip = false, .y_flip = false, .palette = false}, .bgp);
                                 // write to tilesheet buffer
                                 const tilesheet_index = (dstY + row) * 192 + (dstX + col);
                                 LCD.writeToBuf(&self.lcd.tilesheetBuf, color, tilesheet_index);
@@ -432,7 +612,9 @@ pub const GPU = struct {
                                 const pixel_index: u3 = @intCast(col);
                                 const low = self.readVram(tile_addr + row * 2);
                                 const high = self.readVram(tile_addr + row * 2 + 1);
-                                const color = self.tilePixelDecoder(high, low, pixel_index);
+                                // const is_edge = (row == 0 or row == 7) or (col == 0 or col == 7);
+                                const color: Color = self.tilePixelDecoder(high, low, pixel_index, .{ .bg_priority = false, .x_flip = false, .y_flip = false, .palette = false}, .bgp);
+
                                 // write to tilesheet buffer
                                 const tilesheet_index = (dstY + row) * 256 + (dstX + col);
                                 LCD.writeToBuf(&self.lcd.bgBuf, color, tilesheet_index);
@@ -461,7 +643,8 @@ pub const GPU = struct {
                                 const pixel_index: u3 = @intCast(col);
                                 const low = self.readVram(tile_addr + row * 2);
                                 const high = self.readVram(tile_addr + row * 2 + 1);
-                                const color = self.tilePixelDecoder(high, low, pixel_index);
+
+                                const color = self.tilePixelDecoder(high, low, pixel_index,.{ .bg_priority = false, .x_flip = false, .y_flip = false, .palette = false}, .obp0);
                                 // write to tilesheet buffer
                                 const tilesheet_index = (dstY + row) * 160 + (dstX + col);
                                 LCD.writeToBuf(&self.lcd.spriteBuf, color, tilesheet_index);
@@ -484,7 +667,7 @@ pub const GPU = struct {
                                 const pixel_index: u3 = @intCast(col);
                                 const low = self.readVram(tile_addr + row * 2);
                                 const high = self.readVram(tile_addr + row * 2 + 1);
-                                const color = self.tilePixelDecoder(high, low, pixel_index);
+                                const color = self.tilePixelDecoder(high, low, pixel_index, .{ .bg_priority = false, .x_flip = false, .y_flip = false, .palette = false}, .obp0);
                                 // write to tilesheet buffer
                                 const tilesheet_index = (dstY + row) * 160 + (dstX + col);
                                 LCD.writeToBuf(&self.lcd.oamBuf, color, tilesheet_index);
@@ -492,12 +675,12 @@ pub const GPU = struct {
                         }
                     }
                     self.setSpecialRegister(.ly, 0); // reset LY to 0
-                    self.mode_cycles_left = Mode.SCAN.min_cycles();
+                    self.mode_cycles = Mode.SCAN.max_cycles();
                     self.frames_cycled += 1;
                     break :mode .SCAN;
                 } else {
                     self.setSpecialRegister(.ly, new_ly);
-                    self.mode_cycles_left = Mode.VBLANK.min_cycles();
+                    self.mode_cycles = Mode.VBLANK.max_cycles();
                     break:mode .VBLANK;
                 }
             },
@@ -507,18 +690,21 @@ pub const GPU = struct {
             self.sprite_buffer_i = 0;
             self.oam_i = 0;
             self.scx_discard = self.getSpecialRegister(.scx) % 8;
-            self.scanline_fetched = 0;
+            self.fetcher.pixels_fetched = 0;
+            // self.fetcher.window_fetched = 0;
             self.scanline_displayed = 0;
             self.sprites_used = 0;
             self.sprite_pixel_fifo.clearRetainingCapacity();
             self.bg_pixel_fifo.clearRetainingCapacity();
-            self.reached_window = false;
-            // print("we just started a new scanline, reset all per scanline variables. SCANLINE FETCHED = {d}\n", .{self.scanline_fetched});
+            if (self.getSpecialRegister(.ly) == self.getSpecialRegister(.wy)) {
+                self.fetcher.window_reached = true;
+            }
         }
-
+        self.mode_cycles_spent = 0;
         // update the stat register after mode switch
         const lyc_check = self.getSpecialRegister(.ly) == self.getSpecialRegister(.lyc);
         var stat_reg = self.getSpecialRegister(.stat); // update STAT register
+        stat_reg &= 0b1111_1000;
         stat_reg |= (@as(u3, @intFromBool(lyc_check)) << @intFromEnum(stat_bit.lyc_res)) | @intFromEnum(self.mode);
         self.setSpecialRegister(.stat, stat_reg);
 
@@ -528,18 +714,19 @@ pub const GPU = struct {
             .SCAN => stat_bit.enable_mode2,
             .RENDER => null
         };
-        const line_was_set = set: {
-            if (mode_interrupt_bit != null and interrupt_is_enabled(self.stat_reg, mode_interrupt_bit.?)) {
-                break :set self.set_interrupt_line();
-            }
-            if (lyc_check and interrupt_is_enabled(self.stat_reg, .enable_lyc_check)) {
-                break :set self.set_interrupt_line();
-            }
-            break :set false;
-        };
-        if (line_was_set) { // send lcd interrupt
-            // print("lcd interrupt\n", .{});
+
+        if (mode_interrupt_bit) |b| {
+            if (interrupt_is_enabled(stat_reg, b)) self.bus.handler.set(.flag, .lcd);
+        }
+        if (lyc_check and interrupt_is_enabled(stat_reg, .enable_lyc_check)) {
             self.bus.handler.set(.flag, .lcd);
+        }
+    }
+
+    pub fn randomStatic(self: *GPU) void { // random static
+        for (0..self.lcd.screenBuf.len) |i| {
+            const color: Color = GB.prng.random().enumValue(Color);
+            LCD.writeToBuf(&self.lcd.screenBuf, color, i);
         }
     }
 
@@ -570,10 +757,23 @@ pub const GPU = struct {
         return self.vram[fixed_address];
     }
     pub fn writeVram(self: *@This(), address: usize, value: u8) void {
-        if (!(self.testSpecialRegister(.lcdc, 7) and self.mode == .RENDER)) {
+        if (!(self.check_lcdc(.lcd_enable) and self.mode == .RENDER)) {
             const fixed_address = address - VRAM_BEGIN;
             self.vram[fixed_address] = value;
         }
+    }
+    pub const lcdc_bit = enum {
+        bg_win_enable, // 0
+        sprite_enable, // 1
+        sprite_size,   // 2
+        bg_tilemap,    // 3
+        tile_data_sel, // 4
+        display_window,// 5
+        window_tilemap,// 6
+        lcd_enable     // 7
+    };
+    pub fn check_lcdc(self: *GPU, bit: lcdc_bit) bool {
+        return BIT(@intFromEnum(bit), self.getSpecialRegister(.lcdc)) == 1;
     }
     pub const special_register = enum {
         lcdc, // LCDC (LCD Control) Enables/disables layers, defines rendering mode
@@ -593,13 +793,19 @@ pub const GPU = struct {
         const size = 0xFF4B - 0xFF40 + 1;
     };
     pub fn setSpecialRegister(self: *GPU, register: special_register, value: u8) void {
+        if (register == .lcdc) {
+            // if ((value & 0x20) != 0) @panic("the window got enabled");
+            if (self.check_lcdc(.lcd_enable) ^ (BIT(@intFromEnum(lcdc_bit.lcd_enable), value) == 1)) { // lcd enable changed
+                // print("lcd enable changed", .{});
+                self.fetcher.reset_state();
+                self.mode = .VBLANK;
+                self.switchMode();
+            }
+        }
         self.special_registers[@intFromEnum(register)] = value;
     }
     pub fn getSpecialRegister(self: *GPU, register: special_register) u8 {
         return self.special_registers[@intFromEnum(register)];
-    }
-    pub fn testSpecialRegister(self: *GPU, register: special_register, bit: u3) bool {
-        return @as(u1, @truncate(self.special_registers[@intFromEnum(register)] >> bit)) == 1;
     }
     pub fn readOAM(self: *GPU, address: usize) u8 {
         if (self.mode == .RENDER or self.mode == .SCAN) {
@@ -643,23 +849,31 @@ pub const GPU = struct {
 ///Contains the fields necessary to create a display,
 ///- Screen, Height, Width, Rendering
 pub const LCD = struct {
+    // buffers
     screenBuf: [screenHeightPx * screenWidthPx]u32 = undefined,
+
+    // debug buffers
     tilesheetBuf: [192 * 128]u32 = undefined,
     bgBuf: [256 * 256]u32 = undefined,
     spriteBuf: [8 * 5 * 64]u32 = undefined,
     oamBuf: [8 * 5 * 64]u32 = undefined,
+
+    // SDL
+    win: *g.SDL_Window = undefined,
     renderer: *g.SDL_Renderer = undefined,
     screen_texture: *g.SDL_Texture = undefined,
+
+    // debug textures
     bg_texture: *g.SDL_Texture = undefined,
     tilesheet_texture: *g.SDL_Texture = undefined,
     oam_texture: *g.SDL_Texture = undefined,
     sprites_texture: *g.SDL_Texture = undefined,
-    // text_surface: *g.SDL_Surface = undefined,
+    ly_texture: *g.SDL_Texture = undefined,
     text_texture: *g.SDL_Texture = undefined,
+
     font: *g.TTF_Font = undefined,
-    win: *g.SDL_Window = undefined,
+    
     // debug_win: *g.SDL_Window = undefined,
-    grid_pixel_sz: u16 = undefined,
     allocator: std.mem.Allocator = undefined,
     root_path: []const u8 = undefined,
 
@@ -690,6 +904,7 @@ pub const LCD = struct {
         self.root_path = root_path;
         try self.startAndCreateRendererAndTextures(); // set window and renderer and initialize textures
     }
+
     fn startAndCreateRendererAndTextures(self: *@This()) !void {
         if (!g.SDL_Init(g.SDL_INIT_VIDEO)) {
             print("SDL_Init failed: {s}\n", .{g.SDL_GetError()});
@@ -724,7 +939,7 @@ pub const LCD = struct {
                 return error.DetectedZeroWidthWin;
             }
         }
-        // Font & Text init
+        // Font & Text init (debug)
         if (!g.TTF_Init()) {
             print("TTF Init failed", .{});
             return error.TTF_Init;
@@ -740,6 +955,8 @@ pub const LCD = struct {
         // creating textures
         self.screen_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_STREAMING, 160, 144);
         _ = g.SDL_SetTextureScaleMode(self.screen_texture, g.SDL_SCALEMODE_NEAREST);
+
+        // debug
         self.bg_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_TARGET, 256, 256);
         _ = g.SDL_SetTextureScaleMode(self.bg_texture, g.SDL_SCALEMODE_NEAREST);
         self.tilesheet_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_TARGET, 192, 128);
@@ -748,11 +965,14 @@ pub const LCD = struct {
         _ = g.SDL_SetTextureScaleMode(self.oam_texture, g.SDL_SCALEMODE_NEAREST);
         self.sprites_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_TARGET, 160, 16);
         _ = g.SDL_SetTextureScaleMode(self.sprites_texture, g.SDL_SCALEMODE_NEAREST);
-        // self.createBG();
+
+        self.ly_texture = g.SDL_CreateTexture(self.renderer, g.SDL_PIXELFORMAT_ARGB8888, g.SDL_TEXTUREACCESS_TARGET, 160, 1);
+        _ = g.SDL_SetTextureScaleMode(self.sprites_texture, g.SDL_SCALEMODE_NEAREST);
+        
         self.bootScreen(); // wait for sdl to finish building the window to begin progression
     }
     fn bootScreen(self: *LCD) void {
-        self.renderAll("GAMEBOY\n"); // Draw a dummy frame to force the window to initialize and show
+        self.renderAll("GAMEBOY\n", 0); // Draw a dummy frame to force the window to initialize and show
         _ = g.SDL_PumpEvents(); // Let the OS process events and show the window
         var window_ready = false;
         var event: g.SDL_Event = undefined;
@@ -843,7 +1063,7 @@ pub const LCD = struct {
             0xFF_D8_7C_F4,
             0xFF_53_2D_8F
         },
-        .{ // frostbyte
+        .{ // frostbite
             0xFF_E0_FF_FB,
             0xFF_8A_FF_F1,
             0xFF_30_C9_CF,
@@ -879,22 +1099,21 @@ pub const LCD = struct {
     //     _ = g.SDL_SetRenderDrawColor(self.renderer, 255, 192, 220, 255);
     //     _ = g.SDL_RenderClear(self.renderer);
     // }
-    pub fn renderAll(self: *@This(), debug: []const u8) void {
+
+    const ly_texture_buf: [screenWidthPx]u32 = .{0xFF_FF_00_00} ** screenWidthPx;
+    pub fn renderAll(self: *@This(), debug: []const u8, ly: u8) void {
         _ = g.SDL_RenderClear(self.renderer);
         _ = g.SDL_UpdateTexture(self.screen_texture, null, &self.screenBuf, 160 * @sizeOf(u32));
+
+        // debug
+        _ = debug;
         _ = g.SDL_UpdateTexture(self.tilesheet_texture, null, &self.tilesheetBuf, 192 * @sizeOf(u32));
         _ = g.SDL_UpdateTexture(self.bg_texture, null, &self.bgBuf, 256 * @sizeOf(u32));
         _ = g.SDL_UpdateTexture(self.oam_texture, null, &self.oamBuf, 160 * @sizeOf(u32));
         _ = g.SDL_UpdateTexture(self.sprites_texture, null, &self.spriteBuf, 160 * @sizeOf(u32));
-        // const dgray = g.SDL_Color{ .r = 36, .g = 36, .b = 36, .a = 255 };
-        _ = debug;
-        // if (debug.len > 0) {
-        //     self.text_surface = g.TTF_RenderText_Solid_Wrapped(self.font, debug.ptr, debug.len, dgray, 0);
-        //     self.text_texture = g.SDL_CreateTextureFromSurface(self.renderer, self.text_surface);
-        // }
-        // defer g.SDL_DestroySurface(self.text_surface);
-        // defer g.SDL_DestroyTexture(self.text_texture);
-        // _ = g.SDL_RenderClear(self.renderer);
+        _ = g.SDL_UpdateTexture(self.ly_texture, null, &ly_texture_buf, 160 * @sizeOf(u32));
+
+        // _ = g.SDL
         const gb_screen_w = screenWidthPx * pxSize;
         const gb_screen_h = screenHeightPx * pxSize;
         const screen_rect = g.SDL_FRect{
@@ -904,21 +1123,8 @@ pub const LCD = struct {
             .w = gb_screen_w,
             .h = gb_screen_h
         };
-        // const bg_width: f32 = @as(f32, @floatFromInt(window_width)) - gb_screen_w;
-        // const bg_rect = g.SDL_FRect{
-        //     .x = gb_screen_w + 10,
-        //     .y = 0,
-        //     .w = bg_width,
-        //     .h = @as(f32, @floatFromInt(window_height)),
-        // };
-        // const text_rect = g.SDL_FRect{
-        //     .x = bg_x + 15,
-        //     .y = 30,
-        //     .w = @as(f32, @floatFromInt(self.text_surface.w)),
-        //     .h = @as(f32, @floatFromInt(self.text_surface.h))
-        // };
-        //
 
+        // debugs
         const background_len = gb_screen_h / 2; // background is a square
         const background_map_rect = g.SDL_FRect{
             .x = gb_screen_w,
@@ -954,15 +1160,20 @@ pub const LCD = struct {
             .w = oam_w,
             .h = oam_h
         };
-        // _ = bg_rect;
-        // _ = screen_rect;
 
-        // _ = g.SDL_RenderTexture(self.renderer, self.text_texture, null, &text_rect);
+        const ly_rect = g.SDL_FRect{
+            .x = 0,
+            .y = @as(f32, @floatFromInt(ly)) * pxSize,
+            .w = gb_screen_w,
+            .h = pxSize
+        };
+
         _ = g.SDL_RenderTexture(self.renderer, self.screen_texture, null, &screen_rect);
         _ = g.SDL_RenderTexture(self.renderer, self.tilesheet_texture, null, &tilesheet_rect);
         _ = g.SDL_RenderTexture(self.renderer, self.bg_texture, null, &background_map_rect);
         _ = g.SDL_RenderTexture(self.renderer, self.oam_texture, null, &oam_rect);
         _ = g.SDL_RenderTexture(self.renderer, self.sprites_texture, null, &sprites_rect);
+        _ = g.SDL_RenderTexture(self.renderer, self.ly_texture, null, &ly_rect);
         _ = g.SDL_RenderPresent(self.renderer);
     }
 
@@ -1033,6 +1244,6 @@ pub const g = @cImport({
     @cInclude("SDL3_ttf/SDL_ttf.h");
 });
 
-fn BIT(bit: u6, int: usize) u1 {
+pub fn BIT(bit: u6, int: usize) u1 {
     return @truncate(int >> bit);
 }

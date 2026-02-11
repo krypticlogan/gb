@@ -1,9 +1,8 @@
 const InstrFn = fn (*CPU, InstrArgs) u8;
 pub const InstrArgs = union(enum) { none: void, target: regID, bit: u3, bit_target: struct { bit: u3, target: regID }, flagConditions: Condition, targets: struct { to: regID, from: regID }, hl_mod: i2, where: u16 };
 pub const Condition = union(enum) { none, z, c, nz, nc };
-pub fn INVALID(cpu: *CPU, _: InstrArgs) u8 {
+pub fn INVALID(_: *CPU, _: InstrArgs) u8 {
     // This instruction should never be called
-    _ = cpu;
     @panic("Attempt to execute invalid instruction");
 }
 pub fn NOP(cpu: *CPU, _: InstrArgs) u8 {

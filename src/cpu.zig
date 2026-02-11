@@ -21,9 +21,9 @@ pub fn init(self: *@This(), gb: *GB) !void {
     self.sp = 0;
     self.bus = &gb.bus;
     // if (std.fs.cwd().deleteFile(sub_path: []const u8))
-    Log.out_file = std.fs.cwd().createFile(Log.out_file_path, .{.truncate = true}) catch {
-        @panic("Unable to create log file, abortting");
-    };
+    // Log.out_file = std.fs.cwd().createFile(Log.out_file_path, .{.truncate = true}) catch {
+    //     @panic("Unable to create log file, aborting");
+    // };
 }
 // cpu execution
 pub fn execute(self: *@This()) struct{u8, bool} {
@@ -106,7 +106,8 @@ pub inline fn jump_to_prev_instr(self: *CPU) void {
 }
 // debug
 pub inline fn break_exe(self: *CPU) void {
-    print("break execution\n", .{});
+    if (!self.booted) return;
+    print("break_exe()\n", .{});
     self.paused = true;
 }
 pub inline fn resume_exe(self: *CPU) void {
