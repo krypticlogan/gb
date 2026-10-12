@@ -144,7 +144,8 @@ pub const GPU = struct {
                 }
             }
 
-            const cycles_to_process: u16 = @intCast(@min(cycles_left, self.mode_cycles));
+            const remaining = self.mode_cycles - self.mode_cycles_spent;
+            const cycles_to_process: u16 = @intCast(@min(cycles_left, remaining));
             // print("processing cycles\n", .{});
             self.do(cycles_to_process);
             cycles_left -= cycles_to_process;
@@ -180,17 +181,17 @@ pub const GPU = struct {
 
                     if (horizontally_visible and vertically_visible) {
                         const sprite = Sprite { .y = y_pos, .x = x_pos, .tile_no = tile_no, .flags = Sprite.inspect_flags(flags) };
-                        print("putting sprite into sprite buffer: {any}\nRead from oam mem[0x{X} .. 0x{X} + 4]\n", .{sprite, self.oam_i, self.oam_i});
+                        // print("putting sprite into sprite buffer: {any}\nRead from oam mem[0x{X} .. 0x{X} + 4]\n", .{sprite, self.oam_i, self.oam_i});
                         self.sprite_buffer[self.sprite_buffer_i] = sprite;
                         self.sprite_buffer_i += 1;
                     }
                 }
                 if (self.oam_i == self.oam.len) {
                     std.sort.insertion(?Sprite, self.sprite_buffer[0..], {}, Sprite.comparePriority);
-                    print("Sorted sprite data\n==============\n", .{});
-                    for (self.sprite_buffer) |sprite| {
-                        print("{any}\n", .{sprite});
-                    }
+                    // print("Sorted sprite data\n==============\n", .{});
+                    // for (self.sprite_buffer) |sprite| {
+                        // print("{any}\n", .{sprite});
+                    // }
                     // self.bus.cpu.break_exe();
                 }
                 // return;
@@ -227,15 +228,15 @@ pub const GPU = struct {
                             }
                         }
                         if (self.bg_pixel_fifo.items.len < 8) break;
-                        if (self.bus.cpu.booted) print("shifting out pixel {d} | ", .{self.scanline_displayed});
+                        // if (self.bus.cpu.booted) print("shifting out pixel {d} | ", .{self.scanline_displayed});
                         const bg_pixel= self.bg_pixel_fifo.orderedRemove(0); // TODO change this to a different structure for 0(1)
-                        if (self.bus.cpu.booted) print("bg color {any} | ", .{bg_pixel});
+                        // if (self.bus.cpu.booted) print("bg color {any} | ", .{bg_pixel});
 
                         var sprite_pixel: struct{Color, bool} = undefined;
                         if (self.sprite_pixel_fifo.items.len >= 1) {
                             sprite_pixel = self.sprite_pixel_fifo.orderedRemove(0);
                         } else sprite_pixel = .{.transparent, false};
-                        if (self.bus.cpu.booted) print("sprite color {any} | bg priority? {any}\n ", .{sprite_pixel[0], sprite_pixel[1]});
+                        // if (self.bus.cpu.booted) print("sprite color {any} | bg priority? {any}\n ", .{sprite_pixel[0], sprite_pixel[1]});
 
                         self.scanline[self.scanline_displayed] = pixelMixer(sprite_pixel, bg_pixel);
                         // print("scanline px color: {any} (pushed {d} pixels)\n", .{self.scanline[self.scanline_displayed], self.scanline_displayed});
@@ -250,8 +251,8 @@ pub const GPU = struct {
 
                     // print("cycles spent: {d} | cycles to spend: {d}\n", .{cycles_spent, cycles});
                 }
-                if (cycles_spent < cycles) print("lost cycles: {d}", .{cycles - cycles_spent});
-                if (self.mode == .SCAN) print("cycles spent: {d}", .{self.mode_cycles_spent});
+                // if (cycles_spent < cycles) print("lost cycles: {d}", .{cycles - cycles_spent});
+                // if (self.mode == .SCAN) print("cycles spent: {d}", .{self.mode_cycles_spent});
             },
             else => return, // no action for hblank or vblank
         }
@@ -325,9 +326,8 @@ pub const GPU = struct {
 
                     // debug
                         if (self.active_fetcher == .sprite) {
-                            const x = self.pixels_fetched;
                             self.gpu.sprites_used += 1;
-                            print("\nLY: {d}, X: {d} | sprites used? {d}\n", .{ly, x, self.gpu.sprites_used});
+                            // print("\nLY: {d}, X: {d} | sprites used? {d}\n", .{ly, self.pixels_fetched, self.gpu.sprites_used});
                             // print("sprite buffer: {any}", .{self.gpu.sprite_buffer});
                         }
 
@@ -374,7 +374,7 @@ pub const GPU = struct {
                         },
                         .sprite => { // sprite tile addr
                             const is_tall = self.gpu.check_lcdc(.sprite_size);
-                            print("Beginning rendering {s} sprite: {any}\n", .{if (is_tall) "tall" else "not tall", self.sprite_data.?});
+                            // print("Beginning rendering {s} sprite: {any}\n", .{if (is_tall) "tall" else "not tall", self.sprite_data.?});
                             const height: u8 = if (is_tall) 16 else 8;
                             var sprite_tile_line: u16 = (ly -% self.sprite_data.?.y -% 16) % height;
                             if (self.sprite_data.?.flags.y_flip) sprite_tile_line = (height - 1) - sprite_tile_line;
@@ -405,13 +405,13 @@ pub const GPU = struct {
                         // const pixel_i: u3 = @intCast(self.pixels_fetched % 8); //
                         var pixel_i: u4  = 0;
                         while (pixel_i < 8) : (pixel_i += 1) {
-                            if (self.gpu.bus.cpu.booted) { // debug
-                                print("Pushing pixel {d} (tile index {d}) | Rendering sprites? {any}, BG/WIN enabled? {any}\n", .{if (!self.render_window) self.pixels_fetched else self.window_x, pixel_i, rendering_sprites, self.gpu.check_lcdc(.bg_win_enable)});
-                            }
+                            // if (self.gpu.bus.cpu.booted) { // debug
+                            //     print("Pushing pixel {d} (tile index {d}) | Rendering sprites? {any}, BG/WIN enabled? {any}\n", .{if (!self.render_window) self.pixels_fetched else self.window_x, pixel_i, rendering_sprites, self.gpu.check_lcdc(.bg_win_enable)});
+                            // }
                             const pixel = color: {
                                 if (rendering_sprites) {
                                     if (self.gpu.check_lcdc(.sprite_enable)) {
-                                        print("sprite data: {any}\n", .{self.sprite_data});
+                                        // print("sprite data: {any}\n", .{self.sprite_data});
                                         const palette: special_register = if (self.sprite_data.?.flags.palette) .obp1 else .obp0;
                                         // const tall = self.sprite_data.?.flags.
 
@@ -455,7 +455,7 @@ pub const GPU = struct {
                         }
                         // if (pixel_i == 0) {
                             self.reset_state(); // reset the fetcher state as we have pushed the last pixel
-                            if (self.gpu.bus.cpu.booted) print("finished pushing {s} pixel: active fetcher: {any} | state {any}\n", .{if (rendering_sprites) "sprite" else "bg/window" , self.active_fetcher, self.active_fetcher_state()});
+                            // if (self.gpu.bus.cpu.booted) print("finished pushing {s} pixel: active fetcher: {any} | state {any}\n", .{if (rendering_sprites) "sprite" else "bg/window" , self.active_fetcher, self.active_fetcher_state()});
                         // }
                         break :cycles 2;
                     } else break :cycles 1;
@@ -490,7 +490,7 @@ pub const GPU = struct {
                 if (sprite_x != self.gpu.scanline_displayed) continue;
                 // sprite must be here
                 // self.gpu.bg_pixel_fifo.clearRetainingCapacity();
-                print("deteced a sprite fetch at pixel {d} | {any}", .{self.gpu.scanline_displayed, sprite});
+                // print("deteced a sprite fetch at pixel {d} | {any}", .{self.gpu.scanline_displayed, sprite});
                 self.reset_state();
                 self.active_fetcher = .sprite;
                 self.sprite_data = sprite;
@@ -520,7 +520,6 @@ pub const GPU = struct {
             return bg_color;
         }
         return sprite_color;
-        // if (bg_priority and bg_color != .transparent) return bg_color;
     }
     fn spriteDecoder(self: *GPU) void {
         _ = self;
@@ -535,19 +534,19 @@ pub const GPU = struct {
             },
             .RENDER => {
                 // debug
-                self.lcd.renderAll("", self.getSpecialRegister(.ly)); // render at the last scanline (for debug!! should happen at the end of each frame in gb.go())
+                // self.lcd.renderAll("", self.getSpecialRegister(.ly)); // render at the last scanline (for debug!! should happen at the end of each frame in gb.go())
                 if (self.bus.cpu.booted) {
                     for (self.sprite_buffer[0..]) |*maybe_sprite| {
-                        const sprite = maybe_sprite.* orelse break;
-                        print("Scanline sprite set data: {any}\n", .{sprite});
+                        if (maybe_sprite.* == null) break;
+                        // print("Scanline sprite set data: {any}\n", .{maybe_sprite.*});
                         maybe_sprite.* = null;
                     }
-                    print("\n", .{});
+                    // print("\n", .{});
                     // self.bus.cpu.break_exe();
                 }
 
                 self.lcd.pushScanline(self.scanline, ly);
-                print("entering hblank, cycles spent rendering? {d}\n", .{self.mode_cycles_spent});
+                // print("entering hblank, cycles spent rendering? {d}\n", .{self.mode_cycles_spent});
                 self.mode_cycles = Mode.HBLANK.max_cycles() - (self.mode_cycles_spent - 172);
                 break :mode .HBLANK;
             },
@@ -560,6 +559,7 @@ pub const GPU = struct {
                 self.fetcher.render_window = false;
                 if (ly + 1 == 144) { // send vblank interrupt
                     self.bus.handler.set(.flag, .vblank);
+                    self.lcd.renderAll("", 144);
                     self.mode_cycles = Mode.VBLANK.max_cycles(); // per scanline
                     break :mode .VBLANK;
                 } else {
@@ -809,7 +809,7 @@ pub const GPU = struct {
     }
     pub fn readOAM(self: *GPU, address: usize) u8 {
         if (self.mode == .RENDER or self.mode == .SCAN) {
-            print("cannot access oam now\n", .{});
+            // print("cannot access oam now\n", .{});
             return 0xF;
         }
         // if (address <= 0xFE00 or address >= 0xFE9F) return error.OutOfOAMBounds;
@@ -818,7 +818,7 @@ pub const GPU = struct {
     }
     pub fn writeOAM(self: *GPU, address: usize, value: u8) void {
         if (self.mode == .RENDER or self.mode == .SCAN) {
-            print("cannot access oam now\n", .{});
+            // print("cannot access oam now\n", .{});
             return;
         }
         // if (address <= 0xFE00 or address >= 0xFE9F) return error.OutOfOAMBounds;
@@ -1100,7 +1100,7 @@ pub const LCD = struct {
     //     _ = g.SDL_RenderClear(self.renderer);
     // }
 
-    const ly_texture_buf: [screenWidthPx]u32 = .{0xFF_FF_00_00} ** screenWidthPx;
+    const ly_texture_buf: [screenWidthPx]u32 = @splat(0xFF_FF_00_00);
     pub fn renderAll(self: *@This(), debug: []const u8, ly: u8) void {
         _ = g.SDL_RenderClear(self.renderer);
         _ = g.SDL_UpdateTexture(self.screen_texture, null, &self.screenBuf, 160 * @sizeOf(u32));

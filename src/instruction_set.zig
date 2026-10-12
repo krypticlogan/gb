@@ -37,7 +37,7 @@ pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
                     if (interrupt_pending) {
                         cpu.halted = false;
                         cpu.halt_bug_state = 1;
-                        print("Entered halt bug state, next PC / INSTR = pc[{X}] / 0x{X}\n", .{cpu.pc + 1, cpu.bus.readByte(cpu.pc + 1)});
+                        // print("Entered halt bug state, next PC / INSTR = pc[{X}] / 0x{X}\n", .{cpu.pc + 1, cpu.bus.readByte(cpu.pc + 1)});
                         cpu.pc += 1;
                     }
                 },
@@ -53,7 +53,7 @@ pub fn HALT(cpu: *CPU, _: InstrArgs) u8 {
                 },
                 false => {
                     if (interrupt_pending) {
-                        print("no ime, no halt bug\n", .{});
+                        // print("no ime, no halt bug\n", .{});
                         cpu.halted = false;
                         cpu.pc += 1;
                     }
@@ -83,10 +83,10 @@ pub fn LDr8(cpu: *CPU, args: InstrArgs) u8 { // LD r8, r8
 pub fn LDr8HL(cpu: *CPU, args: InstrArgs) u8 { // LD r8, [HL]
     // const hl = cpu.get_word(regID.h);
     const value = cpu.bus.readByte(cpu.get_word(regID.h));
-    if (args.target == .l and value == 0x1B) {
-        print("HERE\n\n\t\tLD r8, [HL] | {any} <-- 0x{X} @(0x{X}) pc[{X}]\n", .{ args.target, value, cpu.get_word(regID.h), cpu.pc });
-        // cpu.break_exe();
-    }
+    // if (args.target == .l and value == 0x1B) {
+    //     print("HERE\n\n\t\tLD r8, [HL] | {any} <-- 0x{X} @(0x{X}) pc[{X}]\n", .{ args.target, value, cpu.get_word(regID.h), cpu.pc });
+    //     // cpu.break_exe();
+    // }
 
     cpu.pushToExecutionChain("LD r8, [HL] | {any} <-- 0x{X}", .{ args.target, value });
     cpu.set_byte(args.target, value);
@@ -742,7 +742,7 @@ pub fn CPL(cpu: *CPU, _: InstrArgs) u8 { // sets the value in register A to its 
 }
 pub fn EI(cpu: *CPU, _: InstrArgs) u8 {
     cpu.pushToExecutionChain("EI", .{});
-    print("EI!\n\n pc = 0x{X}\n", .{cpu.pc});
+    // print("EI!\n\n pc = 0x{X}\n", .{cpu.pc});
     // cpu.break_exe();
     cpu.pc += 1;
     return 1;
@@ -752,7 +752,7 @@ pub fn DI(cpu: *CPU, _: InstrArgs) u8 {
     // cpu.break_exe();
     const prior = cpu.bus.handler.ime;
     const debug = "DI | ime prior: {any}, ime post op: {any}";
-    print(debug ++ "\n", .{ prior, cpu.bus.handler.ime });
+    // print(debug ++ "\n", .{ prior, cpu.bus.handler.ime });
     cpu.bus.handler.ime = false;
     cpu.pushToExecutionChain(debug, .{ prior, cpu.bus.handler.ime });
     cpu.pc += 1;

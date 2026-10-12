@@ -425,7 +425,7 @@ pub const Bus = struct {
             }
             // handle dma transfers
             if (register == GPU.special_register.dma) {
-                const prefix = address / 0x100;
+                const prefix = value;
                 const ram_address: u16 = @as(u16, @intCast(prefix)) << 8;
                 // print("RAM ADDR: [0x{X}], copy size\n\t source: 0x{X}\n\t dest: 0x{X}\n", .{ram_address, GPU.OAM_SIZE, GPU.OAM_END - GPU.OAM_BEGIN});
                 @memcpy(self.memory[GPU.OAM_BEGIN..GPU.OAM_END + 1], self.memory[ram_address .. ram_address + GPU.OAM_SIZE]);
@@ -524,7 +524,7 @@ pub const Bus = struct {
                 .mbc1 => {
                     switch (address) {
                         0x0000...0x1FFF => { // RAM enable/disable (MBC1, MBC2, etc.).
-                            if (self.ram_size_in_KiB > 0) print("ram enable\n", .{});
+                            // if (self.ram_size_in_KiB > 0) print("ram enable\n", .{});
                             if (byte == 0x0) {
                                 self.ram_enable = false;
                             } else if (@as(u4, @truncate(byte)) == 0xA) {
@@ -786,7 +786,7 @@ pub const Clock = struct {
         const smoothing = 0.7;
         self.current_fps = smoothing * self.last_fps + (1.0 - smoothing) * fps_estimate;
         if (self.ns_elapsed >= std.time.ns_per_s) {
-            print("{d:.2} fps\n", .{self.current_fps});
+            // print("{d:.2} fps\n", .{self.current_fps});
             self.ns_elapsed = 0;
         }
         self.last_fps = self.current_fps;
