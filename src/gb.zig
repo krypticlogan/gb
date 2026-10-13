@@ -686,13 +686,14 @@ pub const Joypad = struct {
         return (self.input_field.* >> 5) & 1 == 0;
     }
     fn check(self: *Joypad) u8 {
-        // var input_state = self.input_field.*;
-        return self.input_field.* | switch (@as(u2, @intFromBool(self.is_button_selected()) | @intFromBool(self.is_dpad_selected()))) {
-            0b00 => self.button_state | self.d_pad_state,
-            0b01 => self.d_pad_state,
-            0b10 => self.button_state,
-            0b11 => 0xF
-        };
+        var input_state: u8 = 0xF;
+        if (self.is_button_selected()) {
+            input_state &= self.button_state;
+        }
+        if (self.is_dpad_selected()) {
+            input_state &= self.d_pad_state;
+        }
+        return 0xC0 | self.input_field.* | input_state;
     }
     fn write(self: *Joypad, value: u8) void {
         // const old_sel = self.input_field.*;
@@ -718,13 +719,13 @@ pub const Joypad = struct {
         };
         state.* &= mask;
 
-        // if (state.* & ~mask != 0) {
-        //     state.* &= mask;
-        //     if ((self.is_button_selected()) or (self.is_dpad_selected())) {
-        //         self.bus.handler.set(.flag, .joypad);
-        //         print("sent joyp interrupt\n\n", .{});
-        //     }
-        // }
+        if (state.* & ~mask != 0) {
+            state.* &= mask;
+            if ((self.is_button_selected()) or (self.is_dpad_selected())) {
+                self.bus.handler.set(.flag, .joypad);
+                // print("sent joyp interrupt\n\n", .{});
+            }
+        }
         // self.dump_state();
     }
     fn unpress(self: *Joypad, input: anytype) void {
